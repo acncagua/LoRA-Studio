@@ -22,6 +22,25 @@ function Write-Log([string]$Message) {
     $line | Tee-Object -FilePath $LogPath -Append
 }
 
+function Invoke-LoggedNative([string]$FilePath, [string[]]$Arguments, [string]$WorkingDirectory = "") {
+    $previousErrorActionPreference = $ErrorActionPreference
+    $previousLocation = (Get-Location).Path
+    $ErrorActionPreference = "Continue"
+    try {
+        if (-not [string]::IsNullOrWhiteSpace($WorkingDirectory)) {
+            Set-Location -LiteralPath $WorkingDirectory
+        }
+        & $FilePath @Arguments *>&1 | Tee-Object -FilePath $LogPath -Append
+        $exitCode = $LASTEXITCODE
+    } finally {
+        Set-Location -LiteralPath $previousLocation
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($exitCode -ne 0) {
+        throw "Command failed with exit code ${exitCode}: $FilePath $($Arguments -join ' ')"
+    }
+}
+
 function Test-PythonCmd([string]$Command) {
     try {
         Invoke-Expression "& $Command -c `"import sys; print(sys.version_info[:2])`"" *> $null
@@ -148,13 +167,14 @@ $SdScriptsPath = Join-Path $InstallRoot "sd-scripts"
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw "git が見つかりません。" }
 if (Test-Path $SdScriptsPath) {
     Write-Log "fetching existing sd-scripts"
-    git -C $SdScriptsPath fetch --tags origin 2>&1 | Tee-Object -FilePath $LogPath -Append
+    Invoke-LoggedNative "git" @("-C", $SdScriptsPath, "fetch", "--tags", "origin")
 } else {
     Write-Log "cloning sd-scripts"
-    git clone $RepoUrl $SdScriptsPath 2>&1 | Tee-Object -FilePath $LogPath -Append
+    Invoke-LoggedNative "git" @("clone", $RepoUrl, $SdScriptsPath)
 }
 
-git -C $SdScriptsPath checkout $ReleaseTag 2>&1 | Tee-Object -FilePath $LogPath -Append
+$SdScriptsPath = (Resolve-Path $SdScriptsPath).Path
+Invoke-LoggedNative "git" @("-C", $SdScriptsPath, "checkout", $ReleaseTag)
 $Commit = (git -C $SdScriptsPath rev-parse --short HEAD).Trim()
 if ($ReleaseTag -eq "v0.10.5" -and -not $Commit.StartsWith($ExpectedCommitPrefix)) { throw "sd-scripts $ReleaseTag のcommitが想定と異なります: $Commit" }
 
@@ -167,15 +187,15 @@ $Python = Join-Path $VenvPath "Scripts\python.exe"
 $Pip = Join-Path $VenvPath "Scripts\pip.exe"
 $Accelerate = Join-Path $VenvPath "Scripts\accelerate.exe"
 
-& $Python -m pip install --upgrade pip setuptools wheel 2>&1 | Tee-Object -FilePath $LogPath -Append
+Invoke-LoggedNative $Python @("-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel")
 switch ($CudaProfile) {
-    "cu128" { & $Pip install torch==2.8.0 torchvision --index-url https://download.pytorch.org/whl/cu128 2>&1 | Tee-Object -FilePath $LogPath -Append }
-    "cu129" { & $Pip install torch==2.8.0 torchvision --index-url https://download.pytorch.org/whl/cu129 2>&1 | Tee-Object -FilePath $LogPath -Append }
-    "cu124" { & $Pip install torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124 2>&1 | Tee-Object -FilePath $LogPath -Append }
-    "cu121" { & $Pip install torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu121 2>&1 | Tee-Object -FilePath $LogPath -Append }
+    "cu128" { Invoke-LoggedNative $Pip @("install", "torch==2.8.0", "torchvision", "--index-url", "https://download.pytorch.org/whl/cu128") }
+    "cu129" { Invoke-LoggedNative $Pip @("install", "torch==2.8.0", "torchvision", "--index-url", "https://download.pytorch.org/whl/cu129") }
+    "cu124" { Invoke-LoggedNative $Pip @("install", "torch==2.6.0", "torchvision==0.21.0", "--index-url", "https://download.pytorch.org/whl/cu124") }
+    "cu121" { Invoke-LoggedNative $Pip @("install", "torch==2.6.0", "torchvision==0.21.0", "--index-url", "https://download.pytorch.org/whl/cu121") }
     default { throw "Unsupported CudaProfile: $CudaProfile" }
 }
-& $Pip install --upgrade -r (Join-Path $SdScriptsPath "requirements.txt") 2>&1 | Tee-Object -FilePath $LogPath -Append
+Invoke-LoggedNative $Pip @("install", "--upgrade", "-r", "requirements.txt") $SdScriptsPath
 
 $AccelerateDir = Join-Path $env:USERPROFILE ".cache\huggingface\accelerate"
 New-Item -ItemType Directory -Force -Path $AccelerateDir | Out-Null
@@ -199,9 +219,9 @@ tpu_use_sudo: false
 use_cpu: false
 "@ | Set-Content -LiteralPath $AccelerateConfig -Encoding UTF8
 
-& $Python -c "import json, torch; print(json.dumps({'torch_version': torch.__version__, 'torch_cuda_version': torch.version.cuda, 'cuda_available': torch.cuda.is_available(), 'gpu_name': torch.cuda.get_device_name(0) if torch.cuda.is_available() else None}, ensure_ascii=False))" 2>&1 | Tee-Object -FilePath $LogPath -Append
-& $Python (Join-Path $SdScriptsPath "sdxl_train_network.py") --help > $null
-& $Python (Join-Path $SdScriptsPath "train_network.py") --help > $null
+Invoke-LoggedNative $Python @("-c", "import json, torch; print(json.dumps({'torch_version': torch.__version__, 'torch_cuda_version': torch.version.cuda, 'cuda_available': torch.cuda.is_available(), 'gpu_name': torch.cuda.get_device_name(0) if torch.cuda.is_available() else None}, ensure_ascii=False))")
+Invoke-LoggedNative $Python @((Join-Path $SdScriptsPath "sdxl_train_network.py"), "--help")
+Invoke-LoggedNative $Python @((Join-Path $SdScriptsPath "train_network.py"), "--help")
 
 $Result = [pscustomobject]@{ repo_url=$RepoUrl; release_tag=$ReleaseTag; commit=$Commit; sd_scripts_path=(Resolve-Path $SdScriptsPath).Path; venv_python_path=(Resolve-Path $Python).Path; venv_accelerate_path=(Resolve-Path $Accelerate).Path; cuda_profile=$CudaProfile; mixed_precision=$MixedPrecision; accelerate_config=$AccelerateConfig; log_path=$LogPath; completed_at=(Get-Date -Format o) }
 $Result | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $LogDir "setup_sd_scripts_result.json") -Encoding UTF8
