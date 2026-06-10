@@ -1,6 +1,6 @@
 ﻿param(
     [string]$InstallRoot = ".\external",
-    [string]$PythonCmd = "py -3.10",
+    [string]$PythonCmd = "",
     [string]$CudaProfile = "cu128",
     [string]$MixedPrecision = "bf16",
     [string]$ReleaseTag = "v0.10.5"
@@ -22,7 +22,29 @@ function Write-Log([string]$Message) {
     $line | Tee-Object -FilePath $LogPath -Append
 }
 
+function Test-PythonCmd([string]$Command) {
+    try {
+        Invoke-Expression "$Command -c `"import sys; print(sys.version_info[:2])`"" *> $null
+        return $LASTEXITCODE -eq 0
+    } catch {
+        return $false
+    }
+}
+
+function Resolve-PythonCmd([string]$RequestedCommand) {
+    if (-not [string]::IsNullOrWhiteSpace($RequestedCommand)) {
+        if (Test-PythonCmd $RequestedCommand) { return $RequestedCommand }
+        throw "Requested Python command is not available: $RequestedCommand"
+    }
+    foreach ($candidate in @("py -3.10", "py -3.12", "python")) {
+        if (Test-PythonCmd $candidate) { return $candidate }
+    }
+    throw "No usable Python command found. Install Python 3.10, Python 3.12, or provide python on PATH."
+}
+
+$PythonCmd = Resolve-PythonCmd $PythonCmd
 Write-Log "setup start: release=$ReleaseTag cuda=$CudaProfile mixed_precision=$MixedPrecision"
+Write-Log "python command: $PythonCmd"
 New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
 $SdScriptsPath = Join-Path $InstallRoot "sd-scripts"
 

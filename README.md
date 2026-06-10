@@ -35,6 +35,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup_app.ps1
 
 起動時に指定ポートが既に使用されている場合、WindowsではそのポートをLISTENしている既存プロセスを終了してから起動します。
 
+起動時に `external/sd-scripts` または `external/sd-scripts/venv` が未作成の場合は、`sd-scripts v0.10.5` のセットアップを自動実行します。venv作成に使うPythonは `py -3.10`、`py -3.12`、`python` の順に探します。
+
 ## sd-scripts環境構築
 
 MVPでは `kohya-ss/sd-scripts` の最新リリースとして確認した `v0.10.5` を使用します。
@@ -44,6 +46,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup_sd_scripts.ps1 -Release
 ```
 
 このスクリプトは `external/sd-scripts` にcloneまたはfetchし、tag `v0.10.5` をcheckoutします。リリースページでは `v0.10.5` が Latest と表示され、対応commitは `a1b48df` です。
+
+アプリだけを起動して `sd-scripts` セットアップをスキップしたい場合は、検証用に以下を使えます。
+
+```powershell
+.\.venv\Scripts\python.exe .\start_lora_helper.py --skip-sd-scripts-setup
+```
 
 ## 初回学習の流れ
 

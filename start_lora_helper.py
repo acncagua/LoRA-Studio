@@ -6,11 +6,75 @@ import re
 import subprocess
 import sys
 import webbrowser
-
-import uvicorn
+from pathlib import Path
 
 from app import settings
 from app.db import init_db
+
+
+def command_available(command: list[str]) -> bool:
+    result = subprocess.run(
+        [*command, "-c", "import sys; print(sys.version_info[:2])"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def resolve_sd_scripts_python() -> str:
+    candidates = [
+        (["py", "-3.10"], "py -3.10"),
+        (["py", "-3.12"], "py -3.12"),
+        (["python"], "python"),
+    ]
+    for command, label in candidates:
+        if command_available(command):
+            return label
+    return f'"{Path(sys.executable).resolve()}"'
+
+
+def sd_scripts_ready() -> bool:
+    sd_scripts = settings.SD_SCRIPTS_DIR
+    venv_python = sd_scripts / "venv" / "Scripts" / "python.exe"
+    required_files = [
+        sd_scripts / ".git",
+        sd_scripts / "sdxl_train_network.py",
+        sd_scripts / "train_network.py",
+        venv_python,
+    ]
+    return all(path.exists() for path in required_files)
+
+
+def ensure_sd_scripts_installed() -> None:
+    if sd_scripts_ready():
+        return
+
+    setup_script = settings.ROOT_DIR / "scripts" / "setup_sd_scripts.ps1"
+    if not setup_script.exists():
+        raise FileNotFoundError(f"sd-scripts setup script not found: {setup_script}")
+
+    python_cmd = resolve_sd_scripts_python()
+    print(f"sd-scripts is not ready. Installing {settings.SD_SCRIPTS_RELEASE_TAG} with {python_cmd} ...")
+    result = subprocess.run(
+        [
+            "powershell",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(setup_script),
+            "-InstallRoot",
+            str(settings.EXTERNAL_DIR),
+            "-PythonCmd",
+            python_cmd,
+            "-ReleaseTag",
+            settings.SD_SCRIPTS_RELEASE_TAG,
+        ],
+        cwd=settings.ROOT_DIR,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"sd-scripts setup failed with exit code {result.returncode}")
 
 
 def find_listening_pids(port: int) -> set[int]:
@@ -55,13 +119,18 @@ def main() -> None:
     parser.add_argument("--host", default=settings.DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=settings.DEFAULT_PORT)
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--skip-sd-scripts-setup", action="store_true")
     args = parser.parse_args()
 
     init_db()
+    if not args.skip_sd_scripts_setup:
+        ensure_sd_scripts_installed()
     url = f"http://{args.host}:{args.port}"
     release_port(args.port)
     if not args.no_browser:
         webbrowser.open(url)
+    import uvicorn
+
     uvicorn.run("app.main:app", host=args.host, port=args.port, reload=False)
 
 
