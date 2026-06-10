@@ -31,7 +31,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup_app.ps1
 .\.venv\Scripts\python.exe .\start_lora_helper.py
 ```
 
-ブラウザで `http://127.0.0.1:7865` を開きます。
+ブラウザで `http://127.0.0.1:8768` を開きます。
+
+起動時に指定ポートが既に使用されている場合、WindowsではそのポートをLISTENしている既存プロセスを終了してから起動します。
 
 ## sd-scripts環境構築
 

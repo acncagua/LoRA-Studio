@@ -16,7 +16,7 @@ LOGS_DIR = ROOT_DIR / "logs"
 EXPORTS_DIR = ROOT_DIR / "exports"
 
 DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = 7865
+DEFAULT_PORT = 8768
 
 for directory in (DATA_DIR, DATASETS_DIR, EXTERNAL_DIR, RUNS_DIR, LOGS_DIR, EXPORTS_DIR):
     directory.mkdir(parents=True, exist_ok=True)
