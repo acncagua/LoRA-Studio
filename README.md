@@ -35,7 +35,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup_app.ps1
 
 起動時に指定ポートが既に使用されている場合、WindowsではそのポートをLISTENしている既存プロセスを終了してから起動します。
 
-起動時に `external/sd-scripts` または `external/sd-scripts/venv` が未作成の場合は、`sd-scripts v0.10.5` のセットアップを自動実行します。venv作成に使うPythonは `py -3.10`、`py -3.12`、`python` の順に探します。
+起動時に `external/sd-scripts` または `external/sd-scripts/venv` が未作成の場合は、`sd-scripts v0.10.5` のセットアップを自動実行します。
+
+venv作成に使うPythonは、`data/python_cmd.txt`、`LORA_STUDIO_PYTHON_EXE` / `LORA_STUDIO_PYTHON`、環境変数から生成したPython 3.10候補、`py -3.10`、環境変数から生成したPython 3.12候補、`py -3.12`、スキャンで見つけたその他Python、PATH上の `python` の順に探します。Codex通常サンドボックスでは `py` がユーザーインストールを見つけられない場合があるため、`py` だけには依存しません。
 
 ## sd-scripts環境構築
 
@@ -51,6 +53,16 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup_sd_scripts.ps1 -Release
 
 ```powershell
 .\.venv\Scripts\python.exe .\start_lora_helper.py --skip-sd-scripts-setup
+```
+
+Pythonを手動指定したい場合は、以下のいずれかを使えます。
+
+```powershell
+# 1回だけ指定する場合
+powershell -ExecutionPolicy Bypass -File .\scripts\setup_sd_scripts.ps1 -PythonCmd "C:\path\to\python.exe"
+
+# アプリ設定として保存する場合
+Set-Content -Encoding UTF8 .\data\python_cmd.txt "C:\path\to\python.exe"
 ```
 
 ## 初回学習の流れ
