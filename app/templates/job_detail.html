@@ -1,0 +1,5 @@
+﻿{% extends "base.html" %}{% block content %}
+<header class="page-head"><h1>#{{ job.id }} {{ job.name }}</h1><form method="post" action="/jobs/{{ job.id }}/prepare"><button type="submit">Prepare Files</button></form></header>
+<section class="panel-grid"><div><h2>Job</h2><dl><dt>Status</dt><dd>{{ job.status }}</dd><dt>Family</dt><dd>{{ job.model_family }}</dd><dt>Script</dt><dd>{{ job.training_script }}</dd><dt>Run Dir</dt><dd>{{ job.run_dir }}</dd></dl></div><div><h2>Dataset</h2>{% if dataset %}<dl><dt>Name</dt><dd>{{ dataset.name }}</dd><dt>Images</dt><dd>{{ dataset.image_count }}</dd><dt>Path</dt><dd>{{ dataset.path }}</dd></dl>{% endif %}</div></section>
+<section><h2>Command</h2><pre>{{ job.command_line or 'Not prepared yet.' }}</pre></section><section><h2>Params</h2><pre>{{ job.params_json }}</pre></section>
+{% endblock %}

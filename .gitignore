@@ -1,0 +1,19 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Local runtime data
+data/*.db
+data/*.db-*
+logs/*.log
+logs/*.json
+runs/job_*/
+external/sd-scripts/
+exports/*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

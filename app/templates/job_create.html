@@ -1,0 +1,4 @@
+﻿{% extends "base.html" %}{% block content %}
+<header class="page-head"><h1>Create Job</h1></header>
+<form method="post" action="/jobs" class="form-grid wide"><label>Name<input name="name" required></label><label>Dataset<select name="dataset_id" required>{% for dataset in datasets %}<option value="{{ dataset.id }}">#{{ dataset.id }} {{ dataset.name }}</option>{% endfor %}</select></label><label>Preset<select name="preset_id" required>{% for preset in presets %}<option value="{{ preset.id }}">{{ preset.model_family }} / {{ preset.name }}</option>{% endfor %}</select></label><label>Base Model Path<input name="base_model_path" required></label><label>VAE Path<input name="vae_path"></label><label>Output Name<input name="output_name"></label><label>Memo<textarea name="memo"></textarea></label><button type="submit">Create Draft</button></form>
+{% endblock %}

@@ -1,0 +1,4 @@
+﻿{% extends "base.html" %}{% block content %}
+<header class="page-head"><h1>Compare Epochs</h1></header>
+<table><thead><tr><th>Job</th><th>Status</th><th>Adopted Epoch</th></tr></thead><tbody>{% for job in jobs %}<tr><td><a href="/jobs/{{ job.id }}">#{{ job.id }} {{ job.name }}</a></td><td>{{ job.status }}</td><td>{{ job.adopted_epoch or '-' }}</td></tr>{% else %}<tr><td colspan="3" class="muted">No jobs yet.</td></tr>{% endfor %}</tbody></table>
+{% endblock %}
