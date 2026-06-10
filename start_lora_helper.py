@@ -6,32 +6,9 @@ import re
 import subprocess
 import sys
 import webbrowser
-from pathlib import Path
 
 from app import settings
 from app.db import init_db
-
-
-def command_available(command: list[str]) -> bool:
-    result = subprocess.run(
-        [*command, "-c", "import sys; print(sys.version_info[:2])"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return result.returncode == 0
-
-
-def resolve_sd_scripts_python() -> str:
-    candidates = [
-        (["py", "-3.10"], "py -3.10"),
-        (["py", "-3.12"], "py -3.12"),
-        (["python"], "python"),
-    ]
-    for command, label in candidates:
-        if command_available(command):
-            return label
-    return f'"{Path(sys.executable).resolve()}"'
 
 
 def sd_scripts_ready() -> bool:
@@ -54,8 +31,7 @@ def ensure_sd_scripts_installed() -> None:
     if not setup_script.exists():
         raise FileNotFoundError(f"sd-scripts setup script not found: {setup_script}")
 
-    python_cmd = resolve_sd_scripts_python()
-    print(f"sd-scripts is not ready. Installing {settings.SD_SCRIPTS_RELEASE_TAG} with {python_cmd} ...")
+    print(f"sd-scripts is not ready. Installing {settings.SD_SCRIPTS_RELEASE_TAG} ...")
     result = subprocess.run(
         [
             "powershell",
@@ -65,8 +41,6 @@ def ensure_sd_scripts_installed() -> None:
             str(setup_script),
             "-InstallRoot",
             str(settings.EXTERNAL_DIR),
-            "-PythonCmd",
-            python_cmd,
             "-ReleaseTag",
             settings.SD_SCRIPTS_RELEASE_TAG,
         ],

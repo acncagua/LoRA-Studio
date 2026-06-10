@@ -24,7 +24,7 @@ function Write-Log([string]$Message) {
 
 function Test-PythonCmd([string]$Command) {
     try {
-        Invoke-Expression "$Command -c `"import sys; print(sys.version_info[:2])`"" *> $null
+        Invoke-Expression "& $Command -c `"import sys; print(sys.version_info[:2])`"" *> $null
         return $LASTEXITCODE -eq 0
     } catch {
         return $false
@@ -36,7 +36,16 @@ function Resolve-PythonCmd([string]$RequestedCommand) {
         if (Test-PythonCmd $RequestedCommand) { return $RequestedCommand }
         throw "Requested Python command is not available: $RequestedCommand"
     }
-    foreach ($candidate in @("py -3.10", "py -3.12", "python")) {
+    $direct310 = Join-Path $env:LOCALAPPDATA "Programs\Python\Python310\python.exe"
+    $direct312 = Join-Path $env:LOCALAPPDATA "Programs\Python\Python312\python.exe"
+    $candidates = @(
+        "`"$direct310`"",
+        "py -3.10",
+        "`"$direct312`"",
+        "py -3.12",
+        "python"
+    )
+    foreach ($candidate in $candidates) {
         if (Test-PythonCmd $candidate) { return $candidate }
     }
     throw "No usable Python command found. Install Python 3.10, Python 3.12, or provide python on PATH."
@@ -64,7 +73,7 @@ if ($ReleaseTag -eq "v0.10.5" -and -not $Commit.StartsWith($ExpectedCommitPrefix
 $VenvPath = Join-Path $SdScriptsPath "venv"
 if (-not (Test-Path $VenvPath)) {
     Write-Log "creating venv"
-    Invoke-Expression "$PythonCmd -m venv `"$VenvPath`""
+    Invoke-Expression "& $PythonCmd -m venv `"$VenvPath`""
 }
 $Python = Join-Path $VenvPath "Scripts\python.exe"
 $Pip = Join-Path $VenvPath "Scripts\pip.exe"

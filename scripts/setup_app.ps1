@@ -6,7 +6,7 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
 function Test-PythonCmd([string]$Command) {
     try {
-        Invoke-Expression "$Command -c `"import sys; print(sys.version_info[:2])`"" *> $null
+        Invoke-Expression "& $Command -c `"import sys; print(sys.version_info[:2])`"" *> $null
         return $LASTEXITCODE -eq 0
     } catch {
         return $false
@@ -18,7 +18,16 @@ function Resolve-PythonCmd([string]$RequestedCommand) {
         if (Test-PythonCmd $RequestedCommand) { return $RequestedCommand }
         throw "Requested Python command is not available: $RequestedCommand"
     }
-    foreach ($candidate in @("py -3.10", "py -3.12", "python")) {
+    $direct310 = Join-Path $env:LOCALAPPDATA "Programs\Python\Python310\python.exe"
+    $direct312 = Join-Path $env:LOCALAPPDATA "Programs\Python\Python312\python.exe"
+    $candidates = @(
+        "`"$direct310`"",
+        "py -3.10",
+        "`"$direct312`"",
+        "py -3.12",
+        "python"
+    )
+    foreach ($candidate in $candidates) {
         if (Test-PythonCmd $candidate) { return $candidate }
     }
     throw "No usable Python command found. Install Python 3.10, Python 3.12, or provide python on PATH."
@@ -29,7 +38,7 @@ if ((Test-Path ".\.venv") -and -not (Test-PythonCmd ".\.venv\Scripts\python.exe"
     Remove-Item -Recurse -Force ".\.venv"
 }
 if (-not (Test-Path ".\.venv")) {
-    Invoke-Expression "$PythonCmd -m venv .venv"
+    Invoke-Expression "& $PythonCmd -m venv .venv"
 }
 
 .\.venv\Scripts\python.exe -m pip install --upgrade pip setuptools wheel
