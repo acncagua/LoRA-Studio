@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,10 @@ def parse_prompt_index(path: Path) -> int | None:
     prompt_index = parse_number(name, r"prompt[-_]?(\d+)")
     if prompt_index is None:
         prompt_index = parse_number(name, r"p[-_]?(\d+)")
+    if prompt_index is None:
+        zero_based = parse_number(name, r"e\d+_(\d+)_")
+        if zero_based is not None:
+            prompt_index = zero_based + 1
     return prompt_index
 
 
@@ -63,9 +68,24 @@ def collect_job_results(job_id: int) -> dict[str, int]:
         raise ValueError(f"Job not found: {job_id}")
 
     run_dir = Path(job["run_dir"])
+    sync_sd_scripts_samples(run_dir, Path(job["output_dir"]))
     model_count = collect_models(job_id, run_dir / "models")
     sample_count = collect_samples(job_id, run_dir / "samples")
     return {"models": model_count, "samples": sample_count}
+
+
+def sync_sd_scripts_samples(run_dir: Path, output_dir: Path) -> None:
+    source_dir = output_dir / "sample"
+    target_dir = run_dir / "samples"
+    if not source_dir.exists():
+        return
+    target_dir.mkdir(parents=True, exist_ok=True)
+    for source in source_dir.rglob("*"):
+        if not source.is_file() or source.suffix.lower() not in IMAGE_EXTENSIONS:
+            continue
+        target = target_dir / source.name
+        if not target.exists():
+            shutil.copy2(source, target)
 
 
 def collect_models(job_id: int, models_dir: Path) -> int:

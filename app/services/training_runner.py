@@ -148,6 +148,17 @@ def monitor_process(
     if current is not None and current["status"] == "stopped":
         status = "stopped"
 
+    try:
+        imported = collect_job_results(job_id)
+    except Exception as exc:
+        imported = {"models": 0, "samples": 0}
+        with log_path.open("a", encoding="utf-8", errors="replace") as handle:
+            handle.write(f"\n[LoRA-Studio] result import failed: {exc}\n")
+    if status == "completed" and imported["models"] == 0 and not has_model_outputs(job_id):
+        status = "failed"
+        with log_path.open("a", encoding="utf-8", errors="replace") as handle:
+            handle.write("\n[LoRA-Studio] training ended without LoRA outputs; marking job failed.\n")
+
     with connect() as conn:
         conn.execute(
             """
@@ -158,12 +169,6 @@ def monitor_process(
             """,
             (status, return_code, end_time, elapsed, end_time, job_id),
         )
-
-    try:
-        collect_job_results(job_id)
-    except Exception as exc:
-        with log_path.open("a", encoding="utf-8", errors="replace") as handle:
-            handle.write(f"\n[LoRA-Studio] result import failed: {exc}\n")
 
 
 def stop_job(job_id: int) -> None:
@@ -185,6 +190,11 @@ def stop_job(job_id: int) -> None:
             """,
             (end_time, elapsed, end_time, job_id),
         )
+
+
+def has_model_outputs(job_id: int) -> bool:
+    row = fetch_one("SELECT id FROM training_outputs WHERE job_id = ? AND file_type = 'model' LIMIT 1", (job_id,))
+    return row is not None
 
 
 def elapsed_seconds(start_time_text: str | None, end_time_text: str) -> int | None:

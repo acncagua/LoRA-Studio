@@ -8,6 +8,8 @@ from typing import Any
 from app.db import latest_environment, replace_sample_prompts
 from app.services.sample_prompt_writer import build_sample_prompts, write_sample_prompts
 
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+
 
 def write_dataset_config(
     path: Path,
@@ -16,24 +18,51 @@ def write_dataset_config(
     class_token: str,
     resolution: list[int],
     batch_size: int,
+    shuffle_caption: bool,
 ) -> None:
     width, height = resolution
-    normalized_path = dataset_path.replace("\\", "/")
+    subsets = []
+    for image_dir in image_directories(Path(dataset_path)):
+        normalized_path = str(image_dir).replace("\\", "/")
+        subsets.append(
+            f'''
+  [[datasets.subsets]]
+  image_dir = "{normalized_path}"
+  num_repeats = {repeats}
+  class_tokens = "{class_token}"
+'''
+        )
+    if not subsets:
+        normalized_path = dataset_path.replace("\\", "/")
+        subsets.append(
+            f'''
+  [[datasets.subsets]]
+  image_dir = "{normalized_path}"
+  num_repeats = {repeats}
+  class_tokens = "{class_token}"
+'''
+        )
     content = f'''[general]
-shuffle_caption = true
+shuffle_caption = {str(shuffle_caption).lower()}
 caption_extension = ".txt"
 keep_tokens = 1
 
 [[datasets]]
 resolution = [{width}, {height}]
 batch_size = {batch_size}
-
-  [[datasets.subsets]]
-  image_dir = "{normalized_path}"
-  num_repeats = {repeats}
-  class_tokens = "{class_token}"
-'''
+{''.join(subsets)}'''
     path.write_text(content, encoding="utf-8")
+
+
+def image_directories(dataset_path: Path) -> list[Path]:
+    if not dataset_path.exists():
+        return []
+    directories = {
+        image.parent
+        for image in dataset_path.rglob("*")
+        if image.is_file() and image.suffix.lower() in IMAGE_EXTENSIONS
+    }
+    return sorted(directories)
 
 
 def prepare_job_files(job: dict[str, Any], dataset: dict[str, Any]) -> dict[str, Path | str]:
@@ -57,6 +86,7 @@ def prepare_job_files(job: dict[str, Any], dataset: dict[str, Any]) -> dict[str,
         dataset.get("class_token") or "person",
         resolution,
         batch_size,
+        not bool(params.get("cache_text_encoder_outputs")),
     )
     prompts = build_sample_prompts(dataset.get("trigger_word") or "trigger_word", int(resolution[0]), int(resolution[1]))
     write_sample_prompts(sample_prompts, prompts)
@@ -96,7 +126,15 @@ def build_command_argv(job: dict[str, Any], dataset_config: Path, sample_prompts
     if job.get("vae_path"):
         args.extend(["--vae", job["vae_path"]])
 
-    skip_keys = {"resolution", "repeats", "optimizer_args", "train_batch_size"}
+    skip_keys = {"resolution", "repeats", "optimizer_args", "train_batch_size", "text_encoder_lr1", "text_encoder_lr2"}
+    if "text_encoder_lr1" in params or "text_encoder_lr2" in params:
+        args.extend(
+            [
+                "--text_encoder_lr",
+                str(params.get("text_encoder_lr1", 0)),
+                str(params.get("text_encoder_lr2", 0)),
+            ]
+        )
     for key, value in params.items():
         if key in skip_keys:
             continue
