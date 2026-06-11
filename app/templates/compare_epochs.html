@@ -40,6 +40,7 @@
     <h2>#{{ bundle.job.id }} {{ bundle.job.name }}</h2>
     <dl>
       <dt>Preset</dt><dd>{{ bundle.preset.name if bundle.preset else '-' }}</dd>
+      <dt>Parent Job</dt><dd>{% if bundle.job.parent_job_id %}<a href="/jobs/{{ bundle.job.parent_job_id }}">#{{ bundle.job.parent_job_id }}</a>{% else %}-{% endif %}</dd>
       <dt>Dataset</dt><dd>{{ bundle.dataset.name if bundle.dataset else '-' }}</dd>
       <dt>Base Model</dt><dd>{{ bundle.job.base_model_path }}</dd>
       <dt>Status</dt><dd>{{ bundle.job.status }}</dd>
@@ -56,7 +57,7 @@
     <thead><tr><th>Param</th><th>Job #{{ left.job.id }}</th><th>Job #{{ right.job.id }}</th></tr></thead>
     <tbody>
       {% for row in comparison.param_rows %}
-      <tr class="{{ 'changed' if row.changed else '' }}"><td>{{ row.key }}</td><td>{{ row.left }}</td><td>{{ row.right }}</td></tr>
+      <tr class="{{ 'changed' if row.changed else '' }} {{ 'emphasis' if row.emphasized else '' }}"><td>{{ row.key }}</td><td>{{ row.left }}</td><td>{{ row.right }}</td></tr>
       {% endfor %}
     </tbody>
   </table>

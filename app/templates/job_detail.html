@@ -16,6 +16,8 @@
       <dt>Status</dt><dd>{{ job.status }}</dd>
       <dt>Family</dt><dd>{{ job.model_family }}</dd>
       <dt>Script</dt><dd>{{ job.training_script }}</dd>
+      <dt>Parent Job</dt><dd>{% if job.parent_job_id %}<a href="/jobs/{{ job.parent_job_id }}">#{{ job.parent_job_id }}</a>{% else %}-{% endif %}</dd>
+      <dt>Prompt Template</dt><dd>{{ job.sample_prompt_template_id or '-' }}</dd>
       <dt>PID</dt><dd>{{ job.process_id or '-' }}</dd>
       <dt>Return Code</dt><dd>{{ job.return_code if job.return_code is not none else '-' }}</dd>
       <dt>Started</dt><dd>{{ job.start_time or '-' }}</dd>
@@ -32,6 +34,29 @@
     {% if dataset %}<dl><dt>Name</dt><dd>{{ dataset.name }}</dd><dt>Images</dt><dd>{{ dataset.image_count }}</dd><dt>Path</dt><dd>{{ dataset.path }}</dd></dl>{% endif %}
     <h2>Selected LoRA</h2>
     <p>{{ job.adopted_model_path or 'Not selected yet.' }}</p>
+  </div>
+</section>
+<section class="panel-grid">
+  <div>
+    <h2>Clone Job</h2>
+    <form method="post" action="/jobs/{{ job.id }}/clone" class="form-grid">
+      <label>New Job Name<input name="name" value="{{ job.name }}_clone"></label>
+      <button type="submit">Clone Job</button>
+    </form>
+  </div>
+  <div>
+    <h2>Quick Variant</h2>
+    <form method="post" action="/jobs/{{ job.id }}/variant" class="form-grid">
+      <label>Variant<select name="variant">
+        <option value="lower_lr">Lower LR</option>
+        <option value="higher_lr">Higher LR</option>
+        <option value="lower_dim">Lower Dim</option>
+        <option value="higher_dim">Higher Dim</option>
+        <option value="more_epoch">More Epoch</option>
+        <option value="fewer_epoch">Fewer Epoch</option>
+      </select></label>
+      <button type="submit">Create Variant</button>
+    </form>
   </div>
 </section>
 <section><h2>Command</h2><pre>{{ job.command_line or 'Not prepared yet.' }}</pre></section>

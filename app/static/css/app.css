@@ -73,6 +73,7 @@ textarea { min-height: 84px; }
 .compare-columns { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 14px; }
 .compare-columns > div { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
 tr.changed td { background: #fff8e8; }
+tr.emphasis td:first-child { font-weight: 700; color: var(--accent-2); }
 .sample-compare-table figure { margin: 0; }
 .sample-compare-table img { width: min(100%, 260px); height: auto; display: block; border-radius: 6px; border: 1px solid var(--line); }
 .sample-compare-table figcaption { margin-top: 6px; color: var(--muted); font-size: 12px; word-break: break-word; }

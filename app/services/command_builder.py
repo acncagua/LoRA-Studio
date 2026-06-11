@@ -5,8 +5,8 @@ import shlex
 from pathlib import Path
 from typing import Any
 
-from app.db import latest_environment, replace_sample_prompts
-from app.services.sample_prompt_writer import build_sample_prompts, write_sample_prompts
+from app.db import fetch_one, latest_environment, replace_sample_prompts
+from app.services.sample_prompt_writer import build_sample_prompts_from_template, write_sample_prompts
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 
@@ -98,7 +98,10 @@ def prepare_job_files(job: dict[str, Any], dataset: dict[str, Any]) -> dict[str,
         batch_size,
         not bool(params.get("cache_text_encoder_outputs")),
     )
-    prompts = build_sample_prompts(dataset.get("trigger_word") or "trigger_word", int(resolution[0]), int(resolution[1]))
+    template = None
+    if job.get("sample_prompt_template_id"):
+        template = fetch_one("SELECT * FROM sample_prompt_templates WHERE id = ?", (job["sample_prompt_template_id"],))
+    prompts = build_sample_prompts_from_template(template, dataset.get("trigger_word") or "trigger_word", int(resolution[0]), int(resolution[1]))
     write_sample_prompts(sample_prompts, prompts)
     replace_sample_prompts(int(job["id"]), prompts)
 

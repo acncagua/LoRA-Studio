@@ -69,13 +69,37 @@ Set-Content -Encoding UTF8 .\data\python_cmd.txt "C:\path\to\python.exe"
 
 1. Environment画面で `sd-scripts` の設定方針を確認する。
 2. Datasets画面で画像フォルダを登録する。
-3. Presets画面で初期プリセットを確認する。
-4. New Job画面でデータセット、プリセット、base model pathを指定してdraftを作る。
-5. Job詳細画面で `Prepare Files` を押し、設定ファイルと実行コマンドを生成する。
-6. `Run` を押して学習を開始する。必要なら `Stop` で停止する。
-7. 完了後、Job詳細画面でログ、出力LoRA、サンプル画像を確認する。手動で再取り込みしたい場合は `Reimport Results` を押す。
+3. Dataset詳細画面で画像、caption、trigger word、タグ傾向を検査する。
+4. Presets画面で初期プリセットを確認する。
+5. New Job画面でデータセット、プリセット、base model path、必要ならSample Prompt Templateを指定してdraftを作る。
+6. Job詳細画面で `Prepare Files` を押し、設定ファイルと実行コマンドを生成する。
+7. `Run` を押して学習を開始する。必要なら `Stop` で停止する。
+8. 完了後、Job詳細画面でログ、出力LoRA、サンプル画像を確認する。手動で再取り込みしたい場合は `Reimport Results` を押す。
 
 `Prepare Files` では表示用の `command.txt` に加えて、実行用の `command_argv.json` を生成します。実行時はshell文字列ではなくargv配列を `subprocess.Popen` に渡すため、Windowsのスペース入りパスでも壊れにくくしています。`dataset_config.toml` の `batch_size` はプリセットの `train_batch_size` から生成し、コマンドライン側では `--train_batch_size` を重複指定しません。学習時のbatch sizeは `dataset_config.toml` を正とします。
+
+## Dataset Inspector
+
+Datasets画面のIDリンクからDataset詳細を開くと、登録済みデータセットを再検査できます。`Rescan` は既存データを消さずに、画像数、caption数、欠損caption、壊れた画像、未対応ファイル、caption文字コード、画像サイズ、タグ集計、trigger word出現率を更新します。
+
+`Top Caption Tags` はcaption内のカンマ区切りタグを集計したものです。キャラクター名や衣装、構図タグが想定通り多いかを確認します。`Trigger Count` は登録したtrigger wordがcaptionに何回出ているかを示します。0%の場合でも学習自体は可能ですが、trigger wordで呼び出すLoRAを作るならcaptionまたはsample prompt設計を見直してください。
+
+未対応ファイルにはメタデータやcacheファイルも含まれます。画像とcaptionが揃っており、broken imageが0であれば、未対応ファイルが存在してもただちに問題とは限りません。
+
+## Job派生
+
+Job詳細画面では既存Jobから `Clone Job` と `Quick Variant` を作成できます。
+
+- `Clone Job` はデータセット、base model、プリセット、params、sample prompt templateを引き継いだdraftを作ります。成果物、metrics、sample画像はコピーしません。
+- `Quick Variant` は元Jobを親として、LR、network_dim/network_alpha、epoch数など一部パラメータだけを変えたdraftを作ります。
+
+派生Jobには `parent_job_id` が保存され、Dashboard、Job詳細、Compare画面から親Jobを確認できます。まずPilotを走らせ、Compareで差を見て、CloneまたはQuick Variantで小さく条件を変える流れを推奨します。
+
+## Sample Prompt Template
+
+`Prompt Templates` 画面では組み込みのsample prompt templateを確認できます。New Jobでtemplateを選ぶと、`Prepare Files` 時にtemplate内の `{trigger_word}` がDatasetのtrigger wordへ置換され、`sample_prompts.txt` と `sample_prompts` テーブルへ保存されます。
+
+初期テンプレート `SDXL Face Basic 3 Prompts` は、顔アップ、全身、表情とポーズの3枚をepochごとに比較するためのものです。デフォルト生成promptではなく固定テンプレートを使うと、Job間比較で同じprompt同士を見比べやすくなります。
 
 ## Metrics / Loss の見方
 
@@ -113,9 +137,19 @@ Integration Smokeのようにstep数が極端に少ないジョブでは、loss 
 
 DashboardのRecent Jobsで2件にチェックを入れて `Compare Selected` を押すか、`/compare?job_a=4&job_b=5` のようにURLを指定すると比較画面を開けます。
 
-比較画面では、基本情報、プリセット、base model、採用LoRA、主要パラメータ差分、metrics差分、lossグラフ、prompt別sample画像を横並びで確認できます。Standard PilotとGeneralize Pilotは、同じデータセット、同じbase modelで作成し、両方の `expected_total_steps` と `actual_max_step` が概ね一致していることを確認してからsampleを比較します。
+比較画面では、基本情報、親Job、プリセット、base model、採用LoRA、主要パラメータ差分、metrics差分、lossグラフ、prompt別sample画像を横並びで確認できます。Standard PilotとGeneralize Pilotは、同じデータセット、同じbase modelで作成し、両方の `expected_total_steps` と `actual_max_step` が概ね一致していることを確認してからsampleを比較します。
 
 比較結果は `Export Markdown` で `runs/comparisons/compare_job_000004_job_000005.md` のようなMarkdownへ出力できます。MarkdownにはJob ID、プリセット名、パラメータ差分、metrics差分、selected LoRA、人間メモ、health注意、sampleファイル名を記録します。
+
+## 実用前チェックの推奨ワークフロー
+
+1. Datasetsでデータセットを登録する。
+2. Dataset Inspectorで画像、caption、trigger word、タグ傾向を確認する。
+3. `Integration Smoke - SDXL` で結合確認をする。
+4. `Pilot 3 Epoch` と必要なら `Pilot Generalize 3 Epoch` を実行する。
+5. Compare画面でloss health、step整合性、epoch別sample、rating/memo、selected LoRAを比較する。
+6. 良さそうなJobをCloneし、Quick VariantでLRやdimを小さく変えて再確認する。
+7. Standard本学習または長めの実用設定へ進む。
 
 ## 既知の制限
 

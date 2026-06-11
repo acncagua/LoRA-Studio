@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app import settings
-from app.db import connect, create_job, fetch_all, fetch_one, import_latest_environment, init_db, insert_dataset
+from app.db import connect, create_job, fetch_all, fetch_one, import_latest_environment, init_db, insert_dataset, upsert_dataset_analysis
 from app.services.command_builder import prepare_job_files
 from app.services.output_collector import collect_job_results
 from app.services.training_runner import read_log_tail, start_job, stop_job
@@ -87,16 +87,98 @@ def datasets_create(name: str = Form(...), path: str = Form(...), model_family: 
     return RedirectResponse("/datasets", status_code=303)
 
 
+@app.get("/datasets/{dataset_id}", response_class=HTMLResponse)
+def dataset_detail(request: Request, dataset_id: int) -> HTMLResponse:
+    dataset = fetch_one("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    analysis = fetch_one("SELECT * FROM dataset_analysis WHERE dataset_id = ?", (dataset_id,))
+    if analysis is None:
+        rescan_dataset(dataset_id)
+        dataset = fetch_one("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
+        analysis = fetch_one("SELECT * FROM dataset_analysis WHERE dataset_id = ?", (dataset_id,))
+    return render(request, "dataset_detail.html", dataset=dataset, analysis=decode_analysis(analysis))
+
+
+@app.post("/datasets/{dataset_id}/rescan")
+def dataset_rescan(dataset_id: int) -> RedirectResponse:
+    rescan_dataset(dataset_id)
+    return RedirectResponse(f"/datasets/{dataset_id}", status_code=303)
+
+
+@app.get("/sample-prompt-templates", response_class=HTMLResponse)
+def sample_prompt_templates(request: Request) -> HTMLResponse:
+    templates_rows = fetch_all("SELECT * FROM sample_prompt_templates ORDER BY is_builtin DESC, name")
+    return render(request, "sample_prompt_templates.html", templates=templates_rows)
+
+
+def rescan_dataset(dataset_id: int) -> None:
+    from app.services.dataset_scanner import scan_dataset
+
+    dataset = fetch_one("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    scan = scan_dataset(Path(dataset["path"]), dataset["trigger_word"] or "")
+    now = settings_now()
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE datasets
+            SET image_count = ?, caption_count = ?, missing_caption_count = ?,
+                resolution_summary_json = ?, tag_summary_json = ?,
+                scan_status = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                scan["image_count"],
+                scan["caption_count"],
+                scan["missing_caption_count"],
+                json.dumps(scan.get("resolution_summary") or {}, ensure_ascii=False),
+                json.dumps(scan.get("tag_summary") or {}, ensure_ascii=False),
+                scan["status"],
+                now,
+                dataset_id,
+            ),
+        )
+        upsert_dataset_analysis(conn, dataset_id, scan)
+
+
+def settings_now() -> str:
+    from app.db import utc_now
+
+    return utc_now()
+
+
+def decode_analysis(row: Any) -> dict[str, Any]:
+    if row is None:
+        return {}
+    decoded = dict(row)
+    for key in (
+        "caption_encoding_summary_json",
+        "image_size_summary_json",
+        "tag_summary_json",
+        "missing_caption_images_json",
+        "caption_without_images_json",
+        "broken_images_json",
+        "unsupported_files_json",
+        "analysis_json",
+    ):
+        value = decoded.get(key)
+        decoded[key.removesuffix("_json")] = json.loads(value) if value else {} if key.endswith("summary_json") or key == "analysis_json" else []
+    return decoded
+
+
 @app.get("/jobs/new", response_class=HTMLResponse)
 def job_new(request: Request) -> HTMLResponse:
     datasets = fetch_all("SELECT * FROM datasets ORDER BY id DESC")
     presets = fetch_all("SELECT * FROM presets ORDER BY model_family DESC, name")
-    return render(request, "job_create.html", datasets=datasets, presets=presets)
+    sample_prompt_templates = fetch_all("SELECT * FROM sample_prompt_templates ORDER BY is_builtin DESC, name")
+    return render(request, "job_create.html", datasets=datasets, presets=presets, sample_prompt_templates=sample_prompt_templates)
 
 
 @app.post("/jobs")
-def job_create(name: str = Form(...), dataset_id: int = Form(...), preset_id: str = Form(...), base_model_path: str = Form(...), vae_path: str = Form(""), output_name: str = Form(""), memo: str = Form("")) -> RedirectResponse:
-    job_id = create_job({"name": name, "dataset_id": dataset_id, "preset_id": preset_id, "base_model_path": base_model_path, "vae_path": vae_path, "output_name": output_name, "memo": memo})
+def job_create(name: str = Form(...), dataset_id: int = Form(...), preset_id: str = Form(...), base_model_path: str = Form(...), vae_path: str = Form(""), output_name: str = Form(""), memo: str = Form(""), sample_prompt_template_id: str = Form("")) -> RedirectResponse:
+    job_id = create_job({"name": name, "dataset_id": dataset_id, "preset_id": preset_id, "base_model_path": base_model_path, "vae_path": vae_path, "output_name": output_name, "memo": memo, "sample_prompt_template_id": sample_prompt_template_id})
     return RedirectResponse(f"/jobs/{job_id}", status_code=303)
 
 
@@ -172,6 +254,55 @@ def job_reimport(job_id: int) -> RedirectResponse:
     return RedirectResponse(f"/jobs/{job_id}", status_code=303)
 
 
+@app.post("/jobs/{job_id}/clone")
+def job_clone(job_id: int, name: str = Form("")) -> RedirectResponse:
+    source = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
+    if source is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    clone_name = name.strip() or f"{source['name']}_clone"
+    new_id = create_job(
+        {
+            "name": clone_name,
+            "dataset_id": source["dataset_id"],
+            "preset_id": source["preset_id"],
+            "base_model_path": source["base_model_path"],
+            "vae_path": source["vae_path"] or "",
+            "output_name": f"{source['output_name']}_clone",
+            "memo": f"Cloned from Job #{job_id}",
+            "params": json.loads(source["params_json"]),
+            "parent_job_id": job_id,
+            "sample_prompt_template_id": source["sample_prompt_template_id"] or "",
+        }
+    )
+    copy_sample_prompts(job_id, new_id)
+    return RedirectResponse(f"/jobs/{new_id}", status_code=303)
+
+
+@app.post("/jobs/{job_id}/variant")
+def job_variant(job_id: int, variant: str = Form(...)) -> RedirectResponse:
+    source = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
+    if source is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    params = json.loads(source["params_json"])
+    label = apply_variant(params, variant)
+    new_id = create_job(
+        {
+            "name": f"{source['name']}_{variant}",
+            "dataset_id": source["dataset_id"],
+            "preset_id": source["preset_id"],
+            "base_model_path": source["base_model_path"],
+            "vae_path": source["vae_path"] or "",
+            "output_name": f"{source['output_name']}_{variant}",
+            "memo": f"Quick Variant from Job #{job_id}: {label}",
+            "params": params,
+            "parent_job_id": job_id,
+            "sample_prompt_template_id": source["sample_prompt_template_id"] or "",
+        }
+    )
+    copy_sample_prompts(job_id, new_id)
+    return RedirectResponse(f"/jobs/{new_id}", status_code=303)
+
+
 @app.post("/jobs/{job_id}/outputs/{output_id}/select")
 def job_select_output(job_id: int, output_id: int) -> RedirectResponse:
     output = fetch_one(
@@ -221,6 +352,73 @@ def job_sample_image(job_id: int, image_id: int) -> FileResponse:
     if not image_path.exists():
         raise HTTPException(status_code=404, detail="Sample image file not found")
     return FileResponse(image_path)
+
+
+def copy_sample_prompts(source_job_id: int, target_job_id: int) -> None:
+    rows = fetch_all("SELECT * FROM sample_prompts WHERE job_id = ? ORDER BY sort_order, id", (source_job_id,))
+    if not rows:
+        return
+    now = settings_now()
+    with connect() as conn:
+        conn.executemany(
+            """
+            INSERT INTO sample_prompts(
+                job_id, name, prompt, negative_prompt, width, height,
+                seed, cfg_scale, steps, sort_order, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    target_job_id,
+                    row["name"],
+                    row["prompt"],
+                    row["negative_prompt"],
+                    row["width"],
+                    row["height"],
+                    row["seed"],
+                    row["cfg_scale"],
+                    row["steps"],
+                    row["sort_order"],
+                    now,
+                )
+                for row in rows
+            ],
+        )
+
+
+def apply_variant(params: dict[str, Any], variant: str) -> str:
+    if variant == "lower_lr":
+        params["learning_rate"] = halve_float(params.get("learning_rate"))
+        params["unet_lr"] = halve_float(params.get("unet_lr"))
+        return "Lower LR"
+    if variant == "higher_lr":
+        params["learning_rate"] = min(0.0002, multiply_float(params.get("learning_rate"), 1.5))
+        params["unet_lr"] = min(0.0002, multiply_float(params.get("unet_lr"), 1.5))
+        return "Higher LR"
+    if variant == "lower_dim":
+        params["network_dim"] = max(1, int(params.get("network_dim") or 1) // 2)
+        params["network_alpha"] = max(1, int(params.get("network_alpha") or 1) // 2)
+        return "Lower Dim"
+    if variant == "higher_dim":
+        params["network_dim"] = int(params.get("network_dim") or 1) * 2
+        params["network_alpha"] = int(params.get("network_alpha") or 1) * 2
+        return "Higher Dim"
+    if variant == "more_epoch":
+        params["max_train_epochs"] = int(params.get("max_train_epochs") or 1) + 2
+        return "More Epoch"
+    if variant == "fewer_epoch":
+        params["max_train_epochs"] = max(1, int(params.get("max_train_epochs") or 1) - 1)
+        return "Fewer Epoch"
+    raise HTTPException(status_code=400, detail=f"Unknown variant: {variant}")
+
+
+def halve_float(value: Any) -> float:
+    return multiply_float(value, 0.5)
+
+
+def multiply_float(value: Any, factor: float) -> float:
+    return float(value or 0) * factor
 
 
 COMPARE_PARAM_KEYS = [
@@ -326,10 +524,11 @@ def load_compare_job(job_id: int) -> dict[str, Any]:
 
 def build_param_rows(left_params: dict[str, Any], right_params: dict[str, Any]) -> list[dict[str, Any]]:
     rows = []
+    emphasized = {"learning_rate", "unet_lr", "text_encoder_lr", "text_encoder_lr1", "text_encoder_lr2", "network_dim", "network_alpha", "max_train_epochs", "repeats"}
     for key in COMPARE_PARAM_KEYS:
         left_value = left_params.get(key)
         right_value = right_params.get(key)
-        rows.append({"key": key, "left": render_value(left_value), "right": render_value(right_value), "changed": left_value != right_value})
+        rows.append({"key": key, "left": render_value(left_value), "right": render_value(right_value), "changed": left_value != right_value, "emphasized": key in emphasized})
     return rows
 
 
@@ -428,7 +627,9 @@ def write_comparison_markdown(comparison: dict[str, Any]) -> str:
         "",
         "## Jobs",
         f"- Job #{left_id}: {left['job']['name']} / {left['preset']['name'] if left['preset'] else '-'}",
+        f"  - Parent Job: #{left['job']['parent_job_id']}" if left["job"]["parent_job_id"] else "  - Parent Job: -",
         f"- Job #{right_id}: {right['job']['name']} / {right['preset']['name'] if right['preset'] else '-'}",
+        f"  - Parent Job: #{right['job']['parent_job_id']}" if right["job"]["parent_job_id"] else "  - Parent Job: -",
         "",
         "## Parameter Differences",
     ]

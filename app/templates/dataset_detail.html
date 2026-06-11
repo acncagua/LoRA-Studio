@@ -1,0 +1,44 @@
+{% extends "base.html" %}{% block content %}
+<header class="page-head">
+  <h1>Dataset #{{ dataset.id }} {{ dataset.name }}</h1>
+  <form method="post" action="/datasets/{{ dataset.id }}/rescan"><button type="submit">Rescan</button></form>
+</header>
+<section class="panel-grid">
+  <div><h2>Summary</h2><dl>
+    <dt>ID</dt><dd>{{ dataset.id }}</dd>
+    <dt>Path</dt><dd>{{ dataset.path }}</dd>
+    <dt>Images</dt><dd>{{ dataset.image_count }}</dd>
+    <dt>Captions</dt><dd>{{ dataset.caption_count }}</dd>
+    <dt>Missing Captions</dt><dd>{{ dataset.missing_caption_count }}</dd>
+    <dt>Scan Status</dt><dd>{{ dataset.scan_status }}</dd>
+    <dt>Trigger Word</dt><dd>{{ dataset.trigger_word or '-' }}</dd>
+  </dl></div>
+  <div><h2>Inspector</h2><dl>
+    <dt>Supported Images</dt><dd>{{ analysis.supported_image_count or 0 }}</dd>
+    <dt>Unsupported Files</dt><dd>{{ analysis.unsupported_file_count or 0 }}</dd>
+    <dt>Broken Images</dt><dd>{{ analysis.broken_image_count or 0 }}</dd>
+    <dt>Empty Captions</dt><dd>{{ analysis.empty_caption_count or 0 }}</dd>
+    <dt>Unreadable Captions</dt><dd>{{ analysis.unreadable_caption_count or 0 }}</dd>
+    <dt>Trigger Count</dt><dd>{{ analysis.trigger_word_count or 0 }} / {{ dataset.caption_count }}{% if analysis.trigger_word_rate is not none %} ({{ '%.1f%%'|format(analysis.trigger_word_rate * 100) }}){% endif %}</dd>
+  </dl></div>
+</section>
+<section><h2>Image Size Summary</h2>
+  {% set size = analysis.image_size_summary or {} %}
+  <dl>
+    <dt>Min</dt><dd>{{ size.min_width or '-' }} x {{ size.min_height or '-' }}</dd>
+    <dt>Max</dt><dd>{{ size.max_width or '-' }} x {{ size.max_height or '-' }}</dd>
+    <dt>Average</dt><dd>{{ size.average_width or '-' }} x {{ size.average_height or '-' }}</dd>
+  </dl>
+  <table><thead><tr><th>Resolution</th><th>Count</th></tr></thead><tbody>{% for key, value in (size.resolutions or {}).items() %}<tr><td>{{ key }}</td><td>{{ value }}</td></tr>{% else %}<tr><td colspan="2" class="muted">No resolution data.</td></tr>{% endfor %}</tbody></table>
+</section>
+<section><h2>Caption Encoding</h2><table><thead><tr><th>Status</th><th>Count</th></tr></thead><tbody>{% for key, value in (analysis.caption_encoding_summary or {}).items() %}<tr><td>{{ key }}</td><td>{{ value }}</td></tr>{% else %}<tr><td colspan="2" class="muted">No caption data.</td></tr>{% endfor %}</tbody></table></section>
+<section><h2>Top Caption Tags</h2><table><thead><tr><th>Tag</th><th>Count</th></tr></thead><tbody>{% for key, value in (analysis.tag_summary or {}).items() %}<tr><td>{{ key }}</td><td>{{ value }}</td></tr>{% else %}<tr><td colspan="2" class="muted">No tags.</td></tr>{% endfor %}</tbody></table></section>
+<section class="panel-grid">
+  <div><h2>Images Missing Caption</h2><ul>{% for item in analysis.missing_caption_images[:50] %}<li>{{ item }}</li>{% else %}<li class="muted">None</li>{% endfor %}</ul></div>
+  <div><h2>Caption Without Image</h2><ul>{% for item in analysis.caption_without_images[:50] %}<li>{{ item }}</li>{% else %}<li class="muted">None</li>{% endfor %}</ul></div>
+</section>
+<section class="panel-grid">
+  <div><h2>Broken Images</h2><ul>{% for item in analysis.broken_images[:50] %}<li>{{ item }}</li>{% else %}<li class="muted">None</li>{% endfor %}</ul></div>
+  <div><h2>Unsupported Files</h2><ul>{% for item in analysis.unsupported_files[:50] %}<li>{{ item }}</li>{% else %}<li class="muted">None</li>{% endfor %}</ul></div>
+</section>
+{% endblock %}
