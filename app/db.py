@@ -3,6 +3,7 @@
 import json
 import sqlite3
 import subprocess
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -79,6 +80,7 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "trigger_occurrence_count_at_creation": "INTEGER",
             "trigger_occurrence_rate_at_creation": "REAL",
             "trigger_consistency_label_at_creation": "TEXT",
+            "dataset_version_id": "INTEGER",
             "updated_at": "TEXT",
         },
     )
@@ -265,6 +267,7 @@ def insert_dataset(name: str, path: str, model_family: str, trigger_word: str, c
         )
         dataset_id = int(cur.lastrowid)
         upsert_dataset_analysis(conn, dataset_id, scan)
+        create_dataset_version(conn, dataset_id, scan, "Initial dataset registration")
         return dataset_id
 
 
@@ -281,6 +284,8 @@ def create_job(data: dict[str, Any]) -> int:
     trigger_count = analysis["trigger_word_count"] if analysis else None
     trigger_rate = analysis["trigger_word_rate"] if analysis else None
     trigger_label = analysis["trigger_consistency_label"] if analysis and "trigger_consistency_label" in analysis.keys() else None
+    version = fetch_one("SELECT id FROM dataset_versions WHERE dataset_id = ? ORDER BY version_no DESC LIMIT 1", (int(data["dataset_id"]),))
+    dataset_version_id = version["id"] if version else None
     with connect() as conn:
         cur = conn.execute(
             """
@@ -290,8 +295,9 @@ def create_job(data: dict[str, Any]) -> int:
                 run_dir, params_json, memo, created_at, updated_at
                 , parent_job_id, sample_prompt_template_id
                 , trigger_word_at_creation, trigger_occurrence_count_at_creation,
-                trigger_occurrence_rate_at_creation, trigger_consistency_label_at_creation
-            ) VALUES (?, ?, ?, NULL, 'draft', ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                trigger_occurrence_rate_at_creation, trigger_consistency_label_at_creation,
+                dataset_version_id
+            ) VALUES (?, ?, ?, NULL, 'draft', ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 data["name"], int(data["dataset_id"]), data["preset_id"],
@@ -299,7 +305,7 @@ def create_job(data: dict[str, Any]) -> int:
                 data.get("vae_path") or None, output_name,
                 json.dumps(params, ensure_ascii=False, indent=2), data.get("memo") or "", now, now,
                 data.get("parent_job_id"), data.get("sample_prompt_template_id") or None,
-                trigger_word, trigger_count, trigger_rate, trigger_label,
+                trigger_word, trigger_count, trigger_rate, trigger_label, dataset_version_id,
             ),
         )
         job_id = int(cur.lastrowid)
@@ -369,6 +375,102 @@ def upsert_dataset_analysis(conn: sqlite3.Connection, dataset_id: int, scan: dic
             now,
         ),
     )
+
+
+def create_dataset_version(
+    conn: sqlite3.Connection,
+    dataset_id: int,
+    scan: dict[str, Any],
+    memo: str,
+) -> int:
+    dataset = conn.execute("SELECT * FROM datasets WHERE id = ?", (dataset_id,)).fetchone()
+    if dataset is None:
+        raise ValueError(f"Dataset not found: {dataset_id}")
+    row = conn.execute(
+        "SELECT COALESCE(MAX(version_no), 0) + 1 AS next_no FROM dataset_versions WHERE dataset_id = ?",
+        (dataset_id,),
+    ).fetchone()
+    version_no = int(row["next_no"])
+    now = utc_now()
+    stats = {
+        "resolution_summary": scan.get("resolution_summary") or {},
+        "image_size_summary": scan.get("image_size_summary") or {},
+        "tag_summary": scan.get("tag_summary") or {},
+        "trigger_candidates": scan.get("trigger_candidates") or [],
+        "trigger_consistency": scan.get("trigger_consistency") or {},
+    }
+    cur = conn.execute(
+        """
+        INSERT INTO dataset_versions(
+            dataset_id, version_no, trigger_word, image_count, caption_count,
+            missing_caption_count, broken_image_count, trigger_occurrence_count,
+            trigger_occurrence_rate, trigger_consistency_label, image_manifest_hash,
+            caption_manifest_hash, stats_json, created_at, memo
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            dataset_id,
+            version_no,
+            dataset["trigger_word"],
+            scan.get("image_count", 0),
+            scan.get("caption_count", 0),
+            scan.get("missing_caption_count", 0),
+            scan.get("broken_image_count", 0),
+            scan.get("trigger_word_count", 0),
+            scan.get("trigger_word_rate"),
+            (scan.get("trigger_consistency") or {}).get("label"),
+            manifest_hash(Path(dataset["path"]), image_manifest_entries(Path(dataset["path"]))),
+            manifest_hash(Path(dataset["path"]), caption_manifest_entries(Path(dataset["path"]))),
+            json.dumps(stats, ensure_ascii=False),
+            now,
+            memo,
+        ),
+    )
+    return int(cur.lastrowid)
+
+
+def manifest_hash(dataset_path: Path, entries: list[dict[str, Any]]) -> str:
+    payload = json.dumps(entries, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def image_manifest_entries(dataset_path: Path) -> list[dict[str, Any]]:
+    extensions = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+    entries = []
+    if not dataset_path.exists():
+        return entries
+    for path in sorted(p for p in dataset_path.rglob("*") if p.is_file() and p.suffix.lower() in extensions):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        entries.append(
+            {
+                "path": str(path.relative_to(dataset_path)),
+                "size": stat.st_size,
+                "mtime_ns": stat.st_mtime_ns,
+            }
+        )
+    return entries
+
+
+def caption_manifest_entries(dataset_path: Path) -> list[dict[str, Any]]:
+    entries = []
+    if not dataset_path.exists():
+        return entries
+    for path in sorted(p for p in dataset_path.rglob("*.txt") if p.is_file()):
+        try:
+            data = path.read_bytes()
+        except OSError:
+            continue
+        entries.append(
+            {
+                "path": str(path.relative_to(dataset_path)),
+                "sha256": hashlib.sha256(data).hexdigest(),
+            }
+        )
+    return entries
 
 
 def import_latest_environment(conn: sqlite3.Connection | None = None) -> None:
@@ -551,6 +653,13 @@ CREATE TABLE IF NOT EXISTS dataset_analysis (
     caption_without_images_json TEXT, broken_images_json TEXT, unsupported_files_json TEXT,
     analysis_json TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS dataset_versions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, dataset_id INTEGER NOT NULL, version_no INTEGER NOT NULL,
+    trigger_word TEXT, image_count INTEGER, caption_count INTEGER, missing_caption_count INTEGER,
+    broken_image_count INTEGER, trigger_occurrence_count INTEGER, trigger_occurrence_rate REAL,
+    trigger_consistency_label TEXT, image_manifest_hash TEXT, caption_manifest_hash TEXT,
+    stats_json TEXT, created_at TEXT NOT NULL, memo TEXT
+);
 CREATE TABLE IF NOT EXISTS sample_prompt_templates (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, purpose TEXT, prompts_json TEXT NOT NULL,
     is_builtin INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -565,6 +674,7 @@ CREATE TABLE IF NOT EXISTS training_jobs (
     parent_job_id INTEGER, sample_prompt_template_id TEXT,
     trigger_word_at_creation TEXT, trigger_occurrence_count_at_creation INTEGER,
     trigger_occurrence_rate_at_creation REAL, trigger_consistency_label_at_creation TEXT,
+    dataset_version_id INTEGER,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS training_metrics (

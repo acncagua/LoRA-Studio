@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app import settings
-from app.db import connect, create_job, fetch_all, fetch_one, import_latest_environment, init_db, insert_dataset, upsert_dataset_analysis
+from app.db import connect, create_dataset_version, create_job, fetch_all, fetch_one, import_latest_environment, init_db, insert_dataset, upsert_dataset_analysis
 from app.services.command_builder import prepare_job_files
 from app.services.output_collector import collect_job_results
 from app.services.training_runner import read_log_tail, start_job, stop_job
@@ -100,19 +100,23 @@ def dataset_detail(request: Request, dataset_id: int) -> HTMLResponse:
         dataset = fetch_one("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
         analysis = fetch_one("SELECT * FROM dataset_analysis WHERE dataset_id = ?", (dataset_id,))
     history = fetch_all("SELECT * FROM caption_edit_history WHERE dataset_id = ? ORDER BY id DESC LIMIT 10", (dataset_id,))
+    versions = fetch_all("SELECT * FROM dataset_versions WHERE dataset_id = ? ORDER BY version_no DESC", (dataset_id,))
     return render(
         request,
         "dataset_detail.html",
         dataset=dataset,
         analysis=decode_analysis(analysis),
         history=history,
+        versions=versions,
+        missing_trigger_captions=missing_trigger_caption_rows(dict(dataset))[:100],
         caption_preview=None,
+        restore_preview=None,
     )
 
 
 @app.post("/datasets/{dataset_id}/rescan")
 def dataset_rescan(dataset_id: int) -> RedirectResponse:
-    rescan_dataset(dataset_id)
+    rescan_dataset(dataset_id, memo="Manual rescan")
     return RedirectResponse(f"/datasets/{dataset_id}", status_code=303)
 
 
@@ -127,7 +131,7 @@ def dataset_update_trigger(dataset_id: int, trigger_word: str = Form(...)) -> Re
             "UPDATE datasets SET trigger_word = ?, updated_at = ? WHERE id = ?",
             (trigger_word.strip(), now, dataset_id),
         )
-    rescan_dataset(dataset_id)
+    rescan_dataset(dataset_id, memo=f"Updated trigger_word to {trigger_word.strip()}")
     return RedirectResponse(f"/datasets/{dataset_id}", status_code=303)
 
 
@@ -139,13 +143,17 @@ def dataset_caption_prepend_preview(request: Request, dataset_id: int, trigger_w
     analysis = fetch_one("SELECT * FROM dataset_analysis WHERE dataset_id = ?", (dataset_id,))
     preview = preview_caption_prepend(dict(dataset), trigger_word.strip() or dataset["trigger_word"] or "")
     history = fetch_all("SELECT * FROM caption_edit_history WHERE dataset_id = ? ORDER BY id DESC LIMIT 10", (dataset_id,))
+    versions = fetch_all("SELECT * FROM dataset_versions WHERE dataset_id = ? ORDER BY version_no DESC", (dataset_id,))
     return render(
         request,
         "dataset_detail.html",
         dataset=dataset,
         analysis=decode_analysis(analysis),
         history=history,
+        versions=versions,
+        missing_trigger_captions=missing_trigger_caption_rows(dict(dataset))[:100],
         caption_preview=preview,
+        restore_preview=None,
     )
 
 
@@ -181,7 +189,63 @@ def dataset_caption_prepend_confirm(
                 result["memo"],
             ),
         )
-    rescan_dataset(dataset_id)
+    rescan_dataset(dataset_id, memo=f"After caption prepend: {trigger_word.strip()}")
+    return RedirectResponse(f"/datasets/{dataset_id}", status_code=303)
+
+
+@app.post("/datasets/{dataset_id}/restore-preview", response_class=HTMLResponse)
+def dataset_restore_preview(request: Request, dataset_id: int, history_id: int = Form(...)) -> HTMLResponse:
+    dataset = fetch_one("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
+    history_row = fetch_one("SELECT * FROM caption_edit_history WHERE id = ? AND dataset_id = ?", (history_id, dataset_id))
+    if dataset is None or history_row is None:
+        raise HTTPException(status_code=404, detail="Dataset or history not found")
+    analysis = fetch_one("SELECT * FROM dataset_analysis WHERE dataset_id = ?", (dataset_id,))
+    history = fetch_all("SELECT * FROM caption_edit_history WHERE dataset_id = ? ORDER BY id DESC LIMIT 10", (dataset_id,))
+    versions = fetch_all("SELECT * FROM dataset_versions WHERE dataset_id = ? ORDER BY version_no DESC", (dataset_id,))
+    preview = preview_restore(dict(dataset), dict(history_row))
+    return render(
+        request,
+        "dataset_detail.html",
+        dataset=dataset,
+        analysis=decode_analysis(analysis),
+        history=history,
+        versions=versions,
+        missing_trigger_captions=missing_trigger_caption_rows(dict(dataset))[:100],
+        caption_preview=None,
+        restore_preview=preview,
+    )
+
+
+@app.post("/datasets/{dataset_id}/restore-confirm")
+def dataset_restore_confirm(dataset_id: int, history_id: int = Form(...), confirm: str = Form("")) -> RedirectResponse:
+    if confirm != "yes":
+        raise HTTPException(status_code=400, detail="Confirm checkbox is required.")
+    dataset = fetch_one("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
+    history_row = fetch_one("SELECT * FROM caption_edit_history WHERE id = ? AND dataset_id = ?", (history_id, dataset_id))
+    if dataset is None or history_row is None:
+        raise HTTPException(status_code=404, detail="Dataset or history not found")
+    result = apply_restore(dict(dataset), dict(history_row))
+    now = settings_now()
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO caption_edit_history(
+                dataset_id, action, trigger_word, changed_count, skipped_count,
+                backup_path, created_at, memo
+            )
+            VALUES (?, 'restore', ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                dataset_id,
+                dataset["trigger_word"],
+                result["changed_count"],
+                result["skipped_count"],
+                history_row["backup_path"],
+                now,
+                f"Restored captions from history #{history_id}",
+            ),
+        )
+    rescan_dataset(dataset_id, memo=f"After restore from history #{history_id}")
     return RedirectResponse(f"/datasets/{dataset_id}", status_code=303)
 
 
@@ -191,7 +255,7 @@ def sample_prompt_templates(request: Request) -> HTMLResponse:
     return render(request, "sample_prompt_templates.html", templates=templates_rows)
 
 
-def rescan_dataset(dataset_id: int) -> None:
+def rescan_dataset(dataset_id: int, memo: str = "Rescan") -> None:
     from app.services.dataset_scanner import scan_dataset
 
     dataset = fetch_one("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
@@ -220,6 +284,7 @@ def rescan_dataset(dataset_id: int) -> None:
             ),
         )
         upsert_dataset_analysis(conn, dataset_id, scan)
+        create_dataset_version(conn, dataset_id, scan, memo)
 
 
 def preview_caption_prepend(dataset: dict[str, Any], trigger_word: str) -> dict[str, Any]:
@@ -287,6 +352,79 @@ def caption_backup_path(dataset_id: int) -> Path:
     return settings.ROOT_DIR / "backups" / "datasets" / f"dataset_{dataset_id:06d}" / f"captions_{stamp}"
 
 
+def missing_trigger_caption_rows(dataset: dict[str, Any]) -> list[dict[str, str]]:
+    trigger_word = (dataset.get("trigger_word") or "").strip()
+    if not trigger_word:
+        return []
+    rows = []
+    dataset_path = Path(dataset["path"])
+    for caption_path in sorted(dataset_path.rglob("*.txt")):
+        try:
+            text = caption_path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        if trigger_word in text:
+            continue
+        image_path = matching_image_path(caption_path)
+        rows.append(
+            {
+                "caption_path": str(caption_path),
+                "image_filename": image_path.name if image_path else caption_path.with_suffix("").name,
+                "caption_filename": caption_path.name,
+                "preview": text.strip()[:240],
+            }
+        )
+    return rows
+
+
+def matching_image_path(caption_path: Path) -> Path | None:
+    for suffix in (".png", ".jpg", ".jpeg", ".webp", ".bmp"):
+        candidate = caption_path.with_suffix(suffix)
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def preview_restore(dataset: dict[str, Any], history_row: dict[str, Any]) -> dict[str, Any]:
+    backup_path = Path(history_row["backup_path"] or "")
+    dataset_path = Path(dataset["path"]).resolve()
+    rows = []
+    if not backup_path.exists():
+        return {"history_id": history_row["id"], "backup_path": str(backup_path), "changed_count": 0, "samples": [], "missing": True}
+    for backup_file in sorted(backup_path.rglob("*.txt")):
+        relative = backup_file.relative_to(backup_path)
+        target = dataset_path / relative
+        try:
+            before = target.read_text(encoding="utf-8") if target.exists() else ""
+            after = backup_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        rows.append({"path": str(target), "before": before, "after": after})
+    return {
+        "history_id": history_row["id"],
+        "backup_path": str(backup_path),
+        "changed_count": len(rows),
+        "samples": rows[:5],
+        "missing": False,
+    }
+
+
+def apply_restore(dataset: dict[str, Any], history_row: dict[str, Any]) -> dict[str, Any]:
+    preview = preview_restore(dataset, history_row)
+    if preview.get("missing"):
+        raise HTTPException(status_code=400, detail="Backup path does not exist.")
+    changed = 0
+    backup_path = Path(history_row["backup_path"])
+    dataset_path = Path(dataset["path"]).resolve()
+    for backup_file in sorted(backup_path.rglob("*.txt")):
+        relative = backup_file.relative_to(backup_path)
+        target = dataset_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(backup_file.read_text(encoding="utf-8"), encoding="utf-8")
+        changed += 1
+    return {"changed_count": changed, "skipped_count": 0}
+
+
 def settings_now() -> str:
     from app.db import utc_now
 
@@ -348,6 +486,7 @@ def job_detail(request: Request, job_id: int) -> HTMLResponse:
     metric_summary = fetch_one("SELECT * FROM training_metric_summaries WHERE job_id = ?", (job_id,))
     log_tail = read_log_tail(dict(job))
     selected_output = fetch_one("SELECT * FROM training_outputs WHERE job_id = ? AND selected = 1", (job_id,))
+    dataset_version = fetch_one("SELECT * FROM dataset_versions WHERE id = ?", (job["dataset_version_id"],)) if job["dataset_version_id"] else None
     return render(
         request,
         "job_detail.html",
@@ -364,6 +503,7 @@ def job_detail(request: Request, job_id: int) -> HTMLResponse:
         loss_chart=build_loss_chart(metrics),
         log_tail=log_tail,
         selected_output=selected_output,
+        dataset_version=dataset_version,
     )
 
 
@@ -691,6 +831,7 @@ def build_job_comparison(job_a: int, job_b: int) -> dict[str, Any]:
     return {
         "left": left,
         "right": right,
+        "warnings": compare_warnings(left, right),
         "param_rows": build_param_rows(left["params"], right["params"]),
         "metric_rows": build_metric_rows(left, right),
         "sample_groups": build_compare_sample_groups(left, right),
@@ -702,6 +843,7 @@ def load_compare_job(job_id: int) -> dict[str, Any]:
     if job is None:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
     dataset = fetch_one("SELECT * FROM datasets WHERE id = ?", (job["dataset_id"],))
+    dataset_version = fetch_one("SELECT * FROM dataset_versions WHERE id = ?", (job["dataset_version_id"],)) if job["dataset_version_id"] else None
     preset = fetch_one("SELECT * FROM presets WHERE id = ?", (job["preset_id"],))
     summary = fetch_one("SELECT * FROM training_metric_summaries WHERE job_id = ?", (job_id,))
     metrics = fetch_all("SELECT * FROM training_metrics WHERE job_id = ? ORDER BY step, id", (job_id,))
@@ -713,6 +855,7 @@ def load_compare_job(job_id: int) -> dict[str, Any]:
     return {
         "job": job,
         "dataset": dataset,
+        "dataset_version": dataset_version,
         "preset": preset,
         "summary": summary,
         "metrics": metrics,
@@ -724,6 +867,17 @@ def load_compare_job(job_id: int) -> dict[str, Any]:
         "loss_chart": build_loss_chart(metrics),
         "health_details": health_details(summary, len(metrics)),
     }
+
+
+def compare_warnings(left: dict[str, Any], right: dict[str, Any]) -> list[str]:
+    warnings = []
+    left_version = left["job"]["dataset_version_id"]
+    right_version = right["job"]["dataset_version_id"]
+    if left_version != right_version:
+        warnings.append("WARNING: These jobs were trained with different or unavailable dataset versions.")
+    if left["job"]["trigger_word_at_creation"] != right["job"]["trigger_word_at_creation"]:
+        warnings.append("WARNING: These jobs used different trigger_word values at creation.")
+    return warnings
 
 
 def build_param_rows(left_params: dict[str, Any], right_params: dict[str, Any]) -> list[dict[str, Any]]:
@@ -832,11 +986,23 @@ def write_comparison_markdown(comparison: dict[str, Any]) -> str:
         "## Jobs",
         f"- Job #{left_id}: {left['job']['name']} / {left['preset']['name'] if left['preset'] else '-'}",
         f"  - Parent Job: #{left['job']['parent_job_id']}" if left["job"]["parent_job_id"] else "  - Parent Job: -",
+        f"  - Dataset Version: {left['job']['dataset_version_id'] or 'snapshot unavailable'}",
+        f"  - Trigger at creation: {left['job']['trigger_word_at_creation'] or 'snapshot unavailable'}",
         f"- Job #{right_id}: {right['job']['name']} / {right['preset']['name'] if right['preset'] else '-'}",
         f"  - Parent Job: #{right['job']['parent_job_id']}" if right["job"]["parent_job_id"] else "  - Parent Job: -",
+        f"  - Dataset Version: {right['job']['dataset_version_id'] or 'snapshot unavailable'}",
+        f"  - Trigger at creation: {right['job']['trigger_word_at_creation'] or 'snapshot unavailable'}",
+        "",
+        "## Warnings",
+    ]
+    if comparison["warnings"]:
+        lines.extend(f"- {warning}" for warning in comparison["warnings"])
+    else:
+        lines.append("- No dataset version or trigger mismatch warnings.")
+    lines.extend([
         "",
         "## Parameter Differences",
-    ]
+    ])
     for row in comparison["param_rows"]:
         marker = "changed" if row["changed"] else "same"
         lines.append(f"- {row['key']}: {row['left']} | {row['right']} ({marker})")

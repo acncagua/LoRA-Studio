@@ -101,9 +101,21 @@ Dataset詳細の `Trigger Consistency` は以下の基準で表示します。
 
 Dataset詳細の `Top Tag Candidates` は、`1girl`、`solo`、`looking at viewer` などの一般タグを除外し、caption内で多く出る固有タグ候補を表示します。候補の `Use this as trigger_word` を押すとDatasetのtrigger_wordを変更し、Rescanします。
 
-独自triggerをcaptionへ追加する場合は `Prepend Trigger To Captions` を使います。必ず `Preview` で変更件数、skip件数、変更前後サンプル、backup pathを確認してから `Confirm` します。Confirm時は `backups/datasets/dataset_000004/captions_YYYYMMDD_HHMMSS/` のような場所へ元captionをコピーし、UTF-8でcaptionを書き戻します。初期版ではRestore操作はありませんが、backup pathはDataset詳細の履歴に残ります。
+独自triggerをcaptionへ追加する場合は `Prepend Trigger To Captions` を使います。必ず `Preview` で変更件数、skip件数、変更前後サンプル、backup pathを確認してから `Confirm` します。Confirm時は `backups/datasets/dataset_000004/captions_YYYYMMDD_HHMMSS/` のような場所へ元captionをコピーし、UTF-8でcaptionを書き戻します。
 
 既存Jobは作成済みのparamsやsample promptsを自動変更しません。新規Jobでは作成時のtrigger consistency snapshotを保存します。snapshotが無い既存Jobでは、現在のDataset分析とsample prompt内triggerの使用状況を参考表示します。
+
+`Captions Missing Trigger` では、現在のtrigger_wordを含まないcaptionを一覧できます。画像ファイル名、captionファイル名、caption previewを確認して、prepend対象が妥当か見ます。
+
+`Caption Edit History` の `Restore Preview` では、backup_pathからcaptionを復元する前に、現在値と復元後のサンプルを確認できます。`Confirm Restore` を実行すると、backup時点のcaptionへ戻し、Rescanと新しいDataset version作成を行います。
+
+## Dataset Version
+
+DatasetをRescanした時やcaption編集後には `dataset_versions` に状態スナップショットを残します。versionにはtrigger_word、画像数、caption数、trigger出現数、consistency label、画像manifest hash、caption manifest hash、統計JSONを保存します。
+
+Job作成時には、その時点の最新 `dataset_version_id` を `training_jobs` に保存します。これにより、caption整備前のJobと整備後のJobを比較するときに、どのDataset状態で学習したかを区別できます。古いJobで `dataset_version_id` が無い場合は `snapshot unavailable` と表示します。
+
+Dataset詳細の `Dataset Versions` では、各versionのtrigger出現率とmemoを確認できます。caption編集前後を比較するときは、編集前versionと編集後versionのtrigger consistencyがどう変わったかを見てください。
 
 ## Job派生
 
@@ -156,7 +168,9 @@ Integration Smokeのようにstep数が極端に少ないジョブでは、loss 
 
 DashboardのRecent Jobsで2件にチェックを入れて `Compare Selected` を押すか、`/compare?job_a=4&job_b=5` のようにURLを指定すると比較画面を開けます。
 
-比較画面では、基本情報、親Job、プリセット、base model、採用LoRA、主要パラメータ差分、metrics差分、lossグラフ、prompt別sample画像を横並びで確認できます。Standard PilotとGeneralize Pilotは、同じデータセット、同じbase modelで作成し、両方の `expected_total_steps` と `actual_max_step` が概ね一致していることを確認してからsampleを比較します。
+比較画面では、基本情報、親Job、Dataset version、trigger at creation、プリセット、base model、採用LoRA、主要パラメータ差分、metrics差分、lossグラフ、prompt別sample画像を横並びで確認できます。Standard PilotとGeneralize Pilotは、同じデータセット、同じbase modelで作成し、両方の `expected_total_steps` と `actual_max_step` が概ね一致していることを確認してからsampleを比較します。
+
+比較対象Jobの `dataset_version_id` が異なる、または古いJobでsnapshotが無い場合は警告を表示します。caption整備前の旧Jobと整備後の新Jobは、純粋な品質比較ではなく、Dataset条件差を含む参考比較として扱ってください。`trigger_word_at_creation` が異なる場合も同様に注意が必要です。
 
 比較結果は `Export Markdown` で `runs/comparisons/compare_job_000004_job_000005.md` のようなMarkdownへ出力できます。MarkdownにはJob ID、プリセット名、パラメータ差分、metrics差分、selected LoRA、人間メモ、health注意、sampleファイル名を記録します。
 
@@ -165,13 +179,16 @@ DashboardのRecent Jobsで2件にチェックを入れて `Compare Selected` を
 1. Datasetsでデータセットを登録する。
 2. Rescanする。
 3. Dataset Inspectorで画像、caption、trigger word、タグ傾向、Trigger Consistencyを確認する。
-4. triggerが0件なら、既存タグをtriggerにするか、Preview/Confirm付きでcaptionへtriggerを追加する。
-5. 再度Rescanする。
-6. `Integration Smoke - SDXL` で結合確認をする。
-7. `Pilot 3 Epoch` と必要なら `Pilot Generalize 3 Epoch` を実行する。
-8. Compare画面でloss health、step整合性、epoch別sample、rating/memo、selected LoRAを比較する。
-9. 良さそうなJobをCloneし、Quick VariantでLRやdimを小さく変えて再確認する。
-10. Standard本学習または長めの実用設定へ進む。
+4. `Captions Missing Trigger` でtrigger欠落captionを確認する。
+5. triggerが0件または不足しているなら、既存タグをtriggerにするか、Preview/Confirm付きでcaptionへtriggerを追加する。
+6. backup_pathとDataset versionが作られたことを確認する。
+7. 必要ならRestore Preview/Confirmでテスト復元する。
+8. 再度Rescanし、Trigger ConsistencyとDataset versionを確認する。
+9. `Integration Smoke - SDXL` で結合確認をする。
+10. `Pilot 3 Epoch` と必要なら `Pilot Generalize 3 Epoch` を実行する。
+11. Compare画面でDataset version差分、loss health、step整合性、epoch別sample、rating/memo、selected LoRAを比較する。
+12. 良さそうなJobをCloneし、Quick VariantでLRやdimを小さく変えて再確認する。
+13. Standard本学習または長めの実用設定へ進む。
 
 ## 既知の制限
 

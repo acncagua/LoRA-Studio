@@ -34,6 +34,12 @@
 {% else %}
 {% set left = comparison.left %}
 {% set right = comparison.right %}
+{% if comparison.warnings %}
+<section>
+  <h2>Dataset Version Warnings</h2>
+  {% for warning in comparison.warnings %}<p class="notice warning">{{ warning }}</p>{% endfor %}
+</section>
+{% endif %}
 <section class="compare-columns">
   {% for bundle in [left, right] %}
   <div>
@@ -42,6 +48,8 @@
       <dt>Preset</dt><dd>{{ bundle.preset.name if bundle.preset else '-' }}</dd>
       <dt>Parent Job</dt><dd>{% if bundle.job.parent_job_id %}<a href="/jobs/{{ bundle.job.parent_job_id }}">#{{ bundle.job.parent_job_id }}</a>{% else %}-{% endif %}</dd>
       <dt>Dataset</dt><dd>{{ bundle.dataset.name if bundle.dataset else '-' }}</dd>
+      <dt>Dataset Version</dt><dd>{% if bundle.dataset_version %}v{{ bundle.dataset_version.version_no }} (#{{ bundle.dataset_version.id }}){% else %}snapshot unavailable{% endif %}</dd>
+      <dt>Trigger at Creation</dt><dd>{{ bundle.job.trigger_word_at_creation or 'snapshot unavailable' }}</dd>
       <dt>Base Model</dt><dd>{{ bundle.job.base_model_path }}</dd>
       <dt>Status</dt><dd>{{ bundle.job.status }}</dd>
       <dt>Elapsed</dt><dd>{{ bundle.job.elapsed_seconds if bundle.job.elapsed_seconds is not none else '-' }}</dd>

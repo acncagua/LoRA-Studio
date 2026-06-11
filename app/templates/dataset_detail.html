@@ -58,6 +58,40 @@
   </div>
 </section>
 <section>
+  <h2>Dataset Versions</h2>
+  <table>
+    <thead><tr><th>Version</th><th>Created</th><th>Trigger</th><th>Images / Captions</th><th>Occurrence</th><th>Status</th><th>Memo</th></tr></thead>
+    <tbody>
+      {% for version in versions %}
+      <tr>
+        <td>v{{ version.version_no }} (#{{ version.id }})</td>
+        <td>{{ version.created_at }}</td>
+        <td>{{ version.trigger_word or '-' }}</td>
+        <td>{{ version.image_count or 0 }} / {{ version.caption_count or 0 }}</td>
+        <td>{{ version.trigger_occurrence_count or 0 }} / {{ version.caption_count or 0 }}{% if version.trigger_occurrence_rate is not none %} ({{ '%.1f%%'|format(version.trigger_occurrence_rate * 100) }}){% endif %}</td>
+        <td><span class="label {{ (version.trigger_consistency_label or 'unknown')|lower }}">{{ version.trigger_consistency_label or 'UNKNOWN' }}</span></td>
+        <td>{{ version.memo or '-' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="muted">No dataset versions yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+<section>
+  <h2>Captions Missing Trigger</h2>
+  <table>
+    <thead><tr><th>Image</th><th>Caption</th><th>Caption Preview</th></tr></thead>
+    <tbody>
+      {% for row in missing_trigger_captions %}
+      <tr><td>{{ row.image_filename }}</td><td>{{ row.caption_filename }}</td><td>{{ row.preview }}</td></tr>
+      {% else %}
+      <tr><td colspan="3" class="muted">All readable captions include the current trigger_word.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+<section>
   <h2>Prepend Trigger To Captions</h2>
   <p class="muted">Preview first. Confirm creates a backup and rewrites only captions that do not already contain the trigger_word.</p>
   <form method="post" action="/datasets/{{ dataset.id }}/caption-prepend-preview" class="form-grid">
@@ -109,12 +143,39 @@
   <div><h2>Unsupported Files</h2><ul>{% for item in analysis.unsupported_files[:50] %}<li>{{ item }}</li>{% else %}<li class="muted">None</li>{% endfor %}</ul></div>
 </section>
 <section><h2>Caption Edit History</h2>
-  <table><thead><tr><th>ID</th><th>Action</th><th>Trigger</th><th>Changed</th><th>Skipped</th><th>Backup</th><th>Created</th></tr></thead><tbody>
+  <table><thead><tr><th>ID</th><th>Action</th><th>Trigger</th><th>Changed</th><th>Skipped</th><th>Backup</th><th>Created</th><th></th></tr></thead><tbody>
     {% for row in history %}
-    <tr><td>#{{ row.id }}</td><td>{{ row.action }}</td><td>{{ row.trigger_word }}</td><td>{{ row.changed_count }}</td><td>{{ row.skipped_count }}</td><td>{{ row.backup_path }}</td><td>{{ row.created_at }}</td></tr>
+    <tr>
+      <td>#{{ row.id }}</td><td>{{ row.action }}</td><td>{{ row.trigger_word }}</td><td>{{ row.changed_count }}</td><td>{{ row.skipped_count }}</td><td>{{ row.backup_path }}</td><td>{{ row.created_at }}</td>
+      <td><form method="post" action="/datasets/{{ dataset.id }}/restore-preview"><input type="hidden" name="history_id" value="{{ row.id }}"><button type="submit">Restore Preview</button></form></td>
+    </tr>
     {% else %}
-    <tr><td colspan="7" class="muted">No caption edits yet.</td></tr>
+    <tr><td colspan="8" class="muted">No caption edits yet.</td></tr>
     {% endfor %}
   </tbody></table>
+  {% if restore_preview %}
+  <div class="notice">
+    <p>Restore from history #{{ restore_preview.history_id }}: {{ restore_preview.changed_count }} caption files.</p>
+    <p>Backup path: {{ restore_preview.backup_path }}</p>
+    {% if restore_preview.missing %}<p class="warning">Backup path does not exist.</p>{% endif %}
+    {% if not restore_preview.missing %}
+    <form method="post" action="/datasets/{{ dataset.id }}/restore-confirm">
+      <input type="hidden" name="history_id" value="{{ restore_preview.history_id }}">
+      <label><input type="checkbox" name="confirm" value="yes"> Confirm restore from backup</label>
+      <button type="submit" class="danger">Confirm Restore</button>
+    </form>
+    {% endif %}
+  </div>
+  <table>
+    <thead><tr><th>File</th><th>Current</th><th>Restored</th></tr></thead>
+    <tbody>
+      {% for item in restore_preview.samples %}
+      <tr><td>{{ item.path }}</td><td><pre>{{ item.before }}</pre></td><td><pre>{{ item.after }}</pre></td></tr>
+      {% else %}
+      <tr><td colspan="3" class="muted">No restore samples.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
 </section>
 {% endblock %}

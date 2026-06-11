@@ -23,6 +23,7 @@
       <dt>Script</dt><dd>{{ job.training_script }}</dd>
       <dt>Parent Job</dt><dd>{% if job.parent_job_id %}<a href="/jobs/{{ job.parent_job_id }}">#{{ job.parent_job_id }}</a>{% else %}-{% endif %}</dd>
       <dt>Prompt Template</dt><dd>{{ job.sample_prompt_template_id or '-' }}</dd>
+      <dt>Dataset Version</dt><dd>{% if dataset_version %}v{{ dataset_version.version_no }} (#{{ dataset_version.id }}){% else %}snapshot unavailable{% endif %}</dd>
       <dt>PID</dt><dd>{{ job.process_id or '-' }}</dd>
       <dt>Return Code</dt><dd>{{ job.return_code if job.return_code is not none else '-' }}</dd>
       <dt>Started</dt><dd>{{ job.start_time or '-' }}</dd>
@@ -55,6 +56,7 @@
     <div>
       <dl>
         <dt>Creation snapshot</dt><dd>{{ trigger_status.snapshot_message }}</dd>
+        <dt>Dataset version</dt><dd>{% if job.dataset_version_id %}#{{ job.dataset_version_id }}{% else %}snapshot unavailable{% endif %}</dd>
         <dt>Job label</dt><dd><span class="label {{ (trigger_status.label or 'unknown')|lower }}">{{ trigger_status.label or 'UNKNOWN' }}</span></dd>
         <dt>Sample prompts</dt><dd>{{ trigger_status.sample_prompt_message }}</dd>
         <dt>Note</dt><dd>Caption trigger consistency and sample prompt trigger usage should match for reliable evaluation.</dd>
