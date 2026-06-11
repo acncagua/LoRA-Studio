@@ -6,6 +6,9 @@ __pycache__/
 # Local runtime data
 data/*.db
 data/*.db-*
+models/
+datasets/*
+!datasets/.gitkeep
 logs/*.log
 logs/*.json
 runs/job_*/
