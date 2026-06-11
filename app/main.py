@@ -1,6 +1,8 @@
 ﻿from __future__ import annotations
 
 import json
+import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -97,11 +99,88 @@ def dataset_detail(request: Request, dataset_id: int) -> HTMLResponse:
         rescan_dataset(dataset_id)
         dataset = fetch_one("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
         analysis = fetch_one("SELECT * FROM dataset_analysis WHERE dataset_id = ?", (dataset_id,))
-    return render(request, "dataset_detail.html", dataset=dataset, analysis=decode_analysis(analysis))
+    history = fetch_all("SELECT * FROM caption_edit_history WHERE dataset_id = ? ORDER BY id DESC LIMIT 10", (dataset_id,))
+    return render(
+        request,
+        "dataset_detail.html",
+        dataset=dataset,
+        analysis=decode_analysis(analysis),
+        history=history,
+        caption_preview=None,
+    )
 
 
 @app.post("/datasets/{dataset_id}/rescan")
 def dataset_rescan(dataset_id: int) -> RedirectResponse:
+    rescan_dataset(dataset_id)
+    return RedirectResponse(f"/datasets/{dataset_id}", status_code=303)
+
+
+@app.post("/datasets/{dataset_id}/update-trigger")
+def dataset_update_trigger(dataset_id: int, trigger_word: str = Form(...)) -> RedirectResponse:
+    dataset = fetch_one("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    now = settings_now()
+    with connect() as conn:
+        conn.execute(
+            "UPDATE datasets SET trigger_word = ?, updated_at = ? WHERE id = ?",
+            (trigger_word.strip(), now, dataset_id),
+        )
+    rescan_dataset(dataset_id)
+    return RedirectResponse(f"/datasets/{dataset_id}", status_code=303)
+
+
+@app.post("/datasets/{dataset_id}/caption-prepend-preview", response_class=HTMLResponse)
+def dataset_caption_prepend_preview(request: Request, dataset_id: int, trigger_word: str = Form("")) -> HTMLResponse:
+    dataset = fetch_one("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    analysis = fetch_one("SELECT * FROM dataset_analysis WHERE dataset_id = ?", (dataset_id,))
+    preview = preview_caption_prepend(dict(dataset), trigger_word.strip() or dataset["trigger_word"] or "")
+    history = fetch_all("SELECT * FROM caption_edit_history WHERE dataset_id = ? ORDER BY id DESC LIMIT 10", (dataset_id,))
+    return render(
+        request,
+        "dataset_detail.html",
+        dataset=dataset,
+        analysis=decode_analysis(analysis),
+        history=history,
+        caption_preview=preview,
+    )
+
+
+@app.post("/datasets/{dataset_id}/caption-prepend-confirm")
+def dataset_caption_prepend_confirm(
+    dataset_id: int,
+    trigger_word: str = Form(...),
+    confirm: str = Form(""),
+) -> RedirectResponse:
+    if confirm != "yes":
+        raise HTTPException(status_code=400, detail="Confirm checkbox is required.")
+    dataset = fetch_one("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    result = apply_caption_prepend(dict(dataset), trigger_word.strip())
+    now = settings_now()
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO caption_edit_history(
+                dataset_id, action, trigger_word, changed_count, skipped_count,
+                backup_path, created_at, memo
+            )
+            VALUES (?, 'prepend_trigger', ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                dataset_id,
+                trigger_word.strip(),
+                result["changed_count"],
+                result["skipped_count"],
+                result["backup_path"],
+                now,
+                result["memo"],
+            ),
+        )
     rescan_dataset(dataset_id)
     return RedirectResponse(f"/datasets/{dataset_id}", status_code=303)
 
@@ -143,6 +222,71 @@ def rescan_dataset(dataset_id: int) -> None:
         upsert_dataset_analysis(conn, dataset_id, scan)
 
 
+def preview_caption_prepend(dataset: dict[str, Any], trigger_word: str) -> dict[str, Any]:
+    rows = caption_prepend_rows(dataset, trigger_word)
+    changed = [row for row in rows if row["status"] == "change"]
+    skipped = [row for row in rows if row["status"] != "change"]
+    backup_path = caption_backup_path(int(dataset["id"]))
+    return {
+        "trigger_word": trigger_word,
+        "changed_count": len(changed),
+        "skipped_count": len(skipped),
+        "backup_path": str(backup_path),
+        "samples": changed[:5],
+        "warnings": [row for row in rows if row["status"] == "warning"][:20],
+    }
+
+
+def apply_caption_prepend(dataset: dict[str, Any], trigger_word: str) -> dict[str, Any]:
+    rows = caption_prepend_rows(dataset, trigger_word)
+    changed = [row for row in rows if row["status"] == "change"]
+    skipped_count = len(rows) - len(changed)
+    backup_dir = caption_backup_path(int(dataset["id"]))
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    dataset_path = Path(dataset["path"]).resolve()
+    for row in changed:
+        caption_path = Path(row["path"])
+        relative = caption_path.resolve().relative_to(dataset_path)
+        backup_file = backup_dir / relative
+        backup_file.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(caption_path, backup_file)
+        caption_path.write_text(row["after"], encoding="utf-8")
+    return {
+        "changed_count": len(changed),
+        "skipped_count": skipped_count,
+        "backup_path": str(backup_dir),
+        "memo": "Prepended trigger_word to captions that did not already contain it.",
+    }
+
+
+def caption_prepend_rows(dataset: dict[str, Any], trigger_word: str) -> list[dict[str, str]]:
+    if not trigger_word:
+        return []
+    dataset_path = Path(dataset["path"])
+    rows = []
+    for caption_path in sorted(dataset_path.rglob("*.txt")):
+        try:
+            before = caption_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            rows.append({"path": str(caption_path), "status": "warning", "before": "", "after": "Unreadable as UTF-8; skipped."})
+            continue
+        except OSError as exc:
+            rows.append({"path": str(caption_path), "status": "warning", "before": "", "after": f"{exc}; skipped."})
+            continue
+        if trigger_word in before:
+            rows.append({"path": str(caption_path), "status": "skip", "before": before, "after": before})
+            continue
+        stripped = before.strip()
+        after = f"{trigger_word}, {stripped}\n" if stripped else f"{trigger_word}\n"
+        rows.append({"path": str(caption_path), "status": "change", "before": before, "after": after})
+    return rows
+
+
+def caption_backup_path(dataset_id: int) -> Path:
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return settings.ROOT_DIR / "backups" / "datasets" / f"dataset_{dataset_id:06d}" / f"captions_{stamp}"
+
+
 def settings_now() -> str:
     from app.db import utc_now
 
@@ -162,6 +306,7 @@ def decode_analysis(row: Any) -> dict[str, Any]:
         "broken_images_json",
         "unsupported_files_json",
         "analysis_json",
+        "trigger_candidates_json",
     ):
         value = decoded.get(key)
         decoded[key.removesuffix("_json")] = json.loads(value) if value else {} if key.endswith("summary_json") or key == "analysis_json" else []
@@ -173,7 +318,15 @@ def job_new(request: Request) -> HTMLResponse:
     datasets = fetch_all("SELECT * FROM datasets ORDER BY id DESC")
     presets = fetch_all("SELECT * FROM presets ORDER BY model_family DESC, name")
     sample_prompt_templates = fetch_all("SELECT * FROM sample_prompt_templates ORDER BY is_builtin DESC, name")
-    return render(request, "job_create.html", datasets=datasets, presets=presets, sample_prompt_templates=sample_prompt_templates)
+    trigger_infos = {row["dataset_id"]: row for row in fetch_all("SELECT * FROM dataset_analysis")}
+    return render(
+        request,
+        "job_create.html",
+        datasets=datasets,
+        presets=presets,
+        sample_prompt_templates=sample_prompt_templates,
+        trigger_infos=trigger_infos,
+    )
 
 
 @app.post("/jobs")
@@ -207,6 +360,7 @@ def job_detail(request: Request, job_id: int) -> HTMLResponse:
         metrics=metrics,
         metric_summary=metric_summary,
         health_details=health_details(metric_summary, len(metrics)),
+        trigger_status=job_trigger_status(job, dataset, sample_prompts),
         loss_chart=build_loss_chart(metrics),
         log_tail=log_tail,
         selected_output=selected_output,
@@ -228,9 +382,9 @@ def job_prepare(job_id: int) -> RedirectResponse:
 
 
 @app.post("/jobs/{job_id}/run")
-def job_run(job_id: int) -> RedirectResponse:
+def job_run(job_id: int, acknowledge_trigger_mismatch: str = Form("")) -> RedirectResponse:
     try:
-        start_job(job_id)
+        start_job(job_id, acknowledge_trigger_mismatch=acknowledge_trigger_mismatch == "yes")
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return RedirectResponse(f"/jobs/{job_id}", status_code=303)
@@ -385,6 +539,56 @@ def copy_sample_prompts(source_job_id: int, target_job_id: int) -> None:
                 for row in rows
             ],
         )
+
+
+def job_trigger_status(job: Any, dataset: Any, sample_prompts: list[Any]) -> dict[str, Any]:
+    if dataset is None:
+        return {
+            "label": "UNKNOWN",
+            "message": "Dataset is unavailable.",
+            "snapshot_message": "snapshot unavailable",
+            "sample_prompt_uses_trigger": None,
+            "sample_prompt_message": "Sample prompts are unavailable.",
+        }
+    analysis = fetch_one("SELECT * FROM dataset_analysis WHERE dataset_id = ?", (dataset["id"],))
+    trigger_word = dataset["trigger_word"] or ""
+    current_label = analysis["trigger_consistency_label"] if analysis else "UNKNOWN"
+    current_count = analysis["trigger_word_count"] if analysis else None
+    current_rate = analysis["trigger_word_rate"] if analysis else None
+    current_message = analysis["trigger_consistency_message"] if analysis else "No current dataset analysis."
+    snapshot_label = job["trigger_consistency_label_at_creation"] if "trigger_consistency_label_at_creation" in job.keys() else None
+    snapshot_word = job["trigger_word_at_creation"] if "trigger_word_at_creation" in job.keys() else None
+    snapshot_count = job["trigger_occurrence_count_at_creation"] if "trigger_occurrence_count_at_creation" in job.keys() else None
+    snapshot_rate = job["trigger_occurrence_rate_at_creation"] if "trigger_occurrence_rate_at_creation" in job.keys() else None
+    if snapshot_label:
+        snapshot_message = (
+            f"created with trigger '{snapshot_word or '-'}': "
+            f"{snapshot_label} ({snapshot_count if snapshot_count is not None else '-'})"
+        )
+    else:
+        snapshot_message = f"snapshot unavailable; current dataset trigger consistency is {current_label}"
+    prompts = [row["prompt"] for row in sample_prompts]
+    if not prompts:
+        sample_prompt_uses_trigger = None
+        sample_prompt_message = "No sample prompts have been prepared yet."
+    else:
+        sample_prompt_uses_trigger = bool(trigger_word and any(trigger_word in prompt for prompt in prompts))
+        sample_prompt_message = f"sample prompt uses trigger_word: {'yes' if sample_prompt_uses_trigger else 'no'}"
+        if sample_prompt_uses_trigger and current_label == "ERROR":
+            sample_prompt_message += "; sample prompt uses trigger_word, but captions do not contain it. Evaluation may be invalid."
+        elif not sample_prompt_uses_trigger and trigger_word:
+            sample_prompt_message += "; sample prompts do not use the current dataset trigger_word."
+    return {
+        "label": snapshot_label or current_label,
+        "message": current_message,
+        "trigger_word": trigger_word,
+        "current_count": current_count,
+        "current_rate": current_rate,
+        "current_label": current_label,
+        "snapshot_message": snapshot_message,
+        "sample_prompt_uses_trigger": sample_prompt_uses_trigger,
+        "sample_prompt_message": sample_prompt_message,
+    }
 
 
 def apply_variant(params: dict[str, Any], variant: str) -> str:

@@ -4,7 +4,12 @@
   <h1>#{{ job.id }} {{ job.name }}</h1>
   <div class="actions">
     <form method="post" action="/jobs/{{ job.id }}/prepare"><button type="submit">Prepare Files</button></form>
-    <form method="post" action="/jobs/{{ job.id }}/run"><button type="submit">Run</button></form>
+    <form method="post" action="/jobs/{{ job.id }}/run">
+      {% if trigger_status.current_label == 'ERROR' %}
+      <label><input type="checkbox" name="acknowledge_trigger_mismatch" value="yes"> acknowledge trigger mismatch</label>
+      {% endif %}
+      <button type="submit">Run</button>
+    </form>
     <form method="post" action="/jobs/{{ job.id }}/stop"><button type="submit" class="danger">Stop</button></form>
     <form method="post" action="/jobs/{{ job.id }}/reimport"><button type="submit">Reimport Results</button></form>
   </div>
@@ -34,6 +39,27 @@
     {% if dataset %}<dl><dt>Name</dt><dd>{{ dataset.name }}</dd><dt>Images</dt><dd>{{ dataset.image_count }}</dd><dt>Path</dt><dd>{{ dataset.path }}</dd></dl>{% endif %}
     <h2>Selected LoRA</h2>
     <p>{{ job.adopted_model_path or 'Not selected yet.' }}</p>
+  </div>
+</section>
+<section>
+  <h2>Trigger / Prompt Consistency</h2>
+  <div class="panel-grid">
+    <div>
+      <dl>
+        <dt>Current trigger_word</dt><dd>{{ trigger_status.trigger_word or '-' }}</dd>
+        <dt>Current captions</dt><dd>{{ trigger_status.current_count if trigger_status.current_count is not none else '-' }} / {{ dataset.caption_count if dataset else '-' }}{% if trigger_status.current_rate is not none %} ({{ '%.1f%%'|format(trigger_status.current_rate * 100) }}){% endif %}</dd>
+        <dt>Current status</dt><dd><span class="label {{ (trigger_status.current_label or 'unknown')|lower }}">{{ trigger_status.current_label or 'UNKNOWN' }}</span></dd>
+        <dt>Current message</dt><dd>{{ trigger_status.message }}</dd>
+      </dl>
+    </div>
+    <div>
+      <dl>
+        <dt>Creation snapshot</dt><dd>{{ trigger_status.snapshot_message }}</dd>
+        <dt>Job label</dt><dd><span class="label {{ (trigger_status.label or 'unknown')|lower }}">{{ trigger_status.label or 'UNKNOWN' }}</span></dd>
+        <dt>Sample prompts</dt><dd>{{ trigger_status.sample_prompt_message }}</dd>
+        <dt>Note</dt><dd>Caption trigger consistency and sample prompt trigger usage should match for reliable evaluation.</dd>
+      </dl>
+    </div>
   </div>
 </section>
 <section class="panel-grid">

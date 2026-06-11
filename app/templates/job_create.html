@@ -1,5 +1,23 @@
 {% extends "base.html" %}{% block content %}
 <header class="page-head"><h1>Create Job</h1></header>
+<section>
+  <h2>Dataset Trigger Consistency</h2>
+  <table>
+    <thead><tr><th>Dataset</th><th>Trigger</th><th>Occurrence</th><th>Status</th><th>Message</th></tr></thead>
+    <tbody>
+      {% for dataset in datasets %}
+      {% set info = trigger_infos.get(dataset.id) %}
+      <tr>
+        <td>#{{ dataset.id }} {{ dataset.name }}</td>
+        <td>{{ dataset.trigger_word or '-' }}</td>
+        <td>{% if info %}{{ info.trigger_word_count or 0 }} / {{ dataset.caption_count or 0 }}{% else %}-{% endif %}</td>
+        <td><span class="label {{ (info.trigger_consistency_label if info else 'unknown')|lower }}">{{ info.trigger_consistency_label if info else 'UNKNOWN' }}</span></td>
+        <td>{{ info.trigger_consistency_message if info else 'Rescan the dataset to calculate trigger consistency.' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
 <form method="post" action="/jobs" class="form-grid wide">
   <label>Name<input name="name" required></label>
   <label>Dataset<select name="dataset_id" required>{% for dataset in datasets %}<option value="{{ dataset.id }}">#{{ dataset.id }} {{ dataset.name }}</option>{% endfor %}</select></label>

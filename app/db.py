@@ -75,6 +75,10 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "step_consistency_message": "TEXT",
             "parent_job_id": "INTEGER",
             "sample_prompt_template_id": "TEXT",
+            "trigger_word_at_creation": "TEXT",
+            "trigger_occurrence_count_at_creation": "INTEGER",
+            "trigger_occurrence_rate_at_creation": "REAL",
+            "trigger_consistency_label_at_creation": "TEXT",
             "updated_at": "TEXT",
         },
     )
@@ -99,6 +103,15 @@ def run_migrations(conn: sqlite3.Connection) -> None:
     )
     ensure_columns(conn, "training_outputs", {"selected": "INTEGER NOT NULL DEFAULT 0", "memo": "TEXT"})
     ensure_columns(conn, "sample_images", {"rating": "INTEGER", "memo": "TEXT"})
+    ensure_columns(
+        conn,
+        "dataset_analysis",
+        {
+            "trigger_consistency_label": "TEXT",
+            "trigger_consistency_message": "TEXT",
+            "trigger_candidates_json": "TEXT",
+        },
+    )
     conn.executescript(
         """
         CREATE UNIQUE INDEX IF NOT EXISTS idx_training_outputs_job_path
@@ -260,8 +273,14 @@ def create_job(data: dict[str, Any]) -> int:
     preset = fetch_one("SELECT * FROM presets WHERE id = ?", (data["preset_id"],))
     if preset is None:
         raise ValueError(f"Preset not found: {data['preset_id']}")
+    dataset = fetch_one("SELECT * FROM datasets WHERE id = ?", (int(data["dataset_id"]),))
+    analysis = fetch_one("SELECT * FROM dataset_analysis WHERE dataset_id = ?", (int(data["dataset_id"]),))
     params = data.get("params") or json.loads(preset["params_json"])
     output_name = data.get("output_name") or data["name"].replace(" ", "_")
+    trigger_word = dataset["trigger_word"] if dataset else None
+    trigger_count = analysis["trigger_word_count"] if analysis else None
+    trigger_rate = analysis["trigger_word_rate"] if analysis else None
+    trigger_label = analysis["trigger_consistency_label"] if analysis and "trigger_consistency_label" in analysis.keys() else None
     with connect() as conn:
         cur = conn.execute(
             """
@@ -270,7 +289,9 @@ def create_job(data: dict[str, Any]) -> int:
                 training_script, base_model_path, vae_path, output_name, output_dir,
                 run_dir, params_json, memo, created_at, updated_at
                 , parent_job_id, sample_prompt_template_id
-            ) VALUES (?, ?, ?, NULL, 'draft', ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?)
+                , trigger_word_at_creation, trigger_occurrence_count_at_creation,
+                trigger_occurrence_rate_at_creation, trigger_consistency_label_at_creation
+            ) VALUES (?, ?, ?, NULL, 'draft', ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 data["name"], int(data["dataset_id"]), data["preset_id"],
@@ -278,6 +299,7 @@ def create_job(data: dict[str, Any]) -> int:
                 data.get("vae_path") or None, output_name,
                 json.dumps(params, ensure_ascii=False, indent=2), data.get("memo") or "", now, now,
                 data.get("parent_job_id"), data.get("sample_prompt_template_id") or None,
+                trigger_word, trigger_count, trigger_rate, trigger_label,
             ),
         )
         job_id = int(cur.lastrowid)
@@ -297,10 +319,11 @@ def upsert_dataset_analysis(conn: sqlite3.Connection, dataset_id: int, scan: dic
             dataset_id, supported_image_count, unsupported_file_count, broken_image_count,
             empty_caption_count, unreadable_caption_count, caption_encoding_summary_json,
             image_size_summary_json, tag_summary_json, trigger_word_count, trigger_word_rate,
+            trigger_consistency_label, trigger_consistency_message, trigger_candidates_json,
             missing_caption_images_json, caption_without_images_json, broken_images_json,
             unsupported_files_json, analysis_json, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(dataset_id) DO UPDATE SET
             supported_image_count = excluded.supported_image_count,
             unsupported_file_count = excluded.unsupported_file_count,
@@ -312,6 +335,9 @@ def upsert_dataset_analysis(conn: sqlite3.Connection, dataset_id: int, scan: dic
             tag_summary_json = excluded.tag_summary_json,
             trigger_word_count = excluded.trigger_word_count,
             trigger_word_rate = excluded.trigger_word_rate,
+            trigger_consistency_label = excluded.trigger_consistency_label,
+            trigger_consistency_message = excluded.trigger_consistency_message,
+            trigger_candidates_json = excluded.trigger_candidates_json,
             missing_caption_images_json = excluded.missing_caption_images_json,
             caption_without_images_json = excluded.caption_without_images_json,
             broken_images_json = excluded.broken_images_json,
@@ -331,6 +357,9 @@ def upsert_dataset_analysis(conn: sqlite3.Connection, dataset_id: int, scan: dic
             json.dumps(scan.get("tag_summary") or {}, ensure_ascii=False),
             scan.get("trigger_word_count", 0),
             scan.get("trigger_word_rate"),
+            (scan.get("trigger_consistency") or {}).get("label"),
+            (scan.get("trigger_consistency") or {}).get("message"),
+            json.dumps(scan.get("trigger_candidates") or [], ensure_ascii=False),
             json.dumps(scan.get("missing_caption_images") or [], ensure_ascii=False),
             json.dumps(scan.get("caption_without_images") or [], ensure_ascii=False),
             json.dumps(scan.get("broken_images") or [], ensure_ascii=False),
@@ -517,7 +546,8 @@ CREATE TABLE IF NOT EXISTS dataset_analysis (
     dataset_id INTEGER PRIMARY KEY, supported_image_count INTEGER, unsupported_file_count INTEGER,
     broken_image_count INTEGER, empty_caption_count INTEGER, unreadable_caption_count INTEGER,
     caption_encoding_summary_json TEXT, image_size_summary_json TEXT, tag_summary_json TEXT,
-    trigger_word_count INTEGER, trigger_word_rate REAL, missing_caption_images_json TEXT,
+    trigger_word_count INTEGER, trigger_word_rate REAL, trigger_consistency_label TEXT,
+    trigger_consistency_message TEXT, trigger_candidates_json TEXT, missing_caption_images_json TEXT,
     caption_without_images_json TEXT, broken_images_json TEXT, unsupported_files_json TEXT,
     analysis_json TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
@@ -533,6 +563,8 @@ CREATE TABLE IF NOT EXISTS training_jobs (
     return_code INTEGER, start_time TEXT, end_time TEXT, elapsed_seconds INTEGER, adopted_epoch INTEGER,
     adopted_model_path TEXT, image_rating INTEGER, loss_health_label TEXT, memo TEXT,
     parent_job_id INTEGER, sample_prompt_template_id TEXT,
+    trigger_word_at_creation TEXT, trigger_occurrence_count_at_creation INTEGER,
+    trigger_occurrence_rate_at_creation REAL, trigger_consistency_label_at_creation TEXT,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS training_metrics (
@@ -559,5 +591,10 @@ CREATE TABLE IF NOT EXISTS training_outputs (
     id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, epoch INTEGER, step INTEGER,
     file_path TEXT NOT NULL, file_type TEXT NOT NULL, file_size INTEGER, sha256 TEXT,
     selected INTEGER NOT NULL DEFAULT 0, memo TEXT, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS caption_edit_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, dataset_id INTEGER NOT NULL, action TEXT NOT NULL,
+    trigger_word TEXT, changed_count INTEGER, skipped_count INTEGER, backup_path TEXT,
+    created_at TEXT NOT NULL, memo TEXT
 );
 """

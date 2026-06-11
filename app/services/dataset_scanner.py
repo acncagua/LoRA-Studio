@@ -7,6 +7,18 @@ from typing import Any
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 CAPTION_EXTENSION = ".txt"
+GENERIC_TRIGGER_TAGS = {
+    "1girl",
+    "1boy",
+    "solo",
+    "looking at viewer",
+    "smile",
+    "upper body",
+    "full body",
+    "simple background",
+    "outdoors",
+    "anime style",
+}
 
 
 def scan_dataset(path: Path, trigger_word: str = "") -> dict[str, Any]:
@@ -95,6 +107,8 @@ def scan_dataset(path: Path, trigger_word: str = "") -> dict[str, Any]:
         "trigger_word": trigger,
         "trigger_word_count": trigger_count,
         "trigger_word_rate": trigger_count / caption_count if caption_count else None,
+        "trigger_consistency": trigger_consistency(trigger, caption_count, trigger_count),
+        "trigger_candidates": trigger_candidates(tag_counter),
         "resolution_summary": dict(resolutions.most_common(20)),
         "image_size_summary": image_size_summary(widths, heights, resolutions),
         "tag_summary": dict(tag_counter.most_common(50)),
@@ -120,6 +134,8 @@ def empty_scan(status: str) -> dict[str, Any]:
         "trigger_word": "",
         "trigger_word_count": 0,
         "trigger_word_rate": None,
+        "trigger_consistency": trigger_consistency("", 0, 0),
+        "trigger_candidates": [],
         "resolution_summary": {},
         "image_size_summary": {},
         "tag_summary": {},
@@ -155,3 +171,37 @@ def image_size_summary(widths: list[int], heights: list[int], resolutions: Count
 def caption_encoding_summary(rows: list[dict[str, str]]) -> dict[str, int]:
     counter: Counter[str] = Counter(row["status"] for row in rows)
     return dict(counter)
+
+
+def trigger_consistency(trigger_word: str, caption_count: int, trigger_count: int) -> dict[str, Any]:
+    if not trigger_word or caption_count <= 0:
+        return {
+            "label": "UNKNOWN",
+            "message": "trigger_word is not set or captions are unavailable.",
+        }
+    rate = trigger_count / caption_count
+    if rate >= 0.8:
+        return {
+            "label": "OK",
+            "message": f"trigger_word appears in {trigger_count}/{caption_count} captions.",
+        }
+    if trigger_count > 0:
+        return {
+            "label": "WARNING",
+            "message": f"trigger_word appears in only {trigger_count}/{caption_count} captions.",
+        }
+    return {
+        "label": "ERROR",
+        "message": f"trigger_word does not appear in any captions ({trigger_count}/{caption_count}).",
+    }
+
+
+def trigger_candidates(tag_counter: Counter[str]) -> list[dict[str, Any]]:
+    candidates = []
+    for tag, count in tag_counter.most_common(50):
+        if tag.lower() in GENERIC_TRIGGER_TAGS:
+            continue
+        candidates.append({"tag": tag, "count": count})
+        if len(candidates) >= 10:
+            break
+    return candidates

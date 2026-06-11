@@ -86,6 +86,25 @@ Datasets画面のIDリンクからDataset詳細を開くと、登録済みデー
 
 未対応ファイルにはメタデータやcacheファイルも含まれます。画像とcaptionが揃っており、broken imageが0であれば、未対応ファイルが存在してもただちに問題とは限りません。
 
+## Trigger Consistency
+
+`trigger_word` はLoRAを呼び出すための固有タグです。caption内のtriggerとsample prompt内のtriggerが揃っていないと、学習時に覚えたタグと評価時に呼び出すタグがずれ、sample比較が無効になりやすくなります。
+
+Dataset詳細の `Trigger Consistency` は以下の基準で表示します。
+
+- `OK`: captionの80%以上にtrigger_wordが出現する。
+- `WARNING`: captionの1-79%にtrigger_wordが出現する。
+- `ERROR`: caption内のtrigger_wordが0件。
+- `UNKNOWN`: trigger_word未設定、またはcaptionを解析できない。
+
+例えば `trigger_word=testchar` が `0/50` の場合、そのtriggerで呼び出すLoRAとしては強い不整合です。この場合は、captionに既に多く含まれている固有タグをtriggerにするか、captionの先頭に独自triggerを追加します。
+
+Dataset詳細の `Top Tag Candidates` は、`1girl`、`solo`、`looking at viewer` などの一般タグを除外し、caption内で多く出る固有タグ候補を表示します。候補の `Use this as trigger_word` を押すとDatasetのtrigger_wordを変更し、Rescanします。
+
+独自triggerをcaptionへ追加する場合は `Prepend Trigger To Captions` を使います。必ず `Preview` で変更件数、skip件数、変更前後サンプル、backup pathを確認してから `Confirm` します。Confirm時は `backups/datasets/dataset_000004/captions_YYYYMMDD_HHMMSS/` のような場所へ元captionをコピーし、UTF-8でcaptionを書き戻します。初期版ではRestore操作はありませんが、backup pathはDataset詳細の履歴に残ります。
+
+既存Jobは作成済みのparamsやsample promptsを自動変更しません。新規Jobでは作成時のtrigger consistency snapshotを保存します。snapshotが無い既存Jobでは、現在のDataset分析とsample prompt内triggerの使用状況を参考表示します。
+
 ## Job派生
 
 Job詳細画面では既存Jobから `Clone Job` と `Quick Variant` を作成できます。
@@ -144,12 +163,15 @@ DashboardのRecent Jobsで2件にチェックを入れて `Compare Selected` を
 ## 実用前チェックの推奨ワークフロー
 
 1. Datasetsでデータセットを登録する。
-2. Dataset Inspectorで画像、caption、trigger word、タグ傾向を確認する。
-3. `Integration Smoke - SDXL` で結合確認をする。
-4. `Pilot 3 Epoch` と必要なら `Pilot Generalize 3 Epoch` を実行する。
-5. Compare画面でloss health、step整合性、epoch別sample、rating/memo、selected LoRAを比較する。
-6. 良さそうなJobをCloneし、Quick VariantでLRやdimを小さく変えて再確認する。
-7. Standard本学習または長めの実用設定へ進む。
+2. Rescanする。
+3. Dataset Inspectorで画像、caption、trigger word、タグ傾向、Trigger Consistencyを確認する。
+4. triggerが0件なら、既存タグをtriggerにするか、Preview/Confirm付きでcaptionへtriggerを追加する。
+5. 再度Rescanする。
+6. `Integration Smoke - SDXL` で結合確認をする。
+7. `Pilot 3 Epoch` と必要なら `Pilot Generalize 3 Epoch` を実行する。
+8. Compare画面でloss health、step整合性、epoch別sample、rating/memo、selected LoRAを比較する。
+9. 良さそうなJobをCloneし、Quick VariantでLRやdimを小さく変えて再確認する。
+10. Standard本学習または長めの実用設定へ進む。
 
 ## 既知の制限
 

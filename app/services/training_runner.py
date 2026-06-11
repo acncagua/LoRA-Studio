@@ -13,7 +13,7 @@ from app.services.output_collector import collect_job_results
 RUNNABLE_STATUSES = {"draft", "prepared", "failed", "stopped"}
 
 
-def start_job(job_id: int) -> int:
+def start_job(job_id: int, acknowledge_trigger_mismatch: bool = False) -> int:
     with connect() as conn:
         running = conn.execute(
             "SELECT id FROM training_jobs WHERE status = 'running' AND id != ? LIMIT 1",
@@ -29,7 +29,7 @@ def start_job(job_id: int) -> int:
             raise RuntimeError(f"Job status is not runnable: {job['status']}")
 
     ensure_job_prepared(job_id)
-    validate_job_ready(job_id)
+    validate_job_ready(job_id, acknowledge_trigger_mismatch=acknowledge_trigger_mismatch)
 
     job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
     if job is None:
@@ -97,7 +97,7 @@ def ensure_job_prepared(job_id: int) -> None:
             )
 
 
-def validate_job_ready(job_id: int) -> None:
+def validate_job_ready(job_id: int, acknowledge_trigger_mismatch: bool = False) -> None:
     job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
     if job is None:
         raise ValueError(f"Job not found: {job_id}")
@@ -109,6 +109,13 @@ def validate_job_ready(job_id: int) -> None:
         raise RuntimeError(f"Dataset path does not exist: {dataset_path}")
     if int(dataset["image_count"] or 0) <= 0:
         raise RuntimeError("Dataset image_count must be greater than 0.")
+    analysis = fetch_one("SELECT * FROM dataset_analysis WHERE dataset_id = ?", (dataset["id"],))
+    if (
+        analysis is not None
+        and analysis["trigger_consistency_label"] == "ERROR"
+        and not acknowledge_trigger_mismatch
+    ):
+        raise RuntimeError("Trigger mismatch must be acknowledged before running this job.")
     if not Path(job["base_model_path"]).exists():
         raise RuntimeError(f"Base model path does not exist: {job['base_model_path']}")
 
