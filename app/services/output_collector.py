@@ -71,6 +71,9 @@ def collect_job_results(job_id: int) -> dict[str, int]:
     sync_sd_scripts_samples(run_dir, Path(job["output_dir"]))
     model_count = collect_models(job_id, run_dir / "models")
     sample_count = collect_samples(job_id, run_dir / "samples")
+    from app.services.metrics_collector import collect_job_metrics
+
+    collect_job_metrics(job_id)
     return {"models": model_count, "samples": sample_count}
 
 

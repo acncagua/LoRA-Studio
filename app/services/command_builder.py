@@ -122,6 +122,8 @@ def build_command_argv(job: dict[str, Any], dataset_config: Path, sample_prompts
         "--output_dir", job["output_dir"],
         "--output_name", job["output_name"],
         "--sample_prompts", str(sample_prompts),
+        "--logging_dir", str(Path(job["run_dir"]) / "metrics"),
+        "--log_with", "tensorboard",
     ]
     if job.get("vae_path"):
         args.extend(["--vae", job["vae_path"]])

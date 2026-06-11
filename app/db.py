@@ -65,7 +65,33 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "adopted_model_path": "TEXT",
             "image_rating": "INTEGER",
             "loss_health_label": "TEXT",
+            "expected_total_steps": "INTEGER",
+            "actual_max_step": "INTEGER",
+            "actual_metric_count": "INTEGER",
+            "output_model_count": "INTEGER",
+            "sample_image_count": "INTEGER",
+            "step_consistency_label": "TEXT",
+            "step_consistency_message": "TEXT",
             "updated_at": "TEXT",
+        },
+    )
+    ensure_columns(
+        conn,
+        "training_metrics",
+        {
+            "learning_rate": "REAL",
+            "source": "TEXT",
+            "raw_tag": "TEXT",
+        },
+    )
+    ensure_columns(
+        conn,
+        "training_metric_summaries",
+        {
+            "min_loss_step": "INTEGER",
+            "max_loss": "REAL",
+            "health_message": "TEXT",
+            "created_at": "TEXT",
         },
     )
     ensure_columns(conn, "training_outputs", {"selected": "INTEGER NOT NULL DEFAULT 0", "memo": "TEXT"})
@@ -76,6 +102,8 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             ON training_outputs(job_id, file_path);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_sample_images_job_path
             ON sample_images(job_id, image_path);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_training_metrics_job_step_tag
+            ON training_metrics(job_id, step, raw_tag);
         CREATE INDEX IF NOT EXISTS idx_training_jobs_status
             ON training_jobs(status);
         """

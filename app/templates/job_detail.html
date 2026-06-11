@@ -21,6 +21,9 @@
       <dt>Started</dt><dd>{{ job.start_time or '-' }}</dd>
       <dt>Ended</dt><dd>{{ job.end_time or '-' }}</dd>
       <dt>Elapsed</dt><dd>{{ job.elapsed_seconds if job.elapsed_seconds is not none else '-' }}</dd>
+      <dt>Expected Steps</dt><dd>{{ job.expected_total_steps if job.expected_total_steps is not none else '-' }}</dd>
+      <dt>Actual Step</dt><dd>{{ job.actual_max_step if job.actual_max_step is not none else '-' }}</dd>
+      <dt>Step Check</dt><dd><span class="label {{ (job.step_consistency_label or 'unknown')|lower }}">{{ job.step_consistency_label or '-' }}</span> {{ job.step_consistency_message or '' }}</dd>
       <dt>Run Dir</dt><dd>{{ job.run_dir }}</dd>
     </dl>
   </div>
@@ -32,35 +35,93 @@
   </div>
 </section>
 <section><h2>Command</h2><pre>{{ job.command_line or 'Not prepared yet.' }}</pre></section>
+<section>
+  <h2>Metrics / Loss</h2>
+  <div class="panel-grid">
+    <div>
+      <dl>
+        <dt>Metric Count</dt><dd>{{ job.actual_metric_count if job.actual_metric_count is not none else metrics|length }}</dd>
+        <dt>Outputs</dt><dd>{{ job.output_model_count if job.output_model_count is not none else outputs|length }}</dd>
+        <dt>Samples</dt><dd>{{ job.sample_image_count if job.sample_image_count is not none else samples|length }}</dd>
+        <dt>Health</dt><dd><span class="label {{ (metric_summary.health_label if metric_summary else 'unknown')|lower }}">{{ metric_summary.health_label if metric_summary else 'UNKNOWN' }}</span></dd>
+        <dt>Message</dt><dd>{{ metric_summary.health_message if metric_summary else 'No metric summary yet.' }}</dd>
+      </dl>
+    </div>
+    <div>
+      <dl>
+        <dt>Initial Loss</dt><dd>{{ '%.6f'|format(metric_summary.initial_loss) if metric_summary and metric_summary.initial_loss is not none else '-' }}</dd>
+        <dt>Final Loss</dt><dd>{{ '%.6f'|format(metric_summary.final_loss) if metric_summary and metric_summary.final_loss is not none else '-' }}</dd>
+        <dt>Min Loss</dt><dd>{{ '%.6f'|format(metric_summary.min_loss) if metric_summary and metric_summary.min_loss is not none else '-' }}{% if metric_summary and metric_summary.min_loss_step is not none %} @ step {{ metric_summary.min_loss_step }}{% endif %}</dd>
+        <dt>Drop Rate</dt><dd>{{ '%.2f%%'|format(metric_summary.loss_drop_rate * 100) if metric_summary and metric_summary.loss_drop_rate is not none else '-' }}</dd>
+        <dt>Volatility</dt><dd>{{ '%.6f'|format(metric_summary.loss_volatility) if metric_summary and metric_summary.loss_volatility is not none else '-' }}</dd>
+        <dt>Spikes</dt><dd>{{ metric_summary.spike_count if metric_summary else '-' }}</dd>
+      </dl>
+    </div>
+  </div>
+  {% if loss_chart %}
+  <svg class="loss-chart" viewBox="0 0 {{ loss_chart.width }} {{ loss_chart.height }}" role="img" aria-label="loss chart">
+    <rect x="0" y="0" width="{{ loss_chart.width }}" height="{{ loss_chart.height }}"></rect>
+    <polyline class="raw" points="{{ loss_chart.raw_points }}"></polyline>
+    <polyline class="avg" points="{{ loss_chart.ma_points }}"></polyline>
+  </svg>
+  <p class="muted">Raw loss and 3-point moving average. Step {{ loss_chart.min_step }} to {{ loss_chart.max_step }}.</p>
+  {% else %}
+  <p class="muted">No loss chart data yet. Reimport Results will try TensorBoard first, then train.log.</p>
+  {% endif %}
+  <table>
+    <thead><tr><th>Step</th><th>Loss</th><th>Learning Rate</th><th>Source</th><th>Tag</th></tr></thead>
+    <tbody>
+      {% for metric in metrics %}
+      <tr><td>{{ metric.step }}</td><td>{{ '%.6f'|format(metric.loss) if metric.loss is not none else '-' }}</td><td>{{ metric.learning_rate if metric.learning_rate is not none else '-' }}</td><td>{{ metric.source or '-' }}</td><td>{{ metric.raw_tag or '-' }}</td></tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">No metrics imported yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
 <section><h2>Train Log Tail</h2><pre>{{ log_tail or 'No train.log yet.' }}</pre></section>
 <section>
   <h2>Outputs</h2>
   <table>
-    <thead><tr><th>ID</th><th>Epoch</th><th>Step</th><th>Size</th><th>Selected</th><th>Path</th><th></th></tr></thead>
+    <thead><tr><th>ID</th><th>Epoch</th><th>Step</th><th>Size</th><th>SHA256</th><th>Selected</th><th>Path</th><th></th></tr></thead>
     <tbody>
       {% for output in outputs %}
       <tr>
-        <td>#{{ output.id }}</td><td>{{ output.epoch or '-' }}</td><td>{{ output.step or '-' }}</td><td>{{ output.file_size or '-' }}</td><td>{{ 'yes' if output.selected else '' }}</td><td>{{ output.file_path }}</td>
+        <td>#{{ output.id }}</td><td>{{ output.epoch or '-' }}</td><td>{{ output.step or '-' }}</td><td>{{ output.file_size or '-' }}</td><td>{{ output.sha256[:8] if output.sha256 else '-' }}</td><td>{{ 'selected' if output.selected else '' }}</td><td>{{ output.file_path }}</td>
         <td><form method="post" action="/jobs/{{ job.id }}/outputs/{{ output.id }}/select"><button type="submit">Select</button></form></td>
       </tr>
       {% else %}
-      <tr><td colspan="7" class="muted">No LoRA outputs imported yet.</td></tr>
+      <tr><td colspan="8" class="muted">No LoRA outputs imported yet.</td></tr>
       {% endfor %}
     </tbody>
   </table>
 </section>
 <section>
-  <h2>Samples</h2>
-  <div class="sample-grid">
-    {% for sample in samples %}
-    <figure>
-      <img src="/jobs/{{ job.id }}/samples/{{ sample.id }}" alt="sample {{ sample.id }}">
-      <figcaption>epoch {{ sample.epoch or '-' }} / prompt {{ sample.prompt_id or '-' }}</figcaption>
-    </figure>
+  <h2>Samples By Prompt</h2>
+  {% for group in sample_groups %}
+  <h3>{{ group.title }}</h3>
+  {% if group.prompt %}<p class="muted">{{ group.prompt.prompt }}</p>{% endif %}
+  <div class="sample-grid compare">
+    {% for sample in group.samples %}
+      <figure>
+        <img src="/jobs/{{ job.id }}/samples/{{ sample.id }}" alt="sample {{ sample.id }}">
+        <figcaption>
+          epoch {{ sample.epoch or '-' }} / step {{ sample.step or '-' }} / prompt {{ sample.prompt_id or '-' }}<br>
+          {{ sample.filename }}
+        </figcaption>
+        <form method="post" action="/jobs/{{ job.id }}/samples/{{ sample.id }}/review" class="review-form">
+          <label>Rating <input type="number" min="0" max="5" name="rating" value="{{ sample.rating or 0 }}"></label>
+          <label>Memo <textarea name="memo">{{ sample.memo or '' }}</textarea></label>
+          <button type="submit">Save</button>
+        </form>
+      </figure>
     {% else %}
-    <p class="muted">No sample images imported yet.</p>
+      <p class="muted">No image for this prompt yet.</p>
     {% endfor %}
   </div>
+  {% else %}
+  <p class="muted">No sample images imported yet.</p>
+  {% endfor %}
 </section>
 <section><h2>Params</h2><pre>{{ job.params_json }}</pre></section>
 {% endblock %}

@@ -108,6 +108,8 @@ def job_detail(request: Request, job_id: int) -> HTMLResponse:
     outputs = fetch_all("SELECT * FROM training_outputs WHERE job_id = ? ORDER BY epoch, step, id", (job_id,))
     samples = fetch_all("SELECT * FROM sample_images WHERE job_id = ? ORDER BY epoch, id", (job_id,))
     sample_prompts = fetch_all("SELECT * FROM sample_prompts WHERE job_id = ? ORDER BY sort_order, id", (job_id,))
+    metrics = fetch_all("SELECT * FROM training_metrics WHERE job_id = ? ORDER BY step, id", (job_id,))
+    metric_summary = fetch_one("SELECT * FROM training_metric_summaries WHERE job_id = ?", (job_id,))
     log_tail = read_log_tail(dict(job))
     selected_output = fetch_one("SELECT * FROM training_outputs WHERE job_id = ? AND selected = 1", (job_id,))
     return render(
@@ -118,6 +120,10 @@ def job_detail(request: Request, job_id: int) -> HTMLResponse:
         outputs=outputs,
         samples=samples,
         sample_prompts=sample_prompts,
+        sample_groups=group_samples(sample_prompts, samples),
+        metrics=metrics,
+        metric_summary=metric_summary,
+        loss_chart=build_loss_chart(metrics),
         log_tail=log_tail,
         selected_output=selected_output,
     )
@@ -186,6 +192,20 @@ def job_select_output(job_id: int, output_id: int) -> RedirectResponse:
     return RedirectResponse(f"/jobs/{job_id}", status_code=303)
 
 
+@app.post("/jobs/{job_id}/samples/{image_id}/review")
+def job_review_sample(job_id: int, image_id: int, rating: int = Form(0), memo: str = Form("")) -> RedirectResponse:
+    sample = fetch_one("SELECT * FROM sample_images WHERE id = ? AND job_id = ?", (image_id, job_id))
+    if sample is None:
+        raise HTTPException(status_code=404, detail="Sample image not found")
+    rating = max(0, min(5, int(rating)))
+    with connect() as conn:
+        conn.execute(
+            "UPDATE sample_images SET rating = ?, memo = ? WHERE id = ? AND job_id = ?",
+            (rating, memo, image_id, job_id),
+        )
+    return RedirectResponse(f"/jobs/{job_id}", status_code=303)
+
+
 @app.get("/jobs/{job_id}/samples/{image_id}")
 def job_sample_image(job_id: int, image_id: int) -> FileResponse:
     image = fetch_one("SELECT * FROM sample_images WHERE id = ? AND job_id = ?", (image_id, job_id))
@@ -205,3 +225,76 @@ def job_sample_image(job_id: int, image_id: int) -> FileResponse:
 def compare_epochs(request: Request) -> HTMLResponse:
     jobs = fetch_all("SELECT id, name, status, adopted_epoch FROM training_jobs ORDER BY id DESC")
     return render(request, "compare_epochs.html", jobs=jobs)
+
+
+def group_samples(sample_prompts: list[Any], samples: list[Any]) -> list[dict[str, Any]]:
+    prompt_map = {row["id"]: row for row in sample_prompts}
+    groups: dict[int, dict[str, Any]] = {}
+    fallback_key = 0
+    for sample in samples:
+        sample_item = dict(sample)
+        sample_item["filename"] = Path(sample["image_path"]).name
+        key = sample["prompt_id"] or fallback_key
+        prompt = prompt_map.get(sample["prompt_id"])
+        groups.setdefault(
+            key,
+            {
+                "prompt": prompt,
+                "title": prompt["name"] if prompt else "Unmatched prompt",
+                "samples": [],
+            },
+        )
+        groups[key]["samples"].append(sample_item)
+    for prompt in sample_prompts:
+        groups.setdefault(prompt["id"], {"prompt": prompt, "title": prompt["name"], "samples": []})
+    for group in groups.values():
+        group["samples"].sort(key=lambda item: (
+            item["epoch"] if item["epoch"] is not None else 999999,
+            item["step"] if item["step"] is not None else 999999,
+            item["created_at"],
+            item["id"],
+        ))
+    return sorted(groups.values(), key=lambda group: group["prompt"]["sort_order"] if group["prompt"] else 999999)
+
+
+def build_loss_chart(metrics: list[Any]) -> dict[str, Any] | None:
+    loss_rows = [row for row in metrics if row["loss"] is not None and row["step"] is not None]
+    if len(loss_rows) < 2:
+        return None
+    width = 720
+    height = 220
+    pad = 28
+    steps = [int(row["step"]) for row in loss_rows]
+    losses = [float(row["loss"]) for row in loss_rows]
+    min_step, max_step = min(steps), max(steps)
+    min_loss, max_loss = min(losses), max(losses)
+    if min_loss == max_loss:
+        min_loss -= 0.001
+        max_loss += 0.001
+
+    def point(step: int, value: float) -> tuple[float, float]:
+        x = pad + (step - min_step) / max(1, max_step - min_step) * (width - pad * 2)
+        y = height - pad - (value - min_loss) / max(0.000001, max_loss - min_loss) * (height - pad * 2)
+        return round(x, 2), round(y, 2)
+
+    raw_points = " ".join(f"{x},{y}" for x, y in (point(step, value) for step, value in zip(steps, losses)))
+    averages = moving_average(losses, 3)
+    ma_points = " ".join(f"{x},{y}" for x, y in (point(step, value) for step, value in zip(steps, averages)))
+    return {
+        "width": width,
+        "height": height,
+        "raw_points": raw_points,
+        "ma_points": ma_points,
+        "min_loss": min_loss,
+        "max_loss": max_loss,
+        "min_step": min_step,
+        "max_step": max_step,
+    }
+
+
+def moving_average(values: list[float], window: int) -> list[float]:
+    result = []
+    for index in range(len(values)):
+        start = max(0, index - window + 1)
+        result.append(sum(values[start:index + 1]) / (index - start + 1))
+    return result
