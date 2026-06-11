@@ -1,4 +1,145 @@
-﻿{% extends "base.html" %}{% block content %}
-<header class="page-head"><h1>Compare Epochs</h1></header>
-<table><thead><tr><th>Job</th><th>Status</th><th>Adopted Epoch</th></tr></thead><tbody>{% for job in jobs %}<tr><td><a href="/jobs/{{ job.id }}">#{{ job.id }} {{ job.name }}</a></td><td>{{ job.status }}</td><td>{{ job.adopted_epoch or '-' }}</td></tr>{% else %}<tr><td colspan="3" class="muted">No jobs yet.</td></tr>{% endfor %}</tbody></table>
+{% extends "base.html" %}{% block content %}
+<header class="page-head">
+  <h1>Compare Jobs</h1>
+  {% if comparison %}
+  <form method="post" action="/compare/export">
+    <input type="hidden" name="job_a" value="{{ comparison.left.job.id }}">
+    <input type="hidden" name="job_b" value="{{ comparison.right.job.id }}">
+    <button type="submit">Export Markdown</button>
+  </form>
+  {% endif %}
+</header>
+
+{% if exported %}<p class="notice">Exported: {{ exported }}</p>{% endif %}
+
+{% if not comparison %}
+<form method="get" action="/compare">
+  <table>
+    <thead><tr><th>Select</th><th>Job</th><th>Status</th><th>Adopted Epoch</th></tr></thead>
+    <tbody>
+      {% for job in jobs %}
+      <tr>
+        <td><input type="checkbox" name="job_ids" value="{{ job.id }}"></td>
+        <td><a href="/jobs/{{ job.id }}">#{{ job.id }} {{ job.name }}</a></td>
+        <td>{{ job.status }}</td>
+        <td>{{ job.adopted_epoch or '-' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="muted">No jobs yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p><button type="submit">Compare Selected</button></p>
+</form>
+{% else %}
+{% set left = comparison.left %}
+{% set right = comparison.right %}
+<section class="compare-columns">
+  {% for bundle in [left, right] %}
+  <div>
+    <h2>#{{ bundle.job.id }} {{ bundle.job.name }}</h2>
+    <dl>
+      <dt>Preset</dt><dd>{{ bundle.preset.name if bundle.preset else '-' }}</dd>
+      <dt>Dataset</dt><dd>{{ bundle.dataset.name if bundle.dataset else '-' }}</dd>
+      <dt>Base Model</dt><dd>{{ bundle.job.base_model_path }}</dd>
+      <dt>Status</dt><dd>{{ bundle.job.status }}</dd>
+      <dt>Elapsed</dt><dd>{{ bundle.job.elapsed_seconds if bundle.job.elapsed_seconds is not none else '-' }}</dd>
+      <dt>Selected LoRA</dt><dd>{{ bundle.job.adopted_model_path or '-' }}</dd>
+    </dl>
+  </div>
+  {% endfor %}
+</section>
+
+<section>
+  <h2>Parameter Differences</h2>
+  <table>
+    <thead><tr><th>Param</th><th>Job #{{ left.job.id }}</th><th>Job #{{ right.job.id }}</th></tr></thead>
+    <tbody>
+      {% for row in comparison.param_rows %}
+      <tr class="{{ 'changed' if row.changed else '' }}"><td>{{ row.key }}</td><td>{{ row.left }}</td><td>{{ row.right }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>Metrics</h2>
+  <p class="muted">Loss health is a training-log health check, not an image quality score. WARNING can still be usable when sample images look better.</p>
+  <table>
+    <thead><tr><th>Metric</th><th>Job #{{ left.job.id }}</th><th>Job #{{ right.job.id }}</th></tr></thead>
+    <tbody>
+      {% for row in comparison.metric_rows %}
+      <tr class="{{ 'changed' if row.changed else '' }}"><td>{{ row.key }}</td><td>{{ row.left }}</td><td>{{ row.right }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div class="compare-columns">
+    {% for bundle in [left, right] %}
+    <div>
+      <h3>Health Details #{{ bundle.job.id }}</h3>
+      <dl>
+        <dt>spike_count</dt><dd>{{ bundle.health_details.spike_count if bundle.health_details.spike_count is not none else '-' }}</dd>
+        <dt>spike threshold</dt><dd>{{ bundle.health_details.spike_threshold or '-' }} ({{ bundle.health_details.spike_rule }})</dd>
+        <dt>loss_volatility</dt><dd>{{ '%.6f'|format(bundle.health_details.loss_volatility) if bundle.health_details.loss_volatility is not none else '-' }}</dd>
+        <dt>late_stage_slope</dt><dd>{{ '%.6f'|format(bundle.health_details.late_stage_slope) if bundle.health_details.late_stage_slope is not none else '-' }}</dd>
+        <dt>min_loss_step</dt><dd>{{ bundle.health_details.min_loss_step or '-' }}</dd>
+        <dt>final_loss</dt><dd>{{ '%.6f'|format(bundle.health_details.final_loss) if bundle.health_details.final_loss is not none else '-' }}</dd>
+        <dt>message</dt><dd>{{ bundle.health_details.health_message or '-' }}</dd>
+      </dl>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section>
+  <h2>Loss Charts</h2>
+  <div class="compare-columns">
+    {% for bundle in [left, right] %}
+    <div>
+      <h3>Job #{{ bundle.job.id }}</h3>
+      {% if bundle.loss_chart %}
+      <svg class="loss-chart" viewBox="0 0 {{ bundle.loss_chart.width }} {{ bundle.loss_chart.height }}" role="img" aria-label="loss chart job {{ bundle.job.id }}">
+        <rect x="0" y="0" width="{{ bundle.loss_chart.width }}" height="{{ bundle.loss_chart.height }}"></rect>
+        <polyline class="raw" points="{{ bundle.loss_chart.raw_points }}"></polyline>
+        <polyline class="avg" points="{{ bundle.loss_chart.ma_points }}"></polyline>
+      </svg>
+      <p class="muted">Step {{ bundle.loss_chart.min_step }} to {{ bundle.loss_chart.max_step }}</p>
+      {% else %}
+      <p class="muted">No loss chart data.</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section>
+  <h2>Samples By Prompt</h2>
+  {% for group in comparison.sample_groups %}
+  <h3>{{ group.title }}</h3>
+  <p class="muted">{{ group.prompt }}</p>
+  <table class="sample-compare-table">
+    <thead><tr><th>Epoch/Step</th><th>Job #{{ left.job.id }}</th><th>Job #{{ right.job.id }}</th></tr></thead>
+    <tbody>
+      {% for row in group.rows %}
+      <tr>
+        <td>{{ row.label }}</td>
+        {% for sample, bundle in [(row.left, left), (row.right, right)] %}
+        <td>
+          {% if sample %}
+          <figure>
+            <img src="/jobs/{{ bundle.job.id }}/samples/{{ sample.id }}" alt="sample {{ sample.id }}">
+            <figcaption>{{ sample.filename }}<br>rating {{ sample.rating or 0 }} / memo {{ sample.memo or '-' }}</figcaption>
+          </figure>
+          {% else %}
+          <span class="muted">No image</span>
+          {% endif %}
+        </td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endfor %}
+</section>
+{% endif %}
 {% endblock %}

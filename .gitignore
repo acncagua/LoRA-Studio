@@ -12,6 +12,7 @@ datasets/*
 logs/*.log
 logs/*.json
 runs/job_*/
+runs/comparisons/
 external/sd-scripts/
 exports/*
 

@@ -11,15 +11,18 @@
 </section>
 <section>
   <h2>Recent Jobs</h2>
+  <form method="get" action="/compare">
   <table>
-    <thead><tr><th>ID</th><th>Name</th><th>Status</th><th>Family</th><th>Updated</th></tr></thead>
+    <thead><tr><th>Compare</th><th>ID</th><th>Name</th><th>Status</th><th>Family</th><th>Updated</th></tr></thead>
     <tbody>
       {% for job in jobs %}
-      <tr><td><a href="/jobs/{{ job.id }}">#{{ job.id }}</a></td><td>{{ job.name }}</td><td>{{ job.status }}</td><td>{{ job.model_family }}</td><td>{{ job.updated_at }}</td></tr>
+      <tr><td><input type="checkbox" name="job_ids" value="{{ job.id }}"></td><td><a href="/jobs/{{ job.id }}">#{{ job.id }}</a></td><td>{{ job.name }}</td><td>{{ job.status }}</td><td>{{ job.model_family }}</td><td>{{ job.updated_at }}</td></tr>
       {% else %}
-      <tr><td colspan="5" class="muted">No jobs yet.</td></tr>
+      <tr><td colspan="6" class="muted">No jobs yet.</td></tr>
       {% endfor %}
     </tbody>
   </table>
+  <p><button type="submit">Compare Selected</button></p>
+  </form>
 </section>
 {% endblock %}

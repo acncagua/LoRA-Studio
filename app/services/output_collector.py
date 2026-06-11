@@ -16,11 +16,11 @@ def parse_epoch_step(path: Path) -> tuple[int | None, int | None]:
     epoch = parse_number(name, r"epoch[-_]?(\d+)")
     step = parse_number(name, r"step[-_]?(\d+)")
     if epoch is None:
-        epoch = parse_number(name, r"e[-_]?(\d+)")
-    if epoch is None:
         epoch = parse_number(name, r"-(\d{6})$")
+    if epoch is None:
+        epoch = parse_number(name, r"(?:^|[_-])e[-_]?(\d+)(?:[_-]|$)")
     if step is None:
-        step = parse_number(name, r"s[-_]?(\d+)")
+        step = parse_number(name, r"(?:^|[_-])s[-_]?(\d+)(?:[_-]|$)")
     return epoch, step
 
 
@@ -107,17 +107,14 @@ def collect_models(job_id: int, models_dir: Path) -> int:
             ).fetchone()
             epoch, step = parse_epoch_step(path)
             if existing:
-                if (existing["epoch"] is None and epoch is not None) or (
-                    existing["step"] is None and step is not None
-                ):
-                    conn.execute(
-                        """
-                        UPDATE training_outputs
-                        SET epoch = COALESCE(epoch, ?), step = COALESCE(step, ?)
-                        WHERE id = ?
-                        """,
-                        (epoch, step, existing["id"]),
-                    )
+                conn.execute(
+                    """
+                    UPDATE training_outputs
+                    SET epoch = ?, step = ?
+                    WHERE id = ?
+                    """,
+                    (epoch, step, existing["id"]),
+                )
                 continue
             conn.execute(
                 """
@@ -150,12 +147,34 @@ def collect_samples(job_id: int, samples_dir: Path) -> int:
                 "SELECT id FROM sample_images WHERE job_id = ? AND image_path = ?",
                 (job_id, file_path),
             ).fetchone()
-            if existing:
-                continue
             epoch, step = parse_epoch_step(path)
             prompt_index = parse_prompt_index(path)
             prompt = prompts_by_order.get(prompt_index or 0)
             width, height = image_size(path)
+            if existing:
+                conn.execute(
+                    """
+                    UPDATE sample_images
+                    SET prompt_id = ?, epoch = ?, step = ?, prompt = ?,
+                        negative_prompt = ?, seed = ?, width = ?, height = ?,
+                        cfg_scale = ?, steps = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        prompt["id"] if prompt else None,
+                        epoch,
+                        step,
+                        prompt["prompt"] if prompt else None,
+                        prompt["negative_prompt"] if prompt else None,
+                        prompt["seed"] if prompt else None,
+                        width or (prompt["width"] if prompt else None),
+                        height or (prompt["height"] if prompt else None),
+                        prompt["cfg_scale"] if prompt else None,
+                        prompt["steps"] if prompt else None,
+                        existing["id"],
+                    ),
+                )
+                continue
             conn.execute(
                 """
                 INSERT INTO sample_images(

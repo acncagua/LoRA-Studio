@@ -1,9 +1,10 @@
 ﻿from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -123,6 +124,7 @@ def job_detail(request: Request, job_id: int) -> HTMLResponse:
         sample_groups=group_samples(sample_prompts, samples),
         metrics=metrics,
         metric_summary=metric_summary,
+        health_details=health_details(metric_summary, len(metrics)),
         loss_chart=build_loss_chart(metrics),
         log_tail=log_tail,
         selected_output=selected_output,
@@ -221,10 +223,254 @@ def job_sample_image(job_id: int, image_id: int) -> FileResponse:
     return FileResponse(image_path)
 
 
+COMPARE_PARAM_KEYS = [
+    "optimizer_type",
+    "lr_scheduler",
+    "learning_rate",
+    "unet_lr",
+    "text_encoder_lr",
+    "text_encoder_lr1",
+    "text_encoder_lr2",
+    "network_dim",
+    "network_alpha",
+    "train_batch_size",
+    "repeats",
+    "max_train_epochs",
+    "resolution",
+    "save_every_n_epochs",
+    "sample_every_n_epochs",
+    "save_every_n_steps",
+    "sample_every_n_steps",
+]
+
+COMPARE_METRIC_KEYS = [
+    "expected_total_steps",
+    "actual_max_step",
+    "initial_loss",
+    "final_loss",
+    "min_loss",
+    "loss_drop_rate",
+    "loss_volatility",
+    "spike_count",
+    "late_stage_slope",
+    "health_label",
+    "health_message",
+    "step_consistency_label",
+]
+
+
 @app.get("/compare", response_class=HTMLResponse)
-def compare_epochs(request: Request) -> HTMLResponse:
+def compare_epochs(
+    request: Request,
+    job_a: int | None = None,
+    job_b: int | None = None,
+    job_ids: list[int] | None = Query(None),
+    exported: str | None = None,
+) -> HTMLResponse:
+    if job_ids and len(job_ids) >= 2:
+        job_a, job_b = job_ids[0], job_ids[1]
     jobs = fetch_all("SELECT id, name, status, adopted_epoch FROM training_jobs ORDER BY id DESC")
-    return render(request, "compare_epochs.html", jobs=jobs)
+    if not job_a or not job_b:
+        return render(request, "compare_epochs.html", jobs=jobs, comparison=None, exported=exported)
+    comparison = build_job_comparison(job_a, job_b)
+    return render(request, "compare_epochs.html", jobs=jobs, comparison=comparison, exported=exported)
+
+
+@app.post("/compare/export")
+def export_comparison(job_a: int = Form(...), job_b: int = Form(...)) -> RedirectResponse:
+    comparison = build_job_comparison(job_a, job_b)
+    path = write_comparison_markdown(comparison)
+    return RedirectResponse(f"/compare?job_a={job_a}&job_b={job_b}&exported={path}", status_code=303)
+
+
+def build_job_comparison(job_a: int, job_b: int) -> dict[str, Any]:
+    left = load_compare_job(job_a)
+    right = load_compare_job(job_b)
+    return {
+        "left": left,
+        "right": right,
+        "param_rows": build_param_rows(left["params"], right["params"]),
+        "metric_rows": build_metric_rows(left, right),
+        "sample_groups": build_compare_sample_groups(left, right),
+    }
+
+
+def load_compare_job(job_id: int) -> dict[str, Any]:
+    job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    dataset = fetch_one("SELECT * FROM datasets WHERE id = ?", (job["dataset_id"],))
+    preset = fetch_one("SELECT * FROM presets WHERE id = ?", (job["preset_id"],))
+    summary = fetch_one("SELECT * FROM training_metric_summaries WHERE job_id = ?", (job_id,))
+    metrics = fetch_all("SELECT * FROM training_metrics WHERE job_id = ? ORDER BY step, id", (job_id,))
+    outputs = fetch_all("SELECT * FROM training_outputs WHERE job_id = ? ORDER BY epoch, step, id", (job_id,))
+    samples = fetch_all("SELECT * FROM sample_images WHERE job_id = ? ORDER BY epoch, step, id", (job_id,))
+    sample_prompts = fetch_all("SELECT * FROM sample_prompts WHERE job_id = ? ORDER BY sort_order, id", (job_id,))
+    selected_output = fetch_one("SELECT * FROM training_outputs WHERE job_id = ? AND selected = 1", (job_id,))
+    params = json.loads(job["params_json"])
+    return {
+        "job": job,
+        "dataset": dataset,
+        "preset": preset,
+        "summary": summary,
+        "metrics": metrics,
+        "outputs": outputs,
+        "samples": samples,
+        "sample_prompts": sample_prompts,
+        "selected_output": selected_output,
+        "params": params,
+        "loss_chart": build_loss_chart(metrics),
+        "health_details": health_details(summary, len(metrics)),
+    }
+
+
+def build_param_rows(left_params: dict[str, Any], right_params: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = []
+    for key in COMPARE_PARAM_KEYS:
+        left_value = left_params.get(key)
+        right_value = right_params.get(key)
+        rows.append({"key": key, "left": render_value(left_value), "right": render_value(right_value), "changed": left_value != right_value})
+    return rows
+
+
+def build_metric_rows(left: dict[str, Any], right: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = []
+    for key in COMPARE_METRIC_KEYS:
+        left_value = metric_value(left, key)
+        right_value = metric_value(right, key)
+        rows.append({"key": key, "left": render_value(left_value), "right": render_value(right_value), "changed": left_value != right_value})
+    return rows
+
+
+def metric_value(bundle: dict[str, Any], key: str) -> Any:
+    if key in {"expected_total_steps", "actual_max_step", "step_consistency_label"}:
+        return bundle["job"][key]
+    summary = bundle["summary"]
+    return summary[key] if summary and key in summary.keys() else None
+
+
+def render_value(value: Any) -> str:
+    if value is None:
+        return "-"
+    if isinstance(value, float):
+        return f"{value:.6g}"
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def health_details(summary: Any, metric_count: int) -> dict[str, Any]:
+    threshold = max(2, metric_count // 3) if metric_count else None
+    return {
+        "spike_threshold": threshold,
+        "spike_rule": "current loss > previous loss * 1.5",
+        "quality_note": "Loss health is a training-log health check, not an image quality score.",
+        "adoption_note": "WARNING can still be usable when sample images look better.",
+        "spike_count": summary["spike_count"] if summary else None,
+        "loss_volatility": summary["loss_volatility"] if summary else None,
+        "late_stage_slope": summary["late_stage_slope"] if summary else None,
+        "min_loss_step": summary["min_loss_step"] if summary else None,
+        "final_loss": summary["final_loss"] if summary else None,
+        "health_message": summary["health_message"] if summary else None,
+    }
+
+
+def build_compare_sample_groups(left: dict[str, Any], right: dict[str, Any]) -> list[dict[str, Any]]:
+    left_prompts = {row["sort_order"]: row for row in left["sample_prompts"]}
+    right_prompts = {row["sort_order"]: row for row in right["sample_prompts"]}
+    groups = []
+    for order in sorted(set(left_prompts) | set(right_prompts)):
+        left_prompt = left_prompts.get(order)
+        right_prompt = right_prompts.get(order)
+        prompt = left_prompt or right_prompt
+        left_samples = samples_for_prompt(left["samples"], left_prompt)
+        right_samples = samples_for_prompt(right["samples"], right_prompt)
+        positions = sorted(set(left_samples) | set(right_samples))
+        groups.append(
+            {
+                "title": prompt["name"] if prompt else f"Prompt {order}",
+                "prompt": prompt["prompt"] if prompt else "",
+                "rows": [
+                    {
+                        "label": f"epoch {position}" if isinstance(position, int) else str(position),
+                        "left": left_samples.get(position),
+                        "right": right_samples.get(position),
+                    }
+                    for position in positions
+                ],
+            }
+        )
+    return groups
+
+
+def samples_for_prompt(samples: list[Any], prompt: Any) -> dict[Any, dict[str, Any]]:
+    if prompt is None:
+        return {}
+    rows = [dict(sample) for sample in samples if sample["prompt_id"] == prompt["id"]]
+    result = {}
+    for index, sample in enumerate(rows, start=1):
+        sample["filename"] = Path(sample["image_path"]).name
+        key = sample["epoch"] if sample["epoch"] is not None else sample["step"] if sample["step"] is not None else index
+        result[key] = sample
+    return result
+
+
+def write_comparison_markdown(comparison: dict[str, Any]) -> str:
+    left = comparison["left"]
+    right = comparison["right"]
+    left_id = int(left["job"]["id"])
+    right_id = int(right["job"]["id"])
+    output_dir = settings.RUNS_DIR / "comparisons"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / f"compare_job_{left_id:06d}_job_{right_id:06d}.md"
+    lines = [
+        f"# Compare Job #{left_id} vs Job #{right_id}",
+        "",
+        "## Jobs",
+        f"- Job #{left_id}: {left['job']['name']} / {left['preset']['name'] if left['preset'] else '-'}",
+        f"- Job #{right_id}: {right['job']['name']} / {right['preset']['name'] if right['preset'] else '-'}",
+        "",
+        "## Parameter Differences",
+    ]
+    for row in comparison["param_rows"]:
+        marker = "changed" if row["changed"] else "same"
+        lines.append(f"- {row['key']}: {row['left']} | {row['right']} ({marker})")
+    lines.extend(["", "## Metrics"])
+    for row in comparison["metric_rows"]:
+        marker = "changed" if row["changed"] else "same"
+        lines.append(f"- {row['key']}: {row['left']} | {row['right']} ({marker})")
+    lines.extend(
+        [
+            "",
+            "## Selected LoRA",
+            f"- Job #{left_id}: {left['job']['adopted_model_path'] or '-'}",
+            f"- Job #{right_id}: {right['job']['adopted_model_path'] or '-'}",
+            "",
+            "## Human Notes",
+        ]
+    )
+    for bundle in (left, right):
+        lines.append(f"### Job #{bundle['job']['id']}")
+        for sample in bundle["samples"]:
+            if sample["rating"] is not None or sample["memo"]:
+                lines.append(f"- {Path(sample['image_path']).name}: rating={sample['rating'] or 0}, memo={sample['memo'] or ''}")
+    lines.extend(
+        [
+            "",
+            "## Health Note",
+            "Loss health is a training-log health check, not an image quality score. WARNING can still be usable when sample images look better.",
+            "",
+            "## Sample Files",
+        ]
+    )
+    for group in comparison["sample_groups"]:
+        lines.append(f"### {group['title']}")
+        for row in group["rows"]:
+            left_name = row["left"]["filename"] if row["left"] else "-"
+            right_name = row["right"]["filename"] if row["right"] else "-"
+            lines.append(f"- {row['label']}: {left_name} | {right_name}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return str(path)
 
 
 def group_samples(sample_prompts: list[Any], samples: list[Any]) -> list[dict[str, Any]]:

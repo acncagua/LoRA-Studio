@@ -69,9 +69,16 @@ textarea { min-height: 84px; }
 .loss-chart polyline { fill: none; stroke-width: 2.5; }
 .loss-chart .raw { stroke: #2f6f63; opacity: .7; }
 .loss-chart .avg { stroke: #8b4f39; }
+.notice { background: #eef2eb; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.compare-columns { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 14px; }
+.compare-columns > div { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+tr.changed td { background: #fff8e8; }
+.sample-compare-table figure { margin: 0; }
+.sample-compare-table img { width: min(100%, 260px); height: auto; display: block; border-radius: 6px; border: 1px solid var(--line); }
+.sample-compare-table figcaption { margin-top: 6px; color: var(--muted); font-size: 12px; word-break: break-word; }
 @media (max-width: 900px) {
   body { grid-template-columns: 1fr; }
   .sidebar { position: static; }
-  .metric-grid, .panel-grid, .form-grid { grid-template-columns: 1fr; }
+  .metric-grid, .panel-grid, .form-grid, .compare-columns { grid-template-columns: 1fr; }
   .actions { justify-content: flex-start; }
 }

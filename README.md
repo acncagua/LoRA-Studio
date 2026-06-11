@@ -91,6 +91,8 @@ Integration Smokeのようにstep数が極端に少ないジョブでは、loss 
 
 サンプル画像はJob詳細の `Samples By Prompt` にprompt別、epoch/step順で表示されます。各画像には人間確認用の `rating` と `memo` を保存できます。これはAI評価ではなく、目視メモ用途です。
 
+`Health` が `WARNING` の場合は、`spike_count`、spike判定閾値、`loss_volatility`、`late_stage_slope`、`min_loss_step`、`final_loss`、`health_message` を確認します。`WARNING` は即不採用ではなく、lossログ上の注意表示です。サンプル画像の見た目が良い場合は採用候補になり得ます。最終的な `selected LoRA` は、loss健全性、epoch別サンプル、rating/memoを見て人間が選びます。
+
 ## 学習確認の推奨順
 
 1. `Integration Smoke - SDXL`
@@ -99,10 +101,21 @@ Integration Smokeのようにstep数が極端に少ないジョブでは、loss 
 2. `SDXL 2D Face - Pilot 3 Epoch`
    実用前の短時間確認用です。50枚前後のデータセットで、おおよそ `50 images * repeats 2 * epochs 3 / batch 2 = 150 steps` を走らせ、loss推移、epochごとの差、sample比較、出力LoRA選択の導線を確認します。
 
-3. `SDXL 2D Face - AdamW8bit Standard`
+3. `SDXL 2D Face - Pilot Generalize 3 Epoch`
+   Standard寄りのPilotより弱めの短時間確認用です。同じデータセットとbase modelで `Pilot 3 Epoch` と比較し、固定化を避けた設定のsample差、loss推移、採用候補を確認します。
+
+4. `SDXL 2D Face - AdamW8bit Standard`
    Pilotで評価導線とおおまかな挙動を確認してから、本学習候補として使います。
 
 `expected_total_steps` は設定とデータセットから計算した概算、`actual_max_step` はTensorBoardまたは `train.log` から読めた実stepです。差が大きい場合は、dataset_config、batch size、repeat、epoch、`max_train_steps` の指定を確認してください。
+
+## Job比較
+
+DashboardのRecent Jobsで2件にチェックを入れて `Compare Selected` を押すか、`/compare?job_a=4&job_b=5` のようにURLを指定すると比較画面を開けます。
+
+比較画面では、基本情報、プリセット、base model、採用LoRA、主要パラメータ差分、metrics差分、lossグラフ、prompt別sample画像を横並びで確認できます。Standard PilotとGeneralize Pilotは、同じデータセット、同じbase modelで作成し、両方の `expected_total_steps` と `actual_max_step` が概ね一致していることを確認してからsampleを比較します。
+
+比較結果は `Export Markdown` で `runs/comparisons/compare_job_000004_job_000005.md` のようなMarkdownへ出力できます。MarkdownにはJob ID、プリセット名、パラメータ差分、metrics差分、selected LoRA、人間メモ、health注意、sampleファイル名を記録します。
 
 ## 既知の制限
 

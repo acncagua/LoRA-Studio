@@ -45,6 +45,7 @@
         <dt>Samples</dt><dd>{{ job.sample_image_count if job.sample_image_count is not none else samples|length }}</dd>
         <dt>Health</dt><dd><span class="label {{ (metric_summary.health_label if metric_summary else 'unknown')|lower }}">{{ metric_summary.health_label if metric_summary else 'UNKNOWN' }}</span></dd>
         <dt>Message</dt><dd>{{ metric_summary.health_message if metric_summary else 'No metric summary yet.' }}</dd>
+        <dt>Health Note</dt><dd>Loss health is a training-log health check, not an image quality score. WARNING can still be usable when sample images look better.</dd>
       </dl>
     </div>
     <div>
@@ -55,6 +56,9 @@
         <dt>Drop Rate</dt><dd>{{ '%.2f%%'|format(metric_summary.loss_drop_rate * 100) if metric_summary and metric_summary.loss_drop_rate is not none else '-' }}</dd>
         <dt>Volatility</dt><dd>{{ '%.6f'|format(metric_summary.loss_volatility) if metric_summary and metric_summary.loss_volatility is not none else '-' }}</dd>
         <dt>Spikes</dt><dd>{{ metric_summary.spike_count if metric_summary else '-' }}</dd>
+        <dt>Spike Threshold</dt><dd>{{ health_details.spike_threshold or '-' }} ({{ health_details.spike_rule }})</dd>
+        <dt>Late Slope</dt><dd>{{ '%.6f'|format(health_details.late_stage_slope) if health_details.late_stage_slope is not none else '-' }}</dd>
+        <dt>Final Loss</dt><dd>{{ '%.6f'|format(health_details.final_loss) if health_details.final_loss is not none else '-' }}</dd>
       </dl>
     </div>
   </div>
