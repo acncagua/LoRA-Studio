@@ -91,6 +91,19 @@ Integration Smokeのようにstep数が極端に少ないジョブでは、loss 
 
 サンプル画像はJob詳細の `Samples By Prompt` にprompt別、epoch/step順で表示されます。各画像には人間確認用の `rating` と `memo` を保存できます。これはAI評価ではなく、目視メモ用途です。
 
+## 学習確認の推奨順
+
+1. `Integration Smoke - SDXL`
+   結合確認専用です。実モデルでsd-scripts起動、LoRA出力、サンプル生成、DB取り込み、画面表示を短時間で確認するため、`max_train_steps=2` の上限を使います。LoRA品質評価には使いません。
+
+2. `SDXL 2D Face - Pilot 3 Epoch`
+   実用前の短時間確認用です。50枚前後のデータセットで、おおよそ `50 images * repeats 2 * epochs 3 / batch 2 = 150 steps` を走らせ、loss推移、epochごとの差、sample比較、出力LoRA選択の導線を確認します。
+
+3. `SDXL 2D Face - AdamW8bit Standard`
+   Pilotで評価導線とおおまかな挙動を確認してから、本学習候補として使います。
+
+`expected_total_steps` は設定とデータセットから計算した概算、`actual_max_step` はTensorBoardまたは `train.log` から読めた実stepです。差が大きい場合は、dataset_config、batch size、repeat、epoch、`max_train_steps` の指定を確認してください。
+
 ## 既知の制限
 
 - 同時実行できる学習ジョブは1件のみ。

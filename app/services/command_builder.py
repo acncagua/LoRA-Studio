@@ -54,6 +54,16 @@ batch_size = {batch_size}
     path.write_text(content, encoding="utf-8")
 
 
+def normalize_resolution(value: Any) -> list[int]:
+    if isinstance(value, str):
+        parts = [part.strip() for part in value.replace("x", ",").split(",") if part.strip()]
+        if len(parts) == 2:
+            return [int(parts[0]), int(parts[1])]
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        return [int(value[0]), int(value[1])]
+    return [1024, 1024]
+
+
 def image_directories(dataset_path: Path) -> list[Path]:
     if not dataset_path.exists():
         return []
@@ -71,7 +81,7 @@ def prepare_job_files(job: dict[str, Any], dataset: dict[str, Any]) -> dict[str,
     config_dir.mkdir(parents=True, exist_ok=True)
 
     params = json.loads(job["params_json"])
-    resolution = params.get("resolution", [1024, 1024])
+    resolution = normalize_resolution(params.get("resolution", [1024, 1024]))
     dataset_config = config_dir / "dataset_config.toml"
     sample_prompts = config_dir / "sample_prompts.txt"
     job_config = config_dir / "job_config.json"

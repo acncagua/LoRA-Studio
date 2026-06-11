@@ -17,6 +17,8 @@ def parse_epoch_step(path: Path) -> tuple[int | None, int | None]:
     step = parse_number(name, r"step[-_]?(\d+)")
     if epoch is None:
         epoch = parse_number(name, r"e[-_]?(\d+)")
+    if epoch is None:
+        epoch = parse_number(name, r"-(\d{6})$")
     if step is None:
         step = parse_number(name, r"s[-_]?(\d+)")
     return epoch, step
@@ -100,12 +102,23 @@ def collect_models(job_id: int, models_dir: Path) -> int:
         for path in sorted(models_dir.rglob("*.safetensors")):
             file_path = str(path)
             existing = conn.execute(
-                "SELECT id FROM training_outputs WHERE job_id = ? AND file_path = ?",
+                "SELECT id, epoch, step FROM training_outputs WHERE job_id = ? AND file_path = ?",
                 (job_id, file_path),
             ).fetchone()
-            if existing:
-                continue
             epoch, step = parse_epoch_step(path)
+            if existing:
+                if (existing["epoch"] is None and epoch is not None) or (
+                    existing["step"] is None and step is not None
+                ):
+                    conn.execute(
+                        """
+                        UPDATE training_outputs
+                        SET epoch = COALESCE(epoch, ?), step = COALESCE(step, ?)
+                        WHERE id = ?
+                        """,
+                        (epoch, step, existing["id"]),
+                    )
+                continue
             conn.execute(
                 """
                 INSERT INTO training_outputs(
