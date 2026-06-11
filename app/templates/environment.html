@@ -1,5 +1,24 @@
-﻿{% extends "base.html" %}{% block content %}
+{% extends "base.html" %}{% block content %}
 <header class="page-head"><h1>Environment</h1></header>
-<section class="panel-grid"><div><h2>sd-scripts</h2><dl><dt>Repository</dt><dd>{{ settings.SD_SCRIPTS_REPO_URL }}</dd><dt>Release</dt><dd>{{ settings.SD_SCRIPTS_RELEASE_TAG }}</dd><dt>Commit</dt><dd>{{ settings.SD_SCRIPTS_RELEASE_COMMIT }}</dd><dt>Path</dt><dd>{{ settings.SD_SCRIPTS_DIR }}</dd></dl></div><div><h2>Setup Command</h2><pre>powershell -ExecutionPolicy Bypass -File .\scripts\setup_sd_scripts.ps1 -ReleaseTag v0.10.5</pre></div></section>
+<section class="panel-grid">
+  <div><h2>sd-scripts</h2><dl><dt>Repository</dt><dd>{{ settings.SD_SCRIPTS_REPO_URL }}</dd><dt>Release</dt><dd>{{ settings.SD_SCRIPTS_RELEASE_TAG }}</dd><dt>Commit</dt><dd>{{ settings.SD_SCRIPTS_RELEASE_COMMIT }}</dd><dt>Path</dt><dd>{{ settings.SD_SCRIPTS_DIR }}</dd></dl></div>
+  <div><h2>Setup Command</h2><pre>powershell -ExecutionPolicy Bypass -File .\scripts\setup_sd_scripts.ps1 -ReleaseTag v0.10.5</pre></div>
+</section>
+<section>
+  <h2>Registered Environments</h2>
+  <table>
+    <thead><tr><th>Name</th><th>Status</th><th>Python</th><th>Torch</th><th>CUDA</th><th>GPU</th><th>Updated</th></tr></thead>
+    <tbody>
+      {% for env in environments %}
+      <tr>
+        <td>{{ env.name }}</td><td>{{ env.status }}</td><td>{{ env.python_version or '-' }}</td><td>{{ env.torch_version or '-' }}</td><td>{{ env.torch_cuda_version or '-' }} / {{ env.cuda_profile or '-' }}</td><td>{{ env.gpu_name or '-' }}</td><td>{{ env.updated_at }}</td>
+      </tr>
+      <tr><td colspan="7"><dl><dt>sd-scripts</dt><dd>{{ env.sd_scripts_path }}</dd><dt>venv python</dt><dd>{{ env.venv_python_path }}</dd><dt>accelerate</dt><dd>{{ env.venv_accelerate_path or '-' }}</dd><dt>commit</dt><dd>{{ env.sd_scripts_commit_hash or '-' }}</dd></dl></td></tr>
+      {% else %}
+      <tr><td colspan="7" class="muted">No environment has been imported yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
 <section><h2>Settings</h2><table><tbody>{% for row in settings_rows %}<tr><th>{{ row.key }}</th><td>{{ row.value }}</td><td>{{ row.updated_at }}</td></tr>{% endfor %}</tbody></table></section>
 {% endblock %}

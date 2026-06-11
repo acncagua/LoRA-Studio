@@ -1,5 +1,25 @@
-﻿{% extends "base.html" %}{% block content %}
+{% extends "base.html" %}{% block content %}
 <header class="page-head"><h1>Dashboard</h1><a class="button" href="/jobs/new">Create Job</a></header>
-<section class="metric-grid"><div><span>{{ stats.presets }}</span><small>Presets</small></div><div><span>{{ stats.datasets }}</span><small>Datasets</small></div><div><span>{{ stats.jobs }}</span><small>Jobs</small></div><div><span>{{ stats.running }}</span><small>Running</small></div></section>
-<section><h2>Recent Jobs</h2><table><thead><tr><th>ID</th><th>Name</th><th>Status</th><th>Family</th><th>Updated</th></tr></thead><tbody>{% for job in jobs %}<tr><td><a href="/jobs/{{ job.id }}">#{{ job.id }}</a></td><td>{{ job.name }}</td><td>{{ job.status }}</td><td>{{ job.model_family }}</td><td>{{ job.updated_at }}</td></tr>{% else %}<tr><td colspan="5" class="muted">No jobs yet.</td></tr>{% endfor %}</tbody></table></section>
+<section class="metric-grid">
+  <div><span>{{ stats.presets }}</span><small>Presets</small></div>
+  <div><span>{{ stats.datasets }}</span><small>Datasets</small></div>
+  <div><span>{{ stats.jobs }}</span><small>Jobs</small></div>
+  <div><span>{{ stats.running }}</span><small>Running</small></div>
+  <div><span>{{ stats.completed }}</span><small>Completed</small></div>
+  <div><span>{{ stats.failed }}</span><small>Failed</small></div>
+  <div><span>{{ stats.stopped }}</span><small>Stopped</small></div>
+</section>
+<section>
+  <h2>Recent Jobs</h2>
+  <table>
+    <thead><tr><th>ID</th><th>Name</th><th>Status</th><th>Family</th><th>Updated</th></tr></thead>
+    <tbody>
+      {% for job in jobs %}
+      <tr><td><a href="/jobs/{{ job.id }}">#{{ job.id }}</a></td><td>{{ job.name }}</td><td>{{ job.status }}</td><td>{{ job.model_family }}</td><td>{{ job.updated_at }}</td></tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">No jobs yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
 {% endblock %}

@@ -85,7 +85,7 @@ def release_port(port: int) -> None:
     for pid in sorted(find_listening_pids(port)):
         if pid == current_pid:
             continue
-        subprocess.run(["taskkill", "/PID", str(pid), "/F"], check=False, capture_output=True)
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], check=False, capture_output=True)
 
 
 def main() -> None:
@@ -100,6 +100,8 @@ def main() -> None:
     if not args.skip_sd_scripts_setup:
         ensure_sd_scripts_installed()
     url = f"http://{args.host}:{args.port}"
+    if args.port != 7865:
+        release_port(7865)
     release_port(args.port)
     if not args.no_browser:
         webbrowser.open(url)

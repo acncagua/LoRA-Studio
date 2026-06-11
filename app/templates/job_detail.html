@@ -1,5 +1,66 @@
-﻿{% extends "base.html" %}{% block content %}
-<header class="page-head"><h1>#{{ job.id }} {{ job.name }}</h1><form method="post" action="/jobs/{{ job.id }}/prepare"><button type="submit">Prepare Files</button></form></header>
-<section class="panel-grid"><div><h2>Job</h2><dl><dt>Status</dt><dd>{{ job.status }}</dd><dt>Family</dt><dd>{{ job.model_family }}</dd><dt>Script</dt><dd>{{ job.training_script }}</dd><dt>Run Dir</dt><dd>{{ job.run_dir }}</dd></dl></div><div><h2>Dataset</h2>{% if dataset %}<dl><dt>Name</dt><dd>{{ dataset.name }}</dd><dt>Images</dt><dd>{{ dataset.image_count }}</dd><dt>Path</dt><dd>{{ dataset.path }}</dd></dl>{% endif %}</div></section>
-<section><h2>Command</h2><pre>{{ job.command_line or 'Not prepared yet.' }}</pre></section><section><h2>Params</h2><pre>{{ job.params_json }}</pre></section>
+{% extends "base.html" %}{% block content %}
+{% if job.status == 'running' %}<meta http-equiv="refresh" content="8">{% endif %}
+<header class="page-head">
+  <h1>#{{ job.id }} {{ job.name }}</h1>
+  <div class="actions">
+    <form method="post" action="/jobs/{{ job.id }}/prepare"><button type="submit">Prepare Files</button></form>
+    <form method="post" action="/jobs/{{ job.id }}/run"><button type="submit">Run</button></form>
+    <form method="post" action="/jobs/{{ job.id }}/stop"><button type="submit" class="danger">Stop</button></form>
+    <form method="post" action="/jobs/{{ job.id }}/reimport"><button type="submit">Reimport Results</button></form>
+  </div>
+</header>
+<section class="panel-grid">
+  <div>
+    <h2>Job</h2>
+    <dl>
+      <dt>Status</dt><dd>{{ job.status }}</dd>
+      <dt>Family</dt><dd>{{ job.model_family }}</dd>
+      <dt>Script</dt><dd>{{ job.training_script }}</dd>
+      <dt>PID</dt><dd>{{ job.process_id or '-' }}</dd>
+      <dt>Return Code</dt><dd>{{ job.return_code if job.return_code is not none else '-' }}</dd>
+      <dt>Started</dt><dd>{{ job.start_time or '-' }}</dd>
+      <dt>Ended</dt><dd>{{ job.end_time or '-' }}</dd>
+      <dt>Elapsed</dt><dd>{{ job.elapsed_seconds if job.elapsed_seconds is not none else '-' }}</dd>
+      <dt>Run Dir</dt><dd>{{ job.run_dir }}</dd>
+    </dl>
+  </div>
+  <div>
+    <h2>Dataset</h2>
+    {% if dataset %}<dl><dt>Name</dt><dd>{{ dataset.name }}</dd><dt>Images</dt><dd>{{ dataset.image_count }}</dd><dt>Path</dt><dd>{{ dataset.path }}</dd></dl>{% endif %}
+    <h2>Selected LoRA</h2>
+    <p>{{ job.adopted_model_path or 'Not selected yet.' }}</p>
+  </div>
+</section>
+<section><h2>Command</h2><pre>{{ job.command_line or 'Not prepared yet.' }}</pre></section>
+<section><h2>Train Log Tail</h2><pre>{{ log_tail or 'No train.log yet.' }}</pre></section>
+<section>
+  <h2>Outputs</h2>
+  <table>
+    <thead><tr><th>ID</th><th>Epoch</th><th>Step</th><th>Size</th><th>Selected</th><th>Path</th><th></th></tr></thead>
+    <tbody>
+      {% for output in outputs %}
+      <tr>
+        <td>#{{ output.id }}</td><td>{{ output.epoch or '-' }}</td><td>{{ output.step or '-' }}</td><td>{{ output.file_size or '-' }}</td><td>{{ 'yes' if output.selected else '' }}</td><td>{{ output.file_path }}</td>
+        <td><form method="post" action="/jobs/{{ job.id }}/outputs/{{ output.id }}/select"><button type="submit">Select</button></form></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="muted">No LoRA outputs imported yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+<section>
+  <h2>Samples</h2>
+  <div class="sample-grid">
+    {% for sample in samples %}
+    <figure>
+      <img src="/jobs/{{ job.id }}/samples/{{ sample.id }}" alt="sample {{ sample.id }}">
+      <figcaption>epoch {{ sample.epoch or '-' }} / prompt {{ sample.prompt_id or '-' }}</figcaption>
+    </figure>
+    {% else %}
+    <p class="muted">No sample images imported yet.</p>
+    {% endfor %}
+  </div>
+</section>
+<section><h2>Params</h2><pre>{{ job.params_json }}</pre></section>
 {% endblock %}

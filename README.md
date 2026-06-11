@@ -72,10 +72,13 @@ Set-Content -Encoding UTF8 .\data\python_cmd.txt "C:\path\to\python.exe"
 3. Presets画面で初期プリセットを確認する。
 4. New Job画面でデータセット、プリセット、base model pathを指定してdraftを作る。
 5. Job詳細画面で `Prepare Files` を押し、設定ファイルと実行コマンドを生成する。
-6. 生成された `runs/job_000001/config/command.txt` を確認して学習実行に進む。
+6. `Run` を押して学習を開始する。必要なら `Stop` で停止する。
+7. 完了後、Job詳細画面でログ、出力LoRA、サンプル画像を確認する。手動で再取り込みしたい場合は `Reimport Results` を押す。
+
+`Prepare Files` では表示用の `command.txt` に加えて、実行用の `command_argv.json` を生成します。実行時はshell文字列ではなくargv配列を `subprocess.Popen` に渡すため、Windowsのスペース入りパスでも壊れにくくしています。`dataset_config.toml` の `batch_size` はプリセットの `train_batch_size` から生成し、コマンドライン側では `--train_batch_size` を重複指定しません。学習時のbatch sizeは `dataset_config.toml` を正とします。
 
 ## 既知の制限
 
-- 学習プロセスの実行、停止、結果取り込みは次フェーズで実装する。
+- 同時実行できる学習ジョブは1件のみ。
 - loss解析とepoch比較UIは枠だけ用意している。
 - AIによる画像自動評価やパラメータ自動最適化はMVP対象外。

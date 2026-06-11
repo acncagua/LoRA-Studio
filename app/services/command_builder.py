@@ -5,11 +5,18 @@ import shlex
 from pathlib import Path
 from typing import Any
 
-from app import settings
+from app.db import latest_environment, replace_sample_prompts
 from app.services.sample_prompt_writer import build_sample_prompts, write_sample_prompts
 
 
-def write_dataset_config(path: Path, dataset_path: str, repeats: int, class_token: str, resolution: list[int]) -> None:
+def write_dataset_config(
+    path: Path,
+    dataset_path: str,
+    repeats: int,
+    class_token: str,
+    resolution: list[int],
+    batch_size: int,
+) -> None:
     width, height = resolution
     normalized_path = dataset_path.replace("\\", "/")
     content = f'''[general]
@@ -19,7 +26,7 @@ keep_tokens = 1
 
 [[datasets]]
 resolution = [{width}, {height}]
-batch_size = 1
+batch_size = {batch_size}
 
   [[datasets.subsets]]
   image_dir = "{normalized_path}"
@@ -40,22 +47,46 @@ def prepare_job_files(job: dict[str, Any], dataset: dict[str, Any]) -> dict[str,
     sample_prompts = config_dir / "sample_prompts.txt"
     job_config = config_dir / "job_config.json"
     command_txt = config_dir / "command.txt"
+    command_argv_json = config_dir / "command_argv.json"
 
-    write_dataset_config(dataset_config, dataset["path"], int(params.get("repeats", 10)), dataset.get("class_token") or "person", resolution)
+    batch_size = int(params.get("train_batch_size", 1))
+    write_dataset_config(
+        dataset_config,
+        dataset["path"],
+        int(params.get("repeats", 10)),
+        dataset.get("class_token") or "person",
+        resolution,
+        batch_size,
+    )
     prompts = build_sample_prompts(dataset.get("trigger_word") or "trigger_word", int(resolution[0]), int(resolution[1]))
     write_sample_prompts(sample_prompts, prompts)
+    replace_sample_prompts(int(job["id"]), prompts)
 
-    command = build_command(job, dataset_config, sample_prompts)
+    command_argv = build_command_argv(job, dataset_config, sample_prompts)
+    command = " ".join(shlex.quote(str(part)) for part in command_argv)
     job_config.write_text(json.dumps({"job": job, "dataset": dataset, "params": params}, ensure_ascii=False, indent=2), encoding="utf-8")
     command_txt.write_text(command + "\n", encoding="utf-8")
-    return {"dataset_config": dataset_config, "sample_prompts": sample_prompts, "job_config": job_config, "command": command}
+    command_argv_json.write_text(json.dumps(command_argv, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {
+        "dataset_config": dataset_config,
+        "sample_prompts": sample_prompts,
+        "job_config": job_config,
+        "command_argv": command_argv_json,
+        "command": command,
+    }
 
 
-def build_command(job: dict[str, Any], dataset_config: Path, sample_prompts: Path) -> str:
+def build_command_argv(job: dict[str, Any], dataset_config: Path, sample_prompts: Path) -> list[str]:
     params = json.loads(job["params_json"])
-    script = settings.SD_SCRIPTS_DIR / job["training_script"]
+    environment = latest_environment()
+    if environment is None:
+        raise RuntimeError("sd-scripts environment is not registered.")
+    script = Path(environment["sd_scripts_path"]) / job["training_script"]
     args: list[str] = [
-        "accelerate", "launch", str(script),
+        environment["venv_python_path"],
+        "-m",
+        "accelerate.commands.launch",
+        str(script),
         "--pretrained_model_name_or_path", job["base_model_path"],
         "--dataset_config", str(dataset_config),
         "--output_dir", job["output_dir"],
@@ -65,7 +96,7 @@ def build_command(job: dict[str, Any], dataset_config: Path, sample_prompts: Pat
     if job.get("vae_path"):
         args.extend(["--vae", job["vae_path"]])
 
-    skip_keys = {"resolution", "repeats", "optimizer_args"}
+    skip_keys = {"resolution", "repeats", "optimizer_args", "train_batch_size"}
     for key, value in params.items():
         if key in skip_keys:
             continue
@@ -81,4 +112,4 @@ def build_command(job: dict[str, Any], dataset_config: Path, sample_prompts: Pat
         rendered = str(value).lower() if isinstance(value, bool) else str(value)
         args.extend(["--optimizer_args", f"{key}={rendered}"])
 
-    return " ".join(shlex.quote(str(part)) for part in args)
+    return [str(part) for part in args]

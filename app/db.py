@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -25,8 +26,67 @@ def connect() -> sqlite3.Connection:
 def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA_SQL)
+        run_migrations(conn)
         seed_app_settings(conn)
         seed_presets(conn)
+        import_latest_environment(conn)
+
+
+def run_migrations(conn: sqlite3.Connection) -> None:
+    ensure_columns(
+        conn,
+        "environments",
+        {
+            "venv_accelerate_path": "TEXT",
+            "hf_home": "TEXT",
+            "cuda_profile": "TEXT",
+            "mixed_precision": "TEXT",
+            "python_version": "TEXT",
+            "torch_version": "TEXT",
+            "torch_cuda_version": "TEXT",
+            "cuda_available": "INTEGER",
+            "gpu_name": "TEXT",
+            "sd_scripts_commit_hash": "TEXT",
+            "requirements_hash": "TEXT",
+            "updated_at": "TEXT",
+        },
+    )
+    ensure_columns(
+        conn,
+        "training_jobs",
+        {
+            "command_line": "TEXT",
+            "process_id": "INTEGER",
+            "return_code": "INTEGER",
+            "start_time": "TEXT",
+            "end_time": "TEXT",
+            "elapsed_seconds": "INTEGER",
+            "adopted_epoch": "INTEGER",
+            "adopted_model_path": "TEXT",
+            "image_rating": "INTEGER",
+            "loss_health_label": "TEXT",
+            "updated_at": "TEXT",
+        },
+    )
+    ensure_columns(conn, "training_outputs", {"selected": "INTEGER NOT NULL DEFAULT 0", "memo": "TEXT"})
+    ensure_columns(conn, "sample_images", {"rating": "INTEGER", "memo": "TEXT"})
+    conn.executescript(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_training_outputs_job_path
+            ON training_outputs(job_id, file_path);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_sample_images_job_path
+            ON sample_images(job_id, image_path);
+        CREATE INDEX IF NOT EXISTS idx_training_jobs_status
+            ON training_jobs(status);
+        """
+    )
+
+
+def ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+    existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    for name, definition in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
 
 
 def seed_app_settings(conn: sqlite3.Connection) -> None:
@@ -134,6 +194,155 @@ def create_job(data: dict[str, Any]) -> int:
             (run_dir / subdir).mkdir(parents=True, exist_ok=True)
         conn.execute("UPDATE training_jobs SET run_dir = ?, output_dir = ?, updated_at = ? WHERE id = ?", (str(run_dir), str(output_dir), now, job_id))
         return job_id
+
+
+def import_latest_environment(conn: sqlite3.Connection | None = None) -> None:
+    owns_connection = conn is None
+    if conn is None:
+        conn = connect()
+    try:
+        result_path = settings.LOGS_DIR / "setup_sd_scripts_result.json"
+        if not result_path.exists():
+            return
+        try:
+            result = json.loads(result_path.read_text(encoding="utf-8-sig"))
+        except json.JSONDecodeError:
+            return
+
+        venv_python_path = result.get("venv_python_path") or ""
+        runtime = inspect_sd_scripts_runtime(venv_python_path)
+        now = utc_now()
+        existing = conn.execute("SELECT id, created_at FROM environments WHERE name = ?", ("default",)).fetchone()
+        values = {
+            "name": "default",
+            "sd_scripts_path": result.get("sd_scripts_path") or "",
+            "venv_python_path": venv_python_path,
+            "venv_accelerate_path": result.get("venv_accelerate_path"),
+            "cuda_profile": result.get("cuda_profile"),
+            "mixed_precision": result.get("mixed_precision"),
+            "python_version": runtime.get("python_version"),
+            "torch_version": runtime.get("torch_version"),
+            "torch_cuda_version": runtime.get("torch_cuda_version"),
+            "cuda_available": 1 if runtime.get("cuda_available") else 0 if "cuda_available" in runtime else None,
+            "gpu_name": runtime.get("gpu_name"),
+            "sd_scripts_commit_hash": result.get("commit"),
+            "status": "ready" if result.get("commit") and Path(venv_python_path).exists() else "unknown",
+            "updated_at": now,
+        }
+        if existing:
+            conn.execute(
+                """
+                UPDATE environments SET
+                    sd_scripts_path = :sd_scripts_path,
+                    venv_python_path = :venv_python_path,
+                    venv_accelerate_path = :venv_accelerate_path,
+                    cuda_profile = :cuda_profile,
+                    mixed_precision = :mixed_precision,
+                    python_version = :python_version,
+                    torch_version = :torch_version,
+                    torch_cuda_version = :torch_cuda_version,
+                    cuda_available = :cuda_available,
+                    gpu_name = :gpu_name,
+                    sd_scripts_commit_hash = :sd_scripts_commit_hash,
+                    status = :status,
+                    updated_at = :updated_at
+                WHERE name = :name
+                """,
+                values,
+            )
+        else:
+            values["created_at"] = now
+            conn.execute(
+                """
+                INSERT INTO environments(
+                    name, sd_scripts_path, venv_python_path, venv_accelerate_path,
+                    cuda_profile, mixed_precision, python_version, torch_version,
+                    torch_cuda_version, cuda_available, gpu_name, sd_scripts_commit_hash,
+                    status, created_at, updated_at
+                )
+                VALUES (
+                    :name, :sd_scripts_path, :venv_python_path, :venv_accelerate_path,
+                    :cuda_profile, :mixed_precision, :python_version, :torch_version,
+                    :torch_cuda_version, :cuda_available, :gpu_name, :sd_scripts_commit_hash,
+                    :status, :created_at, :updated_at
+                )
+                """,
+                values,
+            )
+    finally:
+        if owns_connection:
+            conn.commit()
+            conn.close()
+
+
+def inspect_sd_scripts_runtime(venv_python_path: str) -> dict[str, Any]:
+    python_path = Path(venv_python_path)
+    if not python_path.exists():
+        return {}
+    code = (
+        "import json, sys, torch; "
+        "print(json.dumps({"
+        "'python_version': sys.version, "
+        "'torch_version': torch.__version__, "
+        "'torch_cuda_version': torch.version.cuda, "
+        "'cuda_available': torch.cuda.is_available(), "
+        "'gpu_name': torch.cuda.get_device_name(0) if torch.cuda.is_available() else None"
+        "}, ensure_ascii=False))"
+    )
+    try:
+        result = subprocess.run(
+            [str(python_path), "-c", code],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+    except Exception:
+        return {}
+    if result.returncode != 0:
+        return {}
+    try:
+        return json.loads(result.stdout.strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError):
+        return {}
+
+
+def latest_environment() -> sqlite3.Row | None:
+    import_latest_environment()
+    return fetch_one("SELECT * FROM environments ORDER BY updated_at DESC, id DESC LIMIT 1")
+
+
+def replace_sample_prompts(job_id: int, prompts: list[dict[str, Any]]) -> None:
+    now = utc_now()
+    with connect() as conn:
+        conn.execute("DELETE FROM sample_prompts WHERE job_id = ?", (job_id,))
+        conn.executemany(
+            """
+            INSERT INTO sample_prompts(
+                job_id, name, prompt, negative_prompt, width, height,
+                seed, cfg_scale, steps, sort_order, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    job_id,
+                    item["name"],
+                    item["prompt"],
+                    item.get("negative_prompt"),
+                    item.get("width"),
+                    item.get("height"),
+                    item.get("seed"),
+                    item.get("cfg_scale"),
+                    item.get("steps"),
+                    index,
+                    now,
+                )
+                for index, item in enumerate(prompts, start=1)
+            ],
+        )
 
 
 SCHEMA_SQL = """
