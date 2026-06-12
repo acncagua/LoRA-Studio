@@ -134,6 +134,7 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         conn,
         "validation_images",
         {
+            "expected_condition_id": "INTEGER",
             "validation_run_id": "INTEGER",
             "validation_preset_id": "TEXT",
             "prompt_key": "TEXT",
@@ -142,6 +143,8 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "grid_image_flag": "INTEGER NOT NULL DEFAULT 0",
             "image_role": "TEXT NOT NULL DEFAULT 'individual'",
             "condition_hash": "TEXT",
+            "rating_flexibility": "INTEGER",
+            "ignored": "INTEGER NOT NULL DEFAULT 0",
             "strength_label": "TEXT",
             "overfit_level": "TEXT",
             "adoption_label": "TEXT",
@@ -156,6 +159,7 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "validation_run_id": "INTEGER",
             "validation_preset_id": "TEXT",
             "hires_enabled": "INTEGER NOT NULL DEFAULT 0",
+            "rating_flexibility": "INTEGER",
             "strength_label": "TEXT",
             "overfit_level": "TEXT",
             "adoption_label": "TEXT",
@@ -172,6 +176,18 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "last_validation_preset_id": "TEXT",
             "validation_policy_memo": "TEXT",
             "reference_set_id": "INTEGER",
+        },
+    )
+    ensure_columns(
+        conn,
+        "validation_runs",
+        {
+            "suggested_weight_min": "REAL",
+            "suggested_weight_max": "REAL",
+            "suggested_light_weight": "REAL",
+            "suggested_strong_weight": "REAL",
+            "suggested_weight_reason": "TEXT",
+            "profile_applied_at": "TEXT",
         },
     )
     ensure_columns(
@@ -199,6 +215,12 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             ON validation_images(job_id);
         CREATE INDEX IF NOT EXISTS idx_validation_images_run
             ON validation_images(validation_run_id);
+        CREATE INDEX IF NOT EXISTS idx_validation_images_expected_condition
+            ON validation_images(expected_condition_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_validation_expected_conditions_hash
+            ON validation_expected_conditions(validation_run_id, condition_hash);
+        CREATE INDEX IF NOT EXISTS idx_validation_expected_conditions_run
+            ON validation_expected_conditions(validation_run_id);
         CREATE INDEX IF NOT EXISTS idx_validation_weight_reviews_job
             ON validation_weight_reviews(job_id);
         CREATE INDEX IF NOT EXISTS idx_validation_weight_reviews_run
@@ -1087,20 +1109,30 @@ CREATE TABLE IF NOT EXISTS validation_runs (
     validation_preset_id TEXT, name TEXT NOT NULL, validation_level TEXT,
     base_model TEXT, trigger_word TEXT, lora_filename TEXT,
     recommended_weight_min REAL, recommended_weight_max REAL,
+    suggested_weight_min REAL, suggested_weight_max REAL,
+    suggested_light_weight REAL, suggested_strong_weight REAL,
+    suggested_weight_reason TEXT, profile_applied_at TEXT,
     expected_image_count INTEGER, actual_image_count INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'planned', created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL, memo TEXT
 );
+CREATE TABLE IF NOT EXISTS validation_expected_conditions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, validation_run_id INTEGER NOT NULL,
+    validation_preset_id TEXT, prompt_key TEXT, seed INTEGER, lora_weight REAL,
+    hires_enabled INTEGER NOT NULL DEFAULT 0, width INTEGER, height INTEGER,
+    sampler TEXT, steps INTEGER, cfg_scale REAL, condition_hash TEXT NOT NULL,
+    expected_order INTEGER NOT NULL, created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS validation_images (
     id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, selected_output_id INTEGER,
-    validation_run_id INTEGER, validation_preset_id TEXT, prompt_key TEXT, seed INTEGER,
+    expected_condition_id INTEGER, validation_run_id INTEGER, validation_preset_id TEXT, prompt_key TEXT, seed INTEGER,
     lora_weight REAL, image_path TEXT NOT NULL, validation_type TEXT, prompt TEXT, negative_prompt TEXT,
     base_model TEXT, sampler TEXT, steps INTEGER, cfg_scale REAL, width INTEGER, height INTEGER,
     hires_enabled INTEGER NOT NULL DEFAULT 0, hires_scale REAL, lora_weights TEXT, seeds TEXT,
     grid_image_flag INTEGER NOT NULL DEFAULT 0, image_role TEXT NOT NULL DEFAULT 'individual',
-    condition_hash TEXT,
+    condition_hash TEXT, ignored INTEGER NOT NULL DEFAULT 0,
     rating_face INTEGER, rating_costume INTEGER, rating_style INTEGER,
-    rating_stability INTEGER, rating_overall INTEGER,
+    rating_stability INTEGER, rating_flexibility INTEGER, rating_overall INTEGER,
     strength_label TEXT, overfit_level TEXT, adoption_label TEXT,
     failure_tags_json TEXT, rubric_version TEXT,
     recommended_weight_min REAL, recommended_weight_max REAL,
@@ -1110,7 +1142,7 @@ CREATE TABLE IF NOT EXISTS validation_weight_reviews (
     id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, selected_output_id INTEGER,
     validation_run_id INTEGER, validation_preset_id TEXT, hires_enabled INTEGER NOT NULL DEFAULT 0,
     lora_weight REAL NOT NULL, validation_type TEXT, rating_face INTEGER, rating_costume INTEGER,
-    rating_style INTEGER, rating_stability INTEGER, rating_overall INTEGER,
+    rating_style INTEGER, rating_stability INTEGER, rating_flexibility INTEGER, rating_overall INTEGER,
     strength_label TEXT, overfit_level TEXT, adoption_label TEXT,
     failure_tags_json TEXT, rubric_version TEXT,
     recommended_weight_min REAL, recommended_weight_max REAL, memo TEXT,

@@ -5,8 +5,22 @@
     <a class="button" href="/jobs/{{ run.job_id }}">Jobへ戻る</a>
     {% if run.selected_lora_profile_id %}<a class="button" href="/lora-library/{{ run.selected_lora_profile_id }}/edit">Profileへ戻る</a>{% endif %}
     <form method="post" action="/validation-runs/{{ run.id }}/export"><button type="submit">Prompt Pack再出力</button></form>
+    <form method="post" action="/validation-runs/{{ run.id }}/export-report"><button type="submit">Validation Report出力</button></form>
   </div>
 </header>
+
+{% if report_path %}<p class="notice">Validation Reportを出力しました: {{ report_path }}</p>{% endif %}
+{% if apply_result %}
+<section class="notice">
+  <h2>Profile反映結果</h2>
+  <p>人間操作により、suggested weightをLoRA Profileへ反映しました。</p>
+  <dl>
+    <dt>recommended</dt><dd>{{ apply_result.before.recommended_weight_min }} - {{ apply_result.before.recommended_weight_max }} → {{ apply_result.after.recommended_weight_min }} - {{ apply_result.after.recommended_weight_max }}</dd>
+    <dt>light / strong</dt><dd>{{ apply_result.before.light_weight }} / {{ apply_result.before.strong_weight }} → {{ apply_result.after.light_weight }} / {{ apply_result.after.strong_weight }}</dd>
+  </dl>
+</section>
+{% endif %}
+
 <section class="panel-grid">
   <div>
     <h2>Run情報</h2>
@@ -14,20 +28,68 @@
       <dt>名前</dt><dd>{{ run.name }}</dd>
       <dt>Preset</dt><dd>{{ preset.name if preset else 'legacy / preset unspecified' }}</dd>
       <dt>Level</dt><dd>{{ run.validation_level or '-' }}</dd>
-      <dt>Status</dt><dd>{{ run.status }}</dd>
-      <dt>画像数</dt><dd>{{ run.actual_image_count }} / {{ run.expected_image_count }}</dd>
+      <dt>Status</dt><dd><span class="label {{ run.status }}">{{ run.status }}</span></dd>
       <dt>出力先</dt><dd>{{ output_dir }}</dd>
-    </dl>
-  </div>
-  <div>
-    <h2>生成条件</h2>
-    <dl>
       <dt>Base model</dt><dd>{{ run.base_model or '-' }}</dd>
       <dt>Trigger</dt><dd>{{ run.trigger_word or '-' }}</dd>
       <dt>LoRA</dt><dd>{{ run.lora_filename or '-' }}</dd>
-      <dt>推奨weight</dt><dd>{{ run.recommended_weight_min if run.recommended_weight_min is not none else '-' }} - {{ run.recommended_weight_max if run.recommended_weight_max is not none else '-' }}</dd>
-      <dt>メモ</dt><dd>{{ run.memo or '-' }}</dd>
     </dl>
+  </div>
+  <div>
+    <h2>Coverage</h2>
+    <dl>
+      <dt>expected</dt><dd>{{ coverage.expected_image_count }}</dd>
+      <dt>registered</dt><dd>{{ coverage.registered_condition_count }}</dd>
+      <dt>reviewed</dt><dd>{{ coverage.reviewed_condition_count }}</dd>
+      <dt>missing</dt><dd>{{ coverage.missing_condition_count }}</dd>
+      <dt>coverage rate</dt><dd>{{ '%.1f%%'|format(coverage.coverage_rate * 100) }}</dd>
+      <dt>review rate</dt><dd>{{ '%.1f%%'|format(coverage.review_rate * 100) }}</dd>
+    </dl>
+    <form method="post" action="/validation-runs/{{ run.id }}/status" class="inline-form">
+      <label>Status変更<select name="status">
+        {% for status in ['planned','images_registered','partially_reviewed','reviewed','completed','archived'] %}
+        <option value="{{ status }}" {{ 'selected' if run.status == status else '' }}>{{ status }}</option>
+        {% endfor %}
+      </select></label>
+      <button type="submit">Statusを保存</button>
+    </form>
+  </div>
+</section>
+
+<section class="panel-grid">
+  <div>
+    <h2>Suggested Weight</h2>
+    <dl>
+      <dt>min / max</dt><dd>{{ suggestion.suggested_weight_min if suggestion.suggested_weight_min is not none else '-' }} - {{ suggestion.suggested_weight_max if suggestion.suggested_weight_max is not none else '-' }}</dd>
+      <dt>light / strong</dt><dd>{{ suggestion.suggested_light_weight if suggestion.suggested_light_weight is not none else '-' }} / {{ suggestion.suggested_strong_weight if suggestion.suggested_strong_weight is not none else '-' }}</dd>
+      <dt>reason</dt><dd>{{ suggestion.suggested_weight_reason }}</dd>
+    </dl>
+    <div class="actions">
+      <form method="post" action="/validation-runs/{{ run.id }}/suggest"><button type="submit">Suggested Weightを保存</button></form>
+      <form method="post" action="/validation-runs/{{ run.id }}/apply"><button type="submit">Apply to LoRA Profile</button></form>
+    </div>
+    <p class="muted">自動反映はしません。Profileへ反映する場合は必ずApplyボタンを押してください。</p>
+  </div>
+  <div>
+    <h2>Reference Set</h2>
+    {% if reference_set %}
+    <dl>
+      <dt>ID</dt><dd>#{{ reference_set.id }}</dd>
+      <dt>名前</dt><dd>{{ reference_set.name }}</dd>
+      <dt>Trigger</dt><dd>{{ reference_set.trigger_word or '-' }}</dd>
+      <dt>メモ</dt><dd>{{ reference_set.memo or '-' }}</dd>
+    </dl>
+    <div class="sample-grid">
+      {% for ref in reference_images %}
+      <figure>
+        <img src="/reference-images/{{ ref.id }}" alt="reference image {{ ref.id }}">
+        <figcaption>{{ ref.image_role }} / {{ ref.caption or '' }}</figcaption>
+      </figure>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted">紐づくReference Setはありません。</p>
+    {% endif %}
   </div>
 </section>
 
@@ -41,9 +103,9 @@
           <button type="button" data-browse-target="#individual-image-path" data-browse-kind="image" data-browse-title="Validation画像を選択" data-browse-initial="{{ default_project_path }}">参照</button>
         </span>
       </label>
-      <label>Prompt key<select name="prompt_key">{% for c in conditions|unique(attribute='prompt_key') %}<option value="{{ c.prompt_key }}">{{ c.prompt_key }}</option>{% endfor %}</select></label>
-      <label>Seed<select name="seed">{% for c in conditions|unique(attribute='seed') %}<option value="{{ c.seed }}">{{ c.seed }}</option>{% endfor %}</select></label>
-      <label>Weight<select name="lora_weight">{% for c in conditions|unique(attribute='lora_weight') %}<option value="{{ c.lora_weight }}">{{ c.lora_weight }}</option>{% endfor %}</select></label>
+      <label>Prompt key<select name="prompt_key">{% for c in coverage.rows|unique(attribute='prompt_key') %}<option value="{{ c.prompt_key }}">{{ c.prompt_key }}</option>{% endfor %}</select></label>
+      <label>Seed<select name="seed">{% for c in coverage.rows|unique(attribute='seed') %}<option value="{{ c.seed }}">{{ c.seed }}</option>{% endfor %}</select></label>
+      <label>Weight<select name="lora_weight">{% for c in coverage.rows|unique(attribute='lora_weight') %}<option value="{{ c.lora_weight }}">{{ c.lora_weight }}</option>{% endfor %}</select></label>
       <label>Hires<select name="hires_enabled"><option value="">なし</option><option value="1">あり</option></select></label>
       <label class="wide-field">メモ<textarea name="memo"></textarea></label>
       <button type="submit">Individual画像を登録</button>
@@ -69,34 +131,93 @@
 </section>
 
 <section>
-  <h2>登録済み画像</h2>
-  <div class="sample-grid">
+  <h2>Coverage Matrix</h2>
+  <table>
+    <thead><tr><th>#</th><th>Prompt</th><th>Seed</th><th>Weight</th><th>Hires</th><th>Status</th><th>Images</th><th>Hash</th></tr></thead>
+    <tbody>
+      {% for row in coverage.rows %}
+      <tr>
+        <td>{{ row.expected_order }}</td>
+        <td>{{ row.prompt_key }}</td>
+        <td>{{ row.seed }}</td>
+        <td>{{ row.lora_weight }}</td>
+        <td>{{ 'あり' if row.hires_enabled else 'なし' }}</td>
+        <td><span class="label {{ row.status }}">{{ row.status }}</span></td>
+        <td>{{ row.image_count }}</td>
+        <td>{{ row.condition_hash[:12] }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="muted">Expected conditionがありません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>Weight Review Matrix</h2>
+  <div class="panel-grid">
+    <div>
+      <h3>Weight別</h3>
+      <table>
+        <thead><tr><th>Weight</th><th>件数</th><th>Avg Overall</th><th>Strength</th><th>Adoption</th></tr></thead>
+        <tbody>
+          {% for row in weight_matrix.by_weight %}
+          <tr><td>{{ row.key }}</td><td>{{ row.count }}</td><td>{{ '%.2f'|format(row.avg_overall) if row.avg_overall is not none else '-' }}</td><td>{{ row.strength_distribution }}</td><td>{{ row.adoption_distribution }}</td></tr>
+          {% else %}
+          <tr><td colspan="5" class="muted">レビュー済み画像がありません。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <h3>分布</h3>
+      <dl>
+        <dt>recommended weights</dt><dd>{{ weight_matrix.recommended_weights or '-' }}</dd>
+        <dt>too strong weights</dt><dd>{{ weight_matrix.too_strong_weights or '-' }}</dd>
+        <dt>too weak weights</dt><dd>{{ weight_matrix.too_weak_weights or '-' }}</dd>
+        <dt>strength</dt><dd>{{ weight_matrix.strength_distribution }}</dd>
+        <dt>overfit</dt><dd>{{ weight_matrix.overfit_distribution }}</dd>
+        <dt>adoption</dt><dd>{{ weight_matrix.adoption_distribution }}</dd>
+      </dl>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>登録済み画像レビュー</h2>
+  <div class="sample-grid compare">
     {% for image in images %}
     <figure>
       <img src="/validation-images/{{ image.id }}" alt="validation image {{ image.id }}">
       <figcaption>
         #{{ image.id }} {{ image.image_role }} / {{ image.prompt_key or '-' }} / seed {{ image.seed or '-' }} / weight {{ image.lora_weight if image.lora_weight is not none else '-' }} / Hires {{ 'あり' if image.hires_enabled else 'なし' }}<br>
-        {{ image.memo or '' }}
+        condition: {{ image.expected_condition_id or 'unmatched / grid' }}
       </figcaption>
+      <form method="post" action="/validation-runs/{{ run.id }}/images/{{ image.id }}/review" class="review-form">
+        <div class="rating-grid">
+          <label>顔<input type="number" min="0" max="5" name="rating_face" value="{{ image.rating_face or 0 }}"></label>
+          <label>衣装<input type="number" min="0" max="5" name="rating_costume" value="{{ image.rating_costume or 0 }}"></label>
+          <label>スタイル<input type="number" min="0" max="5" name="rating_style" value="{{ image.rating_style or 0 }}"></label>
+          <label>安定性<input type="number" min="0" max="5" name="rating_stability" value="{{ image.rating_stability or 0 }}"></label>
+          <label>柔軟性<input type="number" min="0" max="5" name="rating_flexibility" value="{{ image.rating_flexibility or 0 }}"></label>
+          <label>総合<input type="number" min="0" max="5" name="rating_overall" value="{{ image.rating_overall or 0 }}"></label>
+        </div>
+        <label>強さ<select name="strength_label">{% for value, label in rubric_options.strength_labels %}<option value="{{ value }}" {{ 'selected' if image.strength_label == value else '' }}>{{ label }}</option>{% endfor %}</select></label>
+        <label>過学習<select name="overfit_level">{% for value, label in rubric_options.overfit_levels %}<option value="{{ value }}" {{ 'selected' if image.overfit_level == value else '' }}>{{ label }}</option>{% endfor %}</select></label>
+        <label>採用判断<select name="adoption_label">{% for value, label in rubric_options.adoption_labels %}<option value="{{ value }}" {{ 'selected' if image.adoption_label == value else '' }}>{{ label }}</option>{% endfor %}</select></label>
+        <div class="checkbox-grid">
+          {% for tag in rubric_options.failure_tags %}
+          <label><input type="checkbox" name="failure_tags" value="{{ tag }}"> {{ tag }}</label>
+          {% endfor %}
+        </div>
+        <label><input type="checkbox" name="ignored" value="1" {{ 'checked' if image.ignored else '' }}> coverage上はignored扱いにする</label>
+        <label>メモ<textarea name="memo">{{ image.memo or '' }}</textarea></label>
+        <button type="submit">レビューを保存</button>
+      </form>
     </figure>
     {% else %}
     <p class="muted">登録済み画像はありません。</p>
     {% endfor %}
   </div>
-</section>
-
-<section>
-  <h2>Missing Expected Conditions</h2>
-  <p class="muted">未登録の想定条件です。Grid画像は資料として扱うため、個別条件の消化には使いません。</p>
-  <table>
-    <thead><tr><th>Prompt</th><th>Seed</th><th>Weight</th><th>Hires</th><th>Hash</th></tr></thead>
-    <tbody>
-      {% for row in missing[:100] %}
-      <tr><td>{{ row.prompt_key }}</td><td>{{ row.seed }}</td><td>{{ row.lora_weight }}</td><td>{{ row.hires_enabled }}</td><td>{{ row.condition_hash[:12] }}</td></tr>
-      {% else %}
-      <tr><td colspan="5" class="muted">想定条件はすべて登録済みです。</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
 </section>
 {% endblock %}

@@ -20,14 +20,19 @@ from app.services.output_collector import collect_job_results
 from app.services.recommendations import create_draft_job_from_recommendation, list_recommendations, regenerate_recommendations, set_recommendation_status, write_recommendation_report
 from app.services.training_runner import read_log_tail, start_job, stop_job
 from app.services.validation_runs import (
+    apply_suggestion_to_profile,
+    calculate_suggested_weights,
     copy_managed_validation_image,
     create_validation_run,
     expand_preset_conditions,
+    persist_suggestion,
     load_validation_run_bundle,
     make_condition_hash,
+    update_validation_run_status,
     update_validation_run_counts,
     validation_presets,
     validation_run_dir,
+    write_validation_report,
     write_validation_prompt_pack,
 )
 
@@ -1198,7 +1203,15 @@ def validation_run_detail(request: Request, run_id: int) -> HTMLResponse:
         bundle = load_validation_run_bundle(run_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return render(request, "validation_run_detail.html", **bundle, default_project_path=str(settings.ROOT_DIR))
+    return render(
+        request,
+        "validation_run_detail.html",
+        **bundle,
+        default_project_path=str(settings.ROOT_DIR),
+        rubric_options=rubric_options(),
+        apply_result=None,
+        report_path=None,
+    )
 
 
 @app.post("/validation-runs/{run_id}/export")
@@ -1207,6 +1220,60 @@ def validation_run_export(run_id: int) -> RedirectResponse:
         write_validation_prompt_pack(run_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
+
+
+@app.post("/validation-runs/{run_id}/export-report", response_class=HTMLResponse)
+def validation_run_export_report(request: Request, run_id: int) -> HTMLResponse:
+    try:
+        report_path = write_validation_report(run_id)
+        bundle = load_validation_run_bundle(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return render(
+        request,
+        "validation_run_detail.html",
+        **bundle,
+        default_project_path=str(settings.ROOT_DIR),
+        rubric_options=rubric_options(),
+        apply_result=None,
+        report_path=report_path,
+    )
+
+
+@app.post("/validation-runs/{run_id}/suggest")
+def validation_run_suggest(run_id: int) -> RedirectResponse:
+    try:
+        persist_suggestion(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
+
+
+@app.post("/validation-runs/{run_id}/apply", response_class=HTMLResponse)
+def validation_run_apply_to_profile(request: Request, run_id: int) -> HTMLResponse:
+    try:
+        apply_result = apply_suggestion_to_profile(run_id)
+        bundle = load_validation_run_bundle(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return render(
+        request,
+        "validation_run_detail.html",
+        **bundle,
+        default_project_path=str(settings.ROOT_DIR),
+        rubric_options=rubric_options(),
+        apply_result=apply_result,
+        report_path=None,
+    )
+
+
+@app.post("/validation-runs/{run_id}/status")
+def validation_run_update_status(run_id: int, status: str = Form(...)) -> RedirectResponse:
+    try:
+        update_validation_run_status(run_id, status)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
 
 
@@ -1254,6 +1321,60 @@ def validation_run_add_grid_image(
         hires_enabled=bool(hires_enabled),
         memo=grid_memo,
     )
+    return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
+
+
+@app.post("/validation-runs/{run_id}/images/{image_id}/review")
+def validation_run_review_image(
+    run_id: int,
+    image_id: int,
+    rating_face: int = Form(0),
+    rating_costume: int = Form(0),
+    rating_style: int = Form(0),
+    rating_stability: int = Form(0),
+    rating_flexibility: int = Form(0),
+    rating_overall: int = Form(0),
+    strength_label: str = Form(""),
+    overfit_level: str = Form(""),
+    adoption_label: str = Form(""),
+    failure_tags: list[str] = Form([]),
+    ignored: str = Form(""),
+    memo: str = Form(""),
+) -> RedirectResponse:
+    image = fetch_one("SELECT * FROM validation_images WHERE id = ? AND validation_run_id = ?", (image_id, run_id))
+    if image is None:
+        raise HTTPException(status_code=404, detail="Validation image not found")
+    now = settings_now()
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE validation_images
+            SET rating_face = ?, rating_costume = ?, rating_style = ?,
+                rating_stability = ?, rating_flexibility = ?, rating_overall = ?,
+                strength_label = ?, overfit_level = ?, adoption_label = ?,
+                failure_tags_json = ?, rubric_version = ?, ignored = ?,
+                memo = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                clamp_rating(rating_face),
+                clamp_rating(rating_costume),
+                clamp_rating(rating_style),
+                clamp_rating(rating_stability),
+                clamp_rating(rating_flexibility),
+                clamp_rating(rating_overall),
+                clean_choice(strength_label, {key for key, _ in STRENGTH_LABELS}),
+                clean_choice(overfit_level, {key for key, _ in OVERFIT_LEVELS}),
+                clean_choice(adoption_label, {key for key, _ in ADOPTION_LABELS}),
+                json.dumps(clean_failure_tags(failure_tags), ensure_ascii=False),
+                RUBRIC_VERSION,
+                1 if str(ignored).lower() in {"1", "true", "on", "yes"} else 0,
+                memo.strip(),
+                now,
+                image_id,
+            ),
+        )
+    update_validation_run_counts(run_id)
     return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
 
 
@@ -1310,21 +1431,30 @@ def register_validation_run_image(
         else:
             condition["condition_hash"] = None
     now = settings_now()
+    expected_condition_id = None
+    if condition.get("condition_hash"):
+        expected_row = fetch_one(
+            "SELECT id FROM validation_expected_conditions WHERE validation_run_id = ? AND condition_hash = ?",
+            (run_id, condition["condition_hash"]),
+        )
+        expected_condition_id = expected_row["id"] if expected_row else None
     with connect() as conn:
         conn.execute(
             """
             INSERT INTO validation_images(
-                job_id, selected_output_id, validation_run_id, validation_preset_id,
+                job_id, selected_output_id, expected_condition_id,
+                validation_run_id, validation_preset_id,
                 prompt_key, seed, lora_weight, image_path, validation_type,
                 prompt, negative_prompt, base_model, sampler, steps, cfg_scale,
                 width, height, hires_enabled, hires_scale, lora_weights, seeds,
                 grid_image_flag, image_role, condition_hash, memo, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'external_run', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'external_run', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run["job_id"],
                 run["selected_output_id"],
+                expected_condition_id,
                 run_id,
                 preset["id"],
                 condition.get("prompt_key"),
@@ -1365,7 +1495,25 @@ def lora_library(request: Request) -> HTMLResponse:
         ORDER BY p.updated_at DESC, p.id DESC
         """
     )
-    return render(request, "lora_library.html", profiles=rows)
+    profiles = []
+    for row in rows:
+        profile = dict(row)
+        last_run = fetch_one("SELECT * FROM validation_runs WHERE selected_lora_profile_id = ? OR job_id = ? ORDER BY id DESC LIMIT 1", (profile["id"], profile["job_id"]))
+        profile["last_validation_run_id"] = last_run["id"] if last_run else None
+        profile["last_validation_status"] = last_run["status"] if last_run else None
+        if last_run:
+            try:
+                coverage = load_validation_run_bundle(int(last_run["id"]))["coverage"]
+                profile["validation_coverage_rate"] = coverage["coverage_rate"]
+                profile["validation_warning"] = validation_profile_warning(profile, last_run, coverage)
+            except Exception:
+                profile["validation_coverage_rate"] = None
+                profile["validation_warning"] = "validation status unavailable"
+        else:
+            profile["validation_coverage_rate"] = None
+            profile["validation_warning"] = "preset unspecified" if not profile["default_validation_preset_id"] else "validation incomplete"
+        profiles.append(profile)
+    return render(request, "lora_library.html", profiles=profiles)
 
 
 @app.get("/lora-library/{profile_id}/edit", response_class=HTMLResponse)
@@ -1574,6 +1722,19 @@ def reference_image_file(image_id: int) -> FileResponse:
     if not path.exists() or not path.is_file():
         raise HTTPException(status_code=404, detail="Reference image file not found")
     return FileResponse(path)
+
+
+def validation_profile_warning(profile: dict[str, Any], run: Any, coverage: dict[str, Any]) -> str:
+    warnings = []
+    if not profile.get("default_validation_preset_id"):
+        warnings.append("preset unspecified")
+    if run["status"] not in {"reviewed", "completed"} or coverage["missing_condition_count"] > 0:
+        warnings.append("validation incomplete")
+    if run["validation_level"] == "extended":
+        warnings.append("extended validation is supplemental")
+    if coverage["registered_condition_count"] == 0:
+        warnings.append("no individual validation")
+    return ", ".join(warnings) if warnings else "OK"
 
 
 @app.get("/jobs/{job_id}/samples/{image_id}")

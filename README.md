@@ -285,6 +285,14 @@ Job詳細またはLoRA Profile編集画面の `Create Validation Run` からPres
 
 Validation Run詳細では、個別画像またはGrid画像を登録できます。個別画像はprompt_key、seed、weight、Hires条件から `condition_hash` を作り、同一条件比較に使います。Grid画像は資料として登録でき、初期版では自動分割しません。条件が違うValidation画像は直接比較せず、画面上の警告を確認してください。
 
+Validation Run詳細の `Coverage Matrix` は、Presetが期待する全条件に対して、画像登録済み、Rubricレビュー済み、未登録、ignoredを一覧します。`weight 0` はLoRAタグを付けないbaseline条件です。baselineは比較基準としてレビューできますが、推奨weight計算の候補には入れません。
+
+登録画像のレビューは、rating 1〜5、強さ、過学習、採用判断、failure tagsを中心に入力します。memoは補足です。`Weight Review Matrix` ではweight、prompt、seed、Hires別に評価分布を確認できます。個別画像は期待条件に紐づくとCoverageに反映され、Grid画像は比較資料として保持されます。
+
+`Suggested Weight` はHiresなしのQuick/Standard結果を優先し、`too_weak`、`too_strong`、`broken`、`reject` を除外して計算します。評価済み条件が少ない場合は既存Profile/Runの推奨weightを維持します。`Profileへ反映` は人間が押した時だけ `selected_lora_profiles` に保存し、Validation Runを完了扱いにします。
+
+`Validation Report出力` は `exports/validation_runs/validation_run_xxxxxx/validation_report.md` に、Coverage、推奨weight、Weight Review Matrix、登録画像、注意事項をMarkdownで保存します。LoRAライブラリ画面では最新Validation Runのstatus、coverage、レビュー不足警告を確認できます。
+
 Reference Setは、人間評価時に見る参考画像の固定セットです。DatasetやLoRA Profileに紐づけて、顔、上半身、全身、表情、スタイルなどの参照画像を登録できます。現時点ではAI評価には使いませんが、将来のWebUI API / ChatGPT API評価でもValidation PresetとReference Setを使う予定です。
 
 ## Recommendation Engineと次回実験提案

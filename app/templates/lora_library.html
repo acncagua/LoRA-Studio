@@ -1,9 +1,15 @@
 {% extends "base.html" %}{% block content %}
 <header class="page-head"><h1>LoRAライブラリ</h1></header>
 <section>
-  <p class="muted">採用済みLoRAをJob横断で管理します。推奨weight、trigger、外部Validationメモをここで確認できます。</p>
+  <p class="muted">採用済みLoRAをJob横断で管理します。推奨weight、trigger、Validation status、Reference Setをここで確認できます。</p>
   <table>
-    <thead><tr><th>ID</th><th>Profile</th><th>Job</th><th>Trigger</th><th>Epoch</th><th>推奨weight</th><th>Validation Preset</th><th>light / strong</th><th>Base model</th><th>Memo</th><th></th></tr></thead>
+    <thead>
+      <tr>
+        <th>ID</th><th>Profile</th><th>Job</th><th>Trigger</th><th>Epoch</th>
+        <th>推奨weight</th><th>Validation Preset</th><th>Last Run</th>
+        <th>Coverage</th><th>Warning</th><th>Base model</th><th></th>
+      </tr>
+    </thead>
     <tbody>
       {% for profile in profiles %}
       <tr>
@@ -14,13 +20,14 @@
         <td>{{ profile.selected_epoch or '-' }}</td>
         <td>{{ profile.recommended_weight_min if profile.recommended_weight_min is not none else '-' }} - {{ profile.recommended_weight_max if profile.recommended_weight_max is not none else '-' }}</td>
         <td>{{ profile.default_validation_preset_id or '未指定' }}</td>
-        <td>{{ profile.light_weight if profile.light_weight is not none else '-' }} / {{ profile.strong_weight if profile.strong_weight is not none else '-' }}</td>
+        <td>{% if profile.last_validation_run_id %}<a href="/validation-runs/{{ profile.last_validation_run_id }}">#{{ profile.last_validation_run_id }}</a> / {{ profile.last_validation_status }}{% else %}-{% endif %}</td>
+        <td>{{ '%.1f%%'|format(profile.validation_coverage_rate * 100) if profile.validation_coverage_rate is not none else '-' }}</td>
+        <td>{{ profile.validation_warning }}</td>
         <td>{{ profile.base_model or '-' }}</td>
-        <td>{{ profile.validation_memo or profile.library_memo or '-' }}</td>
         <td><a class="button" href="/lora-library/{{ profile.id }}/edit">編集</a></td>
       </tr>
       {% else %}
-      <tr><td colspan="11" class="muted">LoRA Profileはまだありません。Job詳細で採用LoRAを選択すると作成されます。</td></tr>
+      <tr><td colspan="12" class="muted">LoRA Profileはまだありません。Job詳細で採用LoRAを選択すると作成されます。</td></tr>
       {% endfor %}
     </tbody>
   </table>

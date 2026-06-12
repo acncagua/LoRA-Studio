@@ -82,6 +82,8 @@ def build_context(job_id: int) -> dict[str, Any]:
         """,
         (job_id,),
     )
+    validation_run = fetch_one("SELECT * FROM validation_runs WHERE job_id = ? ORDER BY id DESC LIMIT 1", (job_id,))
+    validation_counts = validation_run_counts(validation_run["id"]) if validation_run else None
     dataset_analysis = fetch_one("SELECT * FROM dataset_analysis WHERE dataset_id = ?", (job["dataset_id"],))
     params = json.loads(job["params_json"])
     return {
@@ -91,6 +93,8 @@ def build_context(job_id: int) -> dict[str, Any]:
         "epochs": epochs,
         "sample_ratings": sample_rating_summary(samples),
         "weight_reviews": weight_reviews,
+        "validation_run": validation_run,
+        "validation_counts": validation_counts,
         "dataset_analysis": dataset_analysis,
         "params": params,
     }
@@ -110,6 +114,7 @@ def build_recommendations(context: dict[str, Any]) -> list[dict[str, Any]]:
     validation_memo = profile["validation_memo"] if profile else ""
     weight_rubric = weight_review_rubric_summary(context["weight_reviews"])
     validation_scope = validation_condition_scope(context["weight_reviews"])
+    validation_completeness_note = validation_completeness_warning(context)
     epoch_label = summary["epoch_trend_label"] if summary else "UNKNOWN"
     health_label = summary["health_label"] if summary else "UNKNOWN"
     visual_good = selected_epoch_has_good_rating(context, selected_epoch)
@@ -145,6 +150,7 @@ def build_recommendations(context: dict[str, Any]) -> list[dict[str, Any]]:
                             f"Dataset trigger consistencyは {dataset_label or 'UNKNOWN'} です。",
                             f"Epoch trendは {epoch_label} です。",
                             validation_scope["note"],
+                            validation_completeness_note,
                         ]
                     ),
                     {},
@@ -374,6 +380,48 @@ def validation_condition_scope(rows: list[Any]) -> dict[str, Any]:
     if mixed:
         note += " Validation条件が混在しているため注意してください。"
     return {"mixed": mixed, "note": note}
+
+
+def validation_run_counts(run_id: int) -> dict[str, int]:
+    expected = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ?", (run_id,))
+    registered = fetch_one(
+        """
+        SELECT COUNT(DISTINCT expected_condition_id) AS count
+        FROM validation_images
+        WHERE validation_run_id = ? AND image_role = 'individual'
+          AND expected_condition_id IS NOT NULL AND COALESCE(ignored, 0) = 0
+        """,
+        (run_id,),
+    )
+    reviewed = fetch_one(
+        """
+        SELECT COUNT(DISTINCT expected_condition_id) AS count
+        FROM validation_images
+        WHERE validation_run_id = ? AND image_role = 'individual'
+          AND expected_condition_id IS NOT NULL AND COALESCE(ignored, 0) = 0
+          AND (
+            COALESCE(rating_overall, 0) > 0 OR adoption_label IS NOT NULL OR strength_label IS NOT NULL
+          )
+        """,
+        (run_id,),
+    )
+    return {
+        "expected": int(expected["count"] if expected else 0),
+        "registered": int(registered["count"] if registered else 0),
+        "reviewed": int(reviewed["count"] if reviewed else 0),
+    }
+
+
+def validation_completeness_warning(context: dict[str, Any]) -> str:
+    run = context.get("validation_run")
+    counts = context.get("validation_counts")
+    if not run:
+        return "Validation incomplete: Validation Runがまだありません。"
+    if run["status"] not in {"reviewed", "completed"}:
+        return f"Validation incomplete: latest run status is {run['status']}."
+    if counts and counts["expected"] and counts["registered"] < counts["expected"]:
+        return f"Validation incomplete: {counts['registered']}/{counts['expected']} conditions registered."
+    return "Validation completeness: OK."
 
 
 def parse_tags(value: str | None) -> list[str]:

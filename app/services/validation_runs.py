@@ -3,11 +3,16 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+from collections import Counter, defaultdict
 from pathlib import Path
+from statistics import mean
 from typing import Any
 
 from app import settings
 from app.db import connect, fetch_all, fetch_one, utc_now
+
+
+BASELINE_MODE = "no_lora_tag"
 
 
 def json_loads(value: str | None, default: Any) -> Any:
@@ -38,6 +43,7 @@ def expand_preset_conditions(preset: Any, trigger_word: str, lora_filename: str,
     hires_modes = json_loads(preset["hires_modes_json"], [])
     lora_name = Path(lora_filename or "selected_lora").stem
     rows: list[dict[str, Any]] = []
+    order = 1
     for prompt in prompts:
         prompt_key = prompt.get("prompt_key") or prompt.get("name") or "prompt"
         prompt_text = (prompt.get("prompt") or "").replace("{trigger_word}", trigger_word or "")
@@ -45,16 +51,20 @@ def expand_preset_conditions(preset: Any, trigger_word: str, lora_filename: str,
             seed_value = int(seed) + int(prompt.get("seed_offset") or 0)
             for weight in weights:
                 for hires_enabled in hires_modes:
+                    weight_value = float(weight)
+                    webui_prompt = prompt_text
+                    if not (weight_value == 0 and BASELINE_MODE == "no_lora_tag"):
+                        webui_prompt = f"<lora:{lora_name}:{weight_value:g}>, {prompt_text}"
                     condition = {
                         "validation_preset_id": preset["id"],
                         "preset_name": preset["name"],
                         "prompt_key": prompt_key,
                         "prompt_name": prompt.get("name") or prompt_key,
                         "prompt": prompt_text,
-                        "webui_prompt": f"<lora:{lora_name}:{weight}>, {prompt_text}",
+                        "webui_prompt": webui_prompt,
                         "negative_prompt": preset["negative_prompt"] or "",
                         "seed": seed_value,
-                        "lora_weight": float(weight),
+                        "lora_weight": weight_value,
                         "width": int(preset["width"]),
                         "height": int(preset["height"]),
                         "hires_enabled": bool(hires_enabled),
@@ -65,9 +75,11 @@ def expand_preset_conditions(preset: Any, trigger_word: str, lora_filename: str,
                         "steps": preset["steps"],
                         "cfg_scale": preset["cfg_scale"],
                         "base_model": base_model or "",
+                        "expected_order": order,
                     }
                     condition["condition_hash"] = make_condition_hash(condition)
                     rows.append(condition)
+                    order += 1
     return rows
 
 
@@ -88,9 +100,15 @@ def make_condition_hash(data: dict[str, Any]) -> str:
         "negative_prompt",
         "base_model",
     ]
-    payload = {key: data.get(key) for key in keys}
+    payload = {key: normalize_hash_value(data.get(key)) for key in keys}
     normalized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def normalize_hash_value(value: Any) -> Any:
+    if isinstance(value, float):
+        return round(value, 6)
+    return value
 
 
 def create_validation_run(
@@ -160,6 +178,7 @@ def create_validation_run(
                 "UPDATE selected_lora_profiles SET last_validation_preset_id = ?, updated_at = ? WHERE id = ?",
                 (preset["id"], now, profile["id"]),
             )
+    ensure_expected_conditions(run_id)
     write_validation_prompt_pack(run_id)
     return run_id
 
@@ -170,6 +189,57 @@ def validation_run_dir(run_id: int) -> Path:
 
 def validation_image_dir(run_id: int) -> Path:
     return validation_run_dir(run_id) / "images"
+
+
+def ensure_expected_conditions(run_id: int) -> list[Any]:
+    run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (run_id,))
+    if run is None or not run["validation_preset_id"]:
+        return []
+    preset = fetch_one("SELECT * FROM validation_presets WHERE id = ?", (run["validation_preset_id"],))
+    if preset is None:
+        return []
+    count = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ?", (run_id,))
+    if count and int(count["count"]) == int(run["expected_image_count"] or 0) and int(count["count"]) > 0:
+        return fetch_all("SELECT * FROM validation_expected_conditions WHERE validation_run_id = ? ORDER BY expected_order", (run_id,))
+    conditions = expand_preset_conditions(preset, run["trigger_word"] or "", run["lora_filename"] or "", run["base_model"] or "")
+    now = utc_now()
+    with connect() as conn:
+        conn.execute("DELETE FROM validation_expected_conditions WHERE validation_run_id = ?", (run_id,))
+        conn.executemany(
+            """
+            INSERT INTO validation_expected_conditions(
+                validation_run_id, validation_preset_id, prompt_key, seed,
+                lora_weight, hires_enabled, width, height, sampler, steps,
+                cfg_scale, condition_hash, expected_order, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    run_id,
+                    row["validation_preset_id"],
+                    row["prompt_key"],
+                    row["seed"],
+                    row["lora_weight"],
+                    1 if row["hires_enabled"] else 0,
+                    row["width"],
+                    row["height"],
+                    row["sampler"],
+                    row["steps"],
+                    row["cfg_scale"],
+                    row["condition_hash"],
+                    row["expected_order"],
+                    now,
+                )
+                for row in conditions
+            ],
+        )
+        conn.execute(
+            "UPDATE validation_runs SET expected_image_count = ?, updated_at = ? WHERE id = ?",
+            (len(conditions), now, run_id),
+        )
+    relink_validation_images(run_id)
+    return fetch_all("SELECT * FROM validation_expected_conditions WHERE validation_run_id = ? ORDER BY expected_order", (run_id,))
 
 
 def write_validation_prompt_pack(run_id: int) -> dict[str, str]:
@@ -190,6 +260,9 @@ def write_validation_prompt_pack(run_id: int) -> dict[str, str]:
         f"- Base model: {run['base_model'] or '-'}",
         f"- Trigger: {run['trigger_word'] or '-'}",
         f"- LoRA: {Path(run['lora_filename'] or 'selected_lora').stem}",
+        f"- Baseline mode: {BASELINE_MODE}",
+        "",
+        "weight 0 はベースモデル比較用です。標準ではLoRAタグを付けません。",
         "",
     ]
     for index, row in enumerate(conditions, start=1):
@@ -219,12 +292,14 @@ def write_validation_prompt_pack(run_id: int) -> dict[str, str]:
         "- Y軸: seed",
         "- prompt_keyごとに分ける",
         "- Hiresあり/なしは別画像として保存",
-        "- Hiresあり画像は最終見栄え確認用で、Hiresなし基準と直接比較しない",
+        "- Grid画像は便利ですが、条件ごとの個別レビューにはIndividual画像が望ましいです。",
+        "- Hiresあり画像は最終見栄え確認用で、Hiresなし基準と直接比較しません。",
     ]
     (output_dir / "validation_grid_plan.md").write_text("\n".join(grid_lines) + "\n", encoding="utf-8")
     checklist = [
         "# Validation Checklist",
         "",
+        "- weight 0はLoRAなしのベースモデル比較として見る",
         "- weight 0.4で弱すぎないか",
         "- weight 0.6で自然に特徴が出るか",
         "- weight 0.8で安定するか",
@@ -242,25 +317,247 @@ def write_validation_prompt_pack(run_id: int) -> dict[str, str]:
 
 
 def load_validation_run_bundle(run_id: int) -> dict[str, Any]:
+    ensure_expected_conditions(run_id)
+    update_validation_run_counts(run_id)
     run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (run_id,))
     if run is None:
         raise ValueError(f"Validation run not found: {run_id}")
     preset = fetch_one("SELECT * FROM validation_presets WHERE id = ?", (run["validation_preset_id"],)) if run["validation_preset_id"] else None
     images = fetch_all("SELECT * FROM validation_images WHERE validation_run_id = ? ORDER BY image_role, prompt_key, seed, lora_weight, id", (run_id,))
-    if preset:
-        conditions = expand_preset_conditions(preset, run["trigger_word"] or "", run["lora_filename"] or "", run["base_model"] or "")
-    else:
-        conditions = []
-    registered = {row["condition_hash"] for row in images if row["condition_hash"]}
-    missing = [row for row in conditions if row["condition_hash"] not in registered]
+    conditions = fetch_all("SELECT * FROM validation_expected_conditions WHERE validation_run_id = ? ORDER BY expected_order", (run_id,))
+    coverage = build_coverage(run_id, conditions, images)
+    weight_matrix = build_weight_review_matrix(images)
+    suggestion = calculate_suggested_weights(run, preset, images)
+    profile = fetch_one("SELECT * FROM selected_lora_profiles WHERE id = ?", (run["selected_lora_profile_id"],)) if run["selected_lora_profile_id"] else None
+    reference_set = None
+    reference_images = []
+    if profile and profile["reference_set_id"]:
+        reference_set = fetch_one("SELECT * FROM reference_sets WHERE id = ?", (profile["reference_set_id"],))
+        reference_images = fetch_all("SELECT * FROM reference_images WHERE reference_set_id = ? ORDER BY sort_order, id", (profile["reference_set_id"],))
     return {
         "run": run,
         "preset": preset,
         "images": images,
         "conditions": conditions,
-        "missing": missing,
+        "coverage": coverage,
+        "missing": [row for row in coverage["rows"] if row["status"] == "missing"],
+        "unmatched_images": [dict(row) for row in images if row["image_role"] == "individual" and not row["expected_condition_id"]],
+        "grid_images": [dict(row) for row in images if row["image_role"] == "grid"],
+        "weight_matrix": weight_matrix,
+        "suggestion": suggestion,
+        "profile": profile,
+        "reference_set": reference_set,
+        "reference_images": reference_images,
         "output_dir": str(validation_run_dir(run_id)),
     }
+
+
+def build_coverage(run_id: int, conditions: list[Any], images: list[Any]) -> dict[str, Any]:
+    images_by_condition: dict[int, list[Any]] = defaultdict(list)
+    for image in images:
+        if image["image_role"] == "individual" and image["expected_condition_id"]:
+            images_by_condition[int(image["expected_condition_id"])].append(image)
+    rows = []
+    registered = 0
+    reviewed = 0
+    ignored = 0
+    for condition in conditions:
+        linked = images_by_condition.get(int(condition["id"]), [])
+        if not linked:
+            status = "missing"
+        elif all(image["ignored"] for image in linked):
+            status = "ignored"
+            ignored += 1
+        elif any(image_is_reviewed(image) for image in linked):
+            status = "reviewed"
+            registered += 1
+            reviewed += 1
+        else:
+            status = "image_registered"
+            registered += 1
+        item = dict(condition)
+        item["status"] = status
+        item["image_count"] = len(linked)
+        rows.append(item)
+    expected = len(conditions)
+    missing = expected - registered - ignored
+    return {
+        "rows": rows,
+        "expected_image_count": expected,
+        "registered_condition_count": registered,
+        "reviewed_condition_count": reviewed,
+        "missing_condition_count": max(0, missing),
+        "ignored_condition_count": ignored,
+        "coverage_rate": registered / expected if expected else 0,
+        "review_rate": reviewed / expected if expected else 0,
+    }
+
+
+def image_is_reviewed(image: Any) -> bool:
+    rating_keys = ["rating_face", "rating_costume", "rating_style", "rating_stability", "rating_flexibility", "rating_overall"]
+    if any(image[key] is not None and int(image[key]) > 0 for key in rating_keys if key in image.keys()):
+        return True
+    return bool(image["strength_label"] or image["overfit_level"] or image["adoption_label"] or image["failure_tags_json"])
+
+
+def build_weight_review_matrix(images: list[Any]) -> dict[str, Any]:
+    individual = [image for image in images if image["image_role"] == "individual" and image["lora_weight"] is not None and not image["ignored"]]
+    rows = [image for image in individual if image_is_reviewed(image)]
+    return {
+        "by_weight": aggregate_by(rows, "lora_weight"),
+        "by_prompt": aggregate_by(rows, "prompt_key"),
+        "by_seed": aggregate_by(rows, "seed"),
+        "by_hires": aggregate_by(rows, "hires_enabled"),
+        "strength_distribution": dict(Counter(image["strength_label"] for image in rows if image["strength_label"])),
+        "overfit_distribution": dict(Counter(image["overfit_level"] for image in rows if image["overfit_level"])),
+        "adoption_distribution": dict(Counter(image["adoption_label"] for image in rows if image["adoption_label"])),
+        "recommended_weights": sorted(
+            {float(image["lora_weight"]) for image in rows if float(image["lora_weight"]) > 0 and image["strength_label"] in {"recommended", "strong_but_usable"}}
+        ),
+        "too_strong_weights": sorted({float(image["lora_weight"]) for image in rows if float(image["lora_weight"]) > 0 and image["strength_label"] in {"too_strong", "broken"}}),
+        "too_weak_weights": sorted({float(image["lora_weight"]) for image in rows if float(image["lora_weight"]) > 0 and image["strength_label"] == "too_weak"}),
+    }
+
+
+def aggregate_by(rows: list[Any], key: str) -> list[dict[str, Any]]:
+    grouped: dict[Any, list[Any]] = defaultdict(list)
+    for row in rows:
+        grouped[row[key]].append(row)
+    result = []
+    for value, items in sorted(grouped.items(), key=lambda pair: str(pair[0])):
+        overall = [int(item["rating_overall"]) for item in items if item["rating_overall"] is not None and int(item["rating_overall"]) > 0]
+        result.append(
+            {
+                "key": value,
+                "count": len(items),
+                "avg_overall": mean(overall) if overall else None,
+                "strength_distribution": dict(Counter(item["strength_label"] for item in items if item["strength_label"])),
+                "overfit_distribution": dict(Counter(item["overfit_level"] for item in items if item["overfit_level"])),
+                "adoption_distribution": dict(Counter(item["adoption_label"] for item in items if item["adoption_label"])),
+            }
+        )
+    return result
+
+
+def calculate_suggested_weights(run: Any, preset: Any, images: list[Any]) -> dict[str, Any]:
+    eligible = []
+    for image in images:
+        if image["image_role"] != "individual" or image["lora_weight"] is None or image["ignored"]:
+            continue
+        if image["hires_enabled"]:
+            continue
+        if preset and preset["validation_level"] not in {"quick", "standard"}:
+            continue
+        if not image_is_reviewed(image):
+            continue
+        strength = image["strength_label"] or ""
+        adoption = image["adoption_label"] or ""
+        overall = int(image["rating_overall"] or 0)
+        weight = float(image["lora_weight"])
+        if weight == 0:
+            continue
+        if strength in {"too_weak", "too_strong", "broken"}:
+            continue
+        if adoption == "reject":
+            continue
+        if strength in {"recommended", "strong_but_usable"} or adoption in {"adopt", "candidate"} or overall >= 3:
+            eligible.append((weight, strength, adoption, overall))
+    weights = sorted({row[0] for row in eligible})
+    all_weights = sorted({float(image["lora_weight"]) for image in images if image["image_role"] == "individual" and image["lora_weight"] is not None})
+    if preset is not None:
+        expected_weights = [float(value) for value in json_loads(preset["weights_json"], [])]
+        all_weights = sorted(set(all_weights) | set(expected_weights))
+    too_strong = sorted({float(image["lora_weight"]) for image in images if image["strength_label"] in {"too_strong", "broken"} and image["lora_weight"] is not None})
+    too_weak = sorted({float(image["lora_weight"]) for image in images if image["strength_label"] == "too_weak" and image["lora_weight"] is not None})
+    if weights:
+        min_weight, max_weight = min(weights), max(weights)
+    else:
+        min_weight = run["recommended_weight_min"]
+        max_weight = run["recommended_weight_max"]
+    if weights:
+        reason = "HiresなしのQuick/Standard評価で、ratingまたはRubricが採用候補のweightを推奨範囲にしました。"
+    else:
+        reason = "評価済み条件が少ないため、既存Profile/Runの推奨weightを維持します。"
+    light = min([weight for weight in all_weights if weight > 0], default=min_weight)
+    strong = max([weight for weight in all_weights if weight > 0], default=max_weight)
+    if too_weak:
+        light = min(too_weak)
+    if too_strong:
+        strong = max(too_strong)
+    return {
+        "suggested_weight_min": min_weight,
+        "suggested_weight_max": max_weight,
+        "suggested_light_weight": light,
+        "suggested_strong_weight": strong,
+        "suggested_weight_reason": reason,
+    }
+
+
+def persist_suggestion(run_id: int) -> dict[str, Any]:
+    bundle = load_validation_run_bundle(run_id)
+    suggestion = bundle["suggestion"]
+    now = utc_now()
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE validation_runs
+            SET suggested_weight_min = ?, suggested_weight_max = ?,
+                suggested_light_weight = ?, suggested_strong_weight = ?,
+                suggested_weight_reason = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                suggestion["suggested_weight_min"],
+                suggestion["suggested_weight_max"],
+                suggestion["suggested_light_weight"],
+                suggestion["suggested_strong_weight"],
+                suggestion["suggested_weight_reason"],
+                now,
+                run_id,
+            ),
+        )
+    update_validation_run_counts(run_id)
+    return suggestion
+
+
+def apply_suggestion_to_profile(run_id: int) -> dict[str, Any]:
+    suggestion = persist_suggestion(run_id)
+    run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (run_id,))
+    if run is None or not run["selected_lora_profile_id"]:
+        raise ValueError("Validation Run is not linked to a LoRA Profile.")
+    profile = fetch_one("SELECT * FROM selected_lora_profiles WHERE id = ?", (run["selected_lora_profile_id"],))
+    if profile is None:
+        raise ValueError("LoRA Profile not found.")
+    before = dict(profile)
+    policy = run["suggested_weight_reason"] or suggestion["suggested_weight_reason"]
+    now = utc_now()
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE selected_lora_profiles
+            SET recommended_weight_min = ?, recommended_weight_max = ?,
+                light_weight = ?, strong_weight = ?,
+                last_validation_preset_id = ?, validation_policy_memo = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                suggestion["suggested_weight_min"],
+                suggestion["suggested_weight_max"],
+                suggestion["suggested_light_weight"],
+                suggestion["suggested_strong_weight"],
+                run["validation_preset_id"],
+                policy,
+                now,
+                profile["id"],
+            ),
+        )
+        conn.execute(
+            "UPDATE validation_runs SET status = 'completed', profile_applied_at = ?, updated_at = ? WHERE id = ?",
+            (now, now, run_id),
+        )
+    after = fetch_one("SELECT * FROM selected_lora_profiles WHERE id = ?", (profile["id"],))
+    return {"before": before, "after": dict(after), "suggestion": suggestion}
 
 
 def copy_managed_validation_image(run_id: int, source_path: str) -> str:
@@ -278,10 +575,36 @@ def copy_managed_validation_image(run_id: int, source_path: str) -> str:
     return str(target)
 
 
+def relink_validation_images(run_id: int) -> None:
+    expected = {row["condition_hash"]: row["id"] for row in fetch_all("SELECT id, condition_hash FROM validation_expected_conditions WHERE validation_run_id = ?", (run_id,))}
+    images = fetch_all("SELECT id, condition_hash FROM validation_images WHERE validation_run_id = ? AND image_role = 'individual'", (run_id,))
+    with connect() as conn:
+        for image in images:
+            conn.execute(
+                "UPDATE validation_images SET expected_condition_id = ? WHERE id = ?",
+                (expected.get(image["condition_hash"]), image["id"]),
+            )
+
+
 def update_validation_run_counts(run_id: int) -> None:
     row = fetch_one("SELECT COUNT(*) AS count FROM validation_images WHERE validation_run_id = ?", (run_id,))
     count = int(row["count"] if row else 0)
-    status = "images_registered" if count else "planned"
+    conditions = ensure_expected_conditions(run_id)
+    images = fetch_all("SELECT * FROM validation_images WHERE validation_run_id = ?", (run_id,))
+    coverage = build_coverage(run_id, conditions, images)
+    if count == 0:
+        status = "planned"
+    elif coverage["reviewed_condition_count"] == 0:
+        status = "images_registered"
+    elif coverage["reviewed_condition_count"] < max(1, coverage["registered_condition_count"]):
+        status = "partially_reviewed"
+    elif coverage["missing_condition_count"] == 0 or coverage["reviewed_condition_count"] >= coverage["registered_condition_count"]:
+        status = "reviewed"
+    else:
+        status = "partially_reviewed"
+    current = fetch_one("SELECT status FROM validation_runs WHERE id = ?", (run_id,))
+    if current and current["status"] in {"completed", "archived"}:
+        status = current["status"]
     now = utc_now()
     with connect() as conn:
         conn.execute(
@@ -289,3 +612,69 @@ def update_validation_run_counts(run_id: int) -> None:
             (count, status, now, run_id),
         )
 
+
+def update_validation_run_status(run_id: int, status: str) -> None:
+    allowed = {"planned", "images_registered", "partially_reviewed", "reviewed", "completed", "archived"}
+    if status not in allowed:
+        raise ValueError(f"Invalid status: {status}")
+    now = utc_now()
+    with connect() as conn:
+        conn.execute("UPDATE validation_runs SET status = ?, updated_at = ? WHERE id = ?", (status, now, run_id))
+
+
+def write_validation_report(run_id: int) -> str:
+    bundle = load_validation_run_bundle(run_id)
+    run = bundle["run"]
+    preset = bundle["preset"]
+    coverage = bundle["coverage"]
+    matrix = bundle["weight_matrix"]
+    suggestion = persist_suggestion(run_id)
+    report_path = validation_run_dir(run_id) / "validation_report.md"
+    lines = [
+        f"# Validation Report Run #{run_id}",
+        "",
+        "## Run",
+        f"- name: {run['name']}",
+        f"- status: {run['status']}",
+        f"- preset: {preset['name'] if preset else 'legacy / preset unspecified'}",
+        f"- level: {run['validation_level'] or '-'}",
+        f"- base model: {run['base_model'] or '-'}",
+        f"- trigger: {run['trigger_word'] or '-'}",
+        "",
+        "## Coverage",
+        f"- expected: {coverage['expected_image_count']}",
+        f"- registered: {coverage['registered_condition_count']}",
+        f"- reviewed: {coverage['reviewed_condition_count']}",
+        f"- missing: {coverage['missing_condition_count']}",
+        f"- coverage_rate: {coverage['coverage_rate']:.1%}",
+        f"- review_rate: {coverage['review_rate']:.1%}",
+        "",
+        "## Suggested Weight",
+        f"- min: {suggestion['suggested_weight_min']}",
+        f"- max: {suggestion['suggested_weight_max']}",
+        f"- light: {suggestion['suggested_light_weight']}",
+        f"- strong: {suggestion['suggested_strong_weight']}",
+        f"- reason: {suggestion['suggested_weight_reason']}",
+        "",
+        "## Weight Review Summary",
+    ]
+    for row in matrix["by_weight"]:
+        avg = f"{row['avg_overall']:.2f}" if row["avg_overall"] is not None else "-"
+        lines.append(f"- weight {row['key']}: count={row['count']} avg_overall={avg} strength={row['strength_distribution']} adoption={row['adoption_distribution']}")
+    lines.extend(
+        [
+            "",
+            "## Grid Images",
+            *[f"- #{image['id']}: {Path(image['image_path']).name} / {image['memo'] or '-'}" for image in bundle["grid_images"]],
+            "",
+            "## Individual Images",
+            *[f"- #{image['id']}: {Path(image['image_path']).name} / {image['prompt_key'] or '-'} / weight {image['lora_weight']}" for image in bundle["images"] if image["image_role"] == "individual"],
+            "",
+            "## Notes",
+            "- Hiresあり結果は最終見栄え確認として扱い、標準比較はHiresなしで行います。",
+            "- weight 0 はLoRAなしのベースモデル比較です。",
+            "- Grid画像は参考資料です。条件ごとのレビューにはIndividual画像が望ましいです。",
+        ]
+    )
+    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return str(report_path)
