@@ -100,6 +100,9 @@ textarea { min-height: 84px; }
 .loss-chart .raw { stroke: #2f6f63; opacity: .7; }
 .loss-chart .avg { stroke: #8b4f39; }
 .notice { background: #eef2eb; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+code { background: #eef2eb; border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; overflow-wrap: anywhere; }
+.workflow-list { display: grid; gap: 10px; padding-left: 24px; }
+.workflow-list li { line-height: 1.55; }
 .compare-columns { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 14px; }
 .compare-columns > div { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
 tr.changed td { background: #fff8e8; }

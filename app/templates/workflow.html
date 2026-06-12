@@ -1,0 +1,22 @@
+{% extends "base.html" %}{% block content %}
+<header class="page-head"><h1>推奨ワークフロー</h1><a class="button" href="/datasets">データセットへ</a></header>
+
+<section>
+  <p class="notice">運用ベータでは、自動評価よりも再現性のある手順と人間評価を優先します。各ステップを小さく進め、Dataset状態、Job条件、Validation結果を残してください。</p>
+  <ol class="workflow-list">
+    <li><strong>Dataset登録</strong><br>画像フォルダを登録し、model family、trigger、class tokenを設定します。</li>
+    <li><strong>Rescan</strong><br>画像数、caption数、欠損、manifest hashを更新します。</li>
+    <li><strong>Trigger Consistency確認</strong><br>triggerの出現率、captionの揺れ、混入タグを見ます。</li>
+    <li><strong>caption修正</strong><br>必要に応じてprepend、replace、個別編集、restore previewを使います。</li>
+    <li><strong>Dataset version作成</strong><br>caption整備後の状態をsnapshotとして残します。</li>
+    <li><strong>Pilot 3 Epoch</strong><br>短時間でloss推移、epoch差、sample比較の導線を確認します。</li>
+    <li><strong>Standard 6 Epoch</strong><br>本番寄り条件で複数epochの変化と採用候補を見ます。</li>
+    <li><strong>sample rating</strong><br>顔、衣装、スタイル、安定性、柔軟性、メモを保存します。</li>
+    <li><strong>selected LoRA export</strong><br>採用epochを選び、LoRA Library Profileへ移します。</li>
+    <li><strong>Validation Presetで外部Validation</strong><br>Quick、Standard、Extendedの順でreForge/WebUI生成用Prompt Packを使います。</li>
+    <li><strong>Validation Run Review</strong><br>Coverage Matrixでexpected、registered、reviewedを確認し、Rubric評価を保存します。</li>
+    <li><strong>Recommendation確認</strong><br>loss、sample rating、Validation、Dataset consistencyを見たルールベース提案を確認します。</li>
+    <li><strong>必要ならDraft Job作成</strong><br>提案からdraftだけ作成し、Runは人間が判断して開始します。</li>
+  </ol>
+</section>
+{% endblock %}

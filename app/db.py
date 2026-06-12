@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.app_version import APP_VERSION, DB_SCHEMA_VERSION
 from app import settings
 from app.services.preset_seed import preset_rows
 
@@ -248,6 +249,8 @@ def seed_app_settings(conn: sqlite3.Connection) -> None:
     now = utc_now()
     values = {
         "app_name": settings.APP_NAME,
+        "app_version": APP_VERSION,
+        "db_schema_version": DB_SCHEMA_VERSION,
         "sd_scripts_release_tag": settings.SD_SCRIPTS_RELEASE_TAG,
         "sd_scripts_release_commit": settings.SD_SCRIPTS_RELEASE_COMMIT,
         "sd_scripts_repo_url": settings.SD_SCRIPTS_REPO_URL,

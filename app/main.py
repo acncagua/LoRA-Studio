@@ -6,6 +6,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
@@ -13,9 +14,11 @@ from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app import settings
+from app.app_version import app_version_info
 from app.db import connect, create_dataset_version, create_job, fetch_all, fetch_one, import_latest_environment, init_db, insert_dataset, upsert_dataset_analysis
 from app.services.command_builder import prepare_job_files
 from app.services.exports import export_selected_lora, write_compare_contact_sheet, write_job_contact_sheet, write_validation_pack
+from app.services.maintenance import create_app_backup, export_diagnostics, maintenance_summary
 from app.services.output_collector import collect_job_results
 from app.services.recommendations import create_draft_job_from_recommendation, list_recommendations, regenerate_recommendations, set_recommendation_status, write_recommendation_report
 from app.services.training_runner import read_log_tail, start_job, stop_job
@@ -84,7 +87,20 @@ def render(request: Request, template: str, **context: Any) -> HTMLResponse:
     context.setdefault("request", request)
     context.setdefault("sd_scripts_release_tag", settings.SD_SCRIPTS_RELEASE_TAG)
     context.setdefault("sd_scripts_release_commit", settings.SD_SCRIPTS_RELEASE_COMMIT)
+    context.setdefault("app_meta", current_app_meta())
     return HTMLResponse(tpl.render(**context))
+
+
+def current_app_meta() -> dict[str, Any]:
+    schema_row = fetch_one("SELECT value FROM app_settings WHERE key = ?", ("db_schema_version",))
+    env = fetch_one("SELECT sd_scripts_commit_hash FROM environments ORDER BY id DESC LIMIT 1")
+    version = app_version_info(schema_row["value"] if schema_row else None)
+    return {
+        "app_version": version.app_version,
+        "git_commit": version.git_commit,
+        "db_schema_version": version.db_schema_version,
+        "sd_scripts_commit_hash": (env["sd_scripts_commit_hash"] if env and env["sd_scripts_commit_hash"] else settings.SD_SCRIPTS_RELEASE_COMMIT),
+    }
 
 
 @app.get("/api/browse-directory")
@@ -212,7 +228,36 @@ def dashboard(request: Request) -> HTMLResponse:
         "stopped": fetch_one("SELECT COUNT(*) AS count FROM training_jobs WHERE status = 'stopped'")["count"],
     }
     jobs = fetch_all("SELECT * FROM training_jobs ORDER BY id DESC LIMIT 8")
-    return render(request, "dashboard.html", stats=stats, jobs=jobs)
+    validation_profiles = lora_library_profiles(limit=6)
+    return render(request, "dashboard.html", stats=stats, jobs=jobs, validation_profiles=validation_profiles)
+
+
+@app.get("/maintenance", response_class=HTMLResponse)
+def maintenance(request: Request, backup_path: str = "", diagnostics_path: str = "") -> HTMLResponse:
+    return render(
+        request,
+        "maintenance.html",
+        summary=maintenance_summary(),
+        backup_path=backup_path,
+        diagnostics_path=diagnostics_path,
+    )
+
+
+@app.post("/maintenance/backup")
+def maintenance_backup() -> RedirectResponse:
+    backup_path = create_app_backup()
+    return RedirectResponse(f"/maintenance?backup_path={quote(str(backup_path))}", status_code=303)
+
+
+@app.post("/maintenance/diagnostics")
+def maintenance_diagnostics() -> RedirectResponse:
+    diagnostics_path = export_diagnostics()
+    return RedirectResponse(f"/maintenance?diagnostics_path={quote(str(diagnostics_path))}", status_code=303)
+
+
+@app.get("/workflow", response_class=HTMLResponse)
+def recommended_workflow(request: Request) -> HTMLResponse:
+    return render(request, "workflow.html")
 
 
 @app.get("/environment", response_class=HTMLResponse)
@@ -1486,13 +1531,19 @@ def register_validation_run_image(
 
 @app.get("/lora-library", response_class=HTMLResponse)
 def lora_library(request: Request) -> HTMLResponse:
+    return render(request, "lora_library.html", profiles=lora_library_profiles())
+
+
+def lora_library_profiles(limit: int | None = None) -> list[dict[str, Any]]:
+    limit_clause = f"LIMIT {int(limit)}" if limit else ""
     rows = fetch_all(
-        """
+        f"""
         SELECT p.*, j.name AS job_name, j.status AS job_status, o.file_size, o.sha256
         FROM selected_lora_profiles p
         LEFT JOIN training_jobs j ON j.id = p.job_id
         LEFT JOIN training_outputs o ON o.id = p.selected_output_id
         ORDER BY p.updated_at DESC, p.id DESC
+        {limit_clause}
         """
     )
     profiles = []
@@ -1505,15 +1556,24 @@ def lora_library(request: Request) -> HTMLResponse:
             try:
                 coverage = load_validation_run_bundle(int(last_run["id"]))["coverage"]
                 profile["validation_coverage_rate"] = coverage["coverage_rate"]
+                profile["validation_expected_count"] = coverage["expected_image_count"]
+                profile["validation_registered_count"] = coverage["registered_condition_count"]
+                profile["validation_reviewed_count"] = coverage["reviewed_condition_count"]
                 profile["validation_warning"] = validation_profile_warning(profile, last_run, coverage)
             except Exception:
                 profile["validation_coverage_rate"] = None
+                profile["validation_expected_count"] = None
+                profile["validation_registered_count"] = None
+                profile["validation_reviewed_count"] = None
                 profile["validation_warning"] = "validation status unavailable"
         else:
             profile["validation_coverage_rate"] = None
+            profile["validation_expected_count"] = None
+            profile["validation_registered_count"] = None
+            profile["validation_reviewed_count"] = None
             profile["validation_warning"] = "preset unspecified" if not profile["default_validation_preset_id"] else "validation incomplete"
         profiles.append(profile)
-    return render(request, "lora_library.html", profiles=profiles)
+    return profiles
 
 
 @app.get("/lora-library/{profile_id}/edit", response_class=HTMLResponse)

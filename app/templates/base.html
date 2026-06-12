@@ -11,9 +11,13 @@
   <aside class="sidebar">
     <a class="brand" href="/">LoRA-Studio</a>
     <nav>
-      <a href="/">ダッシュボード</a><a href="/environment">環境</a><a href="/presets">プリセット</a><a href="/datasets">データセット</a><a href="/sample-prompt-templates">プロンプトテンプレート</a><a href="/jobs/new">新規ジョブ</a><a href="/compare">比較</a><a href="/lora-library">LoRAライブラリ</a><a href="/validation-presets">Validationプリセット</a><a href="/reference-sets">Reference Set</a>
+      <a href="/">ダッシュボード</a><a href="/environment">環境</a><a href="/presets">プリセット</a><a href="/datasets">データセット</a><a href="/sample-prompt-templates">プロンプトテンプレート</a><a href="/jobs/new">新規ジョブ</a><a href="/compare">比較</a><a href="/lora-library">LoRAライブラリ</a><a href="/validation-presets">Validationプリセット</a><a href="/reference-sets">Reference Set</a><a href="/workflow">推奨ワークフロー</a><a href="/maintenance">メンテナンス</a>
     </nav>
-    <div class="release">sd-scripts {{ sd_scripts_release_tag }}<br>{{ sd_scripts_release_commit }}</div>
+    <div class="release">
+      app {{ app_meta.app_version }} / {{ app_meta.git_commit }}<br>
+      DB {{ app_meta.db_schema_version }}<br>
+      sd-scripts {{ sd_scripts_release_tag }} / {{ app_meta.sd_scripts_commit_hash }}
+    </div>
   </aside>
   <main class="content">{% block content %}{% endblock %}</main>
 </body>
