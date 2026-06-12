@@ -94,15 +94,15 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=settings.DEFAULT_PORT)
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--skip-sd-scripts-setup", action="store_true")
+    parser.add_argument("--force-release-port", action="store_true", help="Kill an existing process listening on the LoRA-Studio port before startup.")
     args = parser.parse_args()
 
     init_db()
     if not args.skip_sd_scripts_setup:
         ensure_sd_scripts_installed()
     url = f"http://{args.host}:{args.port}"
-    if args.port != 7865:
-        release_port(7865)
-    release_port(args.port)
+    if args.force_release_port:
+        release_port(args.port)
     if not args.no_browser:
         webbrowser.open(url)
     import uvicorn

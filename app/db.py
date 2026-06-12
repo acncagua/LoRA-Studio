@@ -34,8 +34,6 @@ def init_db() -> None:
         seed_sample_prompt_templates(conn)
         seed_evaluation_rubrics(conn)
         seed_validation_presets(conn)
-        seed_job12_validation_defaults(conn)
-        seed_legacy_validation_run(conn)
         import_latest_environment(conn)
 
 
@@ -189,6 +187,20 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "suggested_strong_weight": "REAL",
             "suggested_weight_reason": "TEXT",
             "profile_applied_at": "TEXT",
+            "preset_snapshot_json": "TEXT",
+        },
+    )
+    ensure_columns(
+        conn,
+        "validation_expected_conditions",
+        {
+            "preset_version": "TEXT",
+            "prompt": "TEXT",
+            "webui_prompt": "TEXT",
+            "negative_prompt": "TEXT",
+            "trigger_word": "TEXT",
+            "lora_filename": "TEXT",
+            "base_model": "TEXT",
         },
     )
     ensure_columns(
@@ -523,26 +535,6 @@ def seed_validation_presets(conn: sqlite3.Connection) -> None:
                 now,
                 row["memo"],
             ),
-        )
-
-
-def seed_job12_validation_defaults(conn: sqlite3.Connection) -> None:
-    now = utc_now()
-    preset = conn.execute("SELECT id FROM validation_presets WHERE id = 'standard_validation_v1'").fetchone()
-    profile = conn.execute("SELECT id FROM selected_lora_profiles WHERE id = 1 AND job_id = 12").fetchone()
-    if preset and profile:
-        conn.execute(
-            """
-            UPDATE selected_lora_profiles
-            SET default_validation_preset_id = COALESCE(default_validation_preset_id, 'standard_validation_v1'),
-                validation_policy_memo = COALESCE(
-                    NULLIF(validation_policy_memo, ''),
-                    '通常比較はHiresなしのStandard Validationを基準にする。HiresありはExtended Validationで最終見栄え確認として扱う。'
-                ),
-                updated_at = ?
-            WHERE id = 1 AND job_id = 12
-            """,
-            (now,),
         )
 
 
@@ -1115,6 +1107,7 @@ CREATE TABLE IF NOT EXISTS validation_runs (
     suggested_weight_min REAL, suggested_weight_max REAL,
     suggested_light_weight REAL, suggested_strong_weight REAL,
     suggested_weight_reason TEXT, profile_applied_at TEXT,
+    preset_snapshot_json TEXT,
     expected_image_count INTEGER, actual_image_count INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'planned', created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL, memo TEXT
@@ -1124,7 +1117,9 @@ CREATE TABLE IF NOT EXISTS validation_expected_conditions (
     validation_preset_id TEXT, prompt_key TEXT, seed INTEGER, lora_weight REAL,
     hires_enabled INTEGER NOT NULL DEFAULT 0, width INTEGER, height INTEGER,
     sampler TEXT, steps INTEGER, cfg_scale REAL, condition_hash TEXT NOT NULL,
-    expected_order INTEGER NOT NULL, created_at TEXT NOT NULL
+    expected_order INTEGER NOT NULL, preset_version TEXT, prompt TEXT,
+    webui_prompt TEXT, negative_prompt TEXT, trigger_word TEXT,
+    lora_filename TEXT, base_model TEXT, created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS validation_images (
     id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, selected_output_id INTEGER,

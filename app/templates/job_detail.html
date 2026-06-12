@@ -22,7 +22,7 @@
     <form method="post" action="/jobs/{{ job.id }}/reimport"><button type="submit">結果を再取り込み</button></form>
     <form method="post" action="/jobs/{{ job.id }}/export-contact-sheet"><button type="submit">Contact Sheet出力</button></form>
     <form method="post" action="/jobs/{{ job.id }}/export-selected-lora"><button type="submit">採用LoRA出力</button></form>
-    <form method="post" action="/jobs/{{ job.id }}/export-validation-pack"><button type="submit" {% if not selected_output %}disabled{% endif %}>Validation Pack出力</button></form>
+    <form method="post" action="/jobs/{{ job.id }}/export-validation-pack"><button type="submit" {% if not selected_output %}disabled{% endif %}>Legacy Validation Pack出力</button></form>
     <form method="post" action="/jobs/{{ job.id }}/recommendations/regenerate"><button type="submit">提案を再生成</button></form>
     <form method="post" action="/jobs/{{ job.id }}/recommendations/export"><button type="submit">提案レポート出力</button></form>
   </div>
@@ -346,7 +346,8 @@
   </div>
 </section>
 <section>
-  <h2>External Validation</h2>
+  <h2>External Validation Legacy</h2>
+  <p class="notice">新規の標準ワークフローでは、LoRAライブラリまたはJob詳細のValidation PresetからValidation Runを作成し、Coverage Matrixで条件単位にレビューしてください。この欄は旧形式の画像/weightメモを残すためのLegacy入力です。</p>
   <p class="muted">reForge / WebUIなど外部生成環境で作成した画像とweight評価を、採用LoRAに紐づけて保存します。</p>
   {% if selected_lora_profile %}
   <dl>
@@ -360,7 +361,7 @@
   {% endif %}
   <div class="panel-grid">
     <div>
-      <h3>Validation画像を登録</h3>
+      <h3>Legacy Validation画像を登録</h3>
       <form method="post" action="/jobs/{{ job.id }}/external-validation/images" class="form-grid">
         <label>画像パス
           <span class="path-picker">
@@ -401,7 +402,7 @@
       </form>
     </div>
     <div>
-      <h3>weight別評価を追加</h3>
+      <h3>Legacy weight別評価を追加</h3>
       <form method="post" action="/jobs/{{ job.id }}/external-validation/weight-review" class="form-grid">
         <label>weight<input type="number" name="lora_weight" value="0.8" min="0" max="2" step="0.1"></label>
         <label>validation_type<input name="validation_type" value="external"></label>

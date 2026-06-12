@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shutil
 from collections import Counter, defaultdict
 from pathlib import Path
 from statistics import mean
@@ -10,6 +9,7 @@ from typing import Any
 
 from app import settings
 from app.db import connect, fetch_all, fetch_one, utc_now
+from app.services.image_store import unique_copy
 
 
 BASELINE_MODE = "no_lora_tag"
@@ -57,6 +57,7 @@ def expand_preset_conditions(preset: Any, trigger_word: str, lora_filename: str,
                         webui_prompt = f"<lora:{lora_name}:{weight_value:g}>, {prompt_text}"
                     condition = {
                         "validation_preset_id": preset["id"],
+                        "preset_version": preset["version"],
                         "preset_name": preset["name"],
                         "prompt_key": prompt_key,
                         "prompt_name": prompt.get("name") or prompt_key,
@@ -75,6 +76,8 @@ def expand_preset_conditions(preset: Any, trigger_word: str, lora_filename: str,
                         "steps": preset["steps"],
                         "cfg_scale": preset["cfg_scale"],
                         "base_model": base_model or "",
+                        "trigger_word": trigger_word or "",
+                        "lora_filename": lora_filename or "",
                         "expected_order": order,
                     }
                     condition["condition_hash"] = make_condition_hash(condition)
@@ -86,7 +89,10 @@ def expand_preset_conditions(preset: Any, trigger_word: str, lora_filename: str,
 def make_condition_hash(data: dict[str, Any]) -> str:
     keys = [
         "validation_preset_id",
+        "preset_version",
         "prompt_key",
+        "prompt",
+        "webui_prompt",
         "seed",
         "lora_weight",
         "width",
@@ -98,6 +104,8 @@ def make_condition_hash(data: dict[str, Any]) -> str:
         "steps",
         "cfg_scale",
         "negative_prompt",
+        "trigger_word",
+        "lora_filename",
         "base_model",
     ]
     payload = {key: normalize_hash_value(data.get(key)) for key in keys}
@@ -140,6 +148,7 @@ def create_validation_run(
     base_model_value = base_model.strip() or (profile["base_model"] if profile else "") or Path(job["base_model_path"]).stem
     trigger_value = trigger_word.strip() or (profile["trigger_word"] if profile else "") or job["trigger_word_at_creation"] or ""
     expected = preset_expected_count(preset)
+    preset_snapshot = json.dumps(dict(preset), ensure_ascii=False, sort_keys=True)
     now = utc_now()
     name = f"Job #{job_id} {preset['name']}"
     with connect() as conn:
@@ -150,9 +159,9 @@ def create_validation_run(
                 validation_preset_id, name, validation_level, base_model,
                 trigger_word, lora_filename, recommended_weight_min,
                 recommended_weight_max, expected_image_count, actual_image_count,
-                status, created_at, updated_at, memo
+                status, preset_snapshot_json, created_at, updated_at, memo
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'planned', ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'planned', ?, ?, ?, ?)
             """,
             (
                 job_id,
@@ -167,6 +176,7 @@ def create_validation_run(
                 profile["recommended_weight_min"] if profile else None,
                 profile["recommended_weight_max"] if profile else None,
                 expected,
+                preset_snapshot,
                 now,
                 now,
                 memo.strip(),
@@ -191,11 +201,22 @@ def validation_image_dir(run_id: int) -> Path:
     return validation_run_dir(run_id) / "images"
 
 
+def validation_preset_for_run(run: Any) -> dict[str, Any] | Any | None:
+    snapshot = run["preset_snapshot_json"] if "preset_snapshot_json" in run.keys() else None
+    if snapshot:
+        data = json_loads(snapshot, {})
+        if data:
+            return data
+    if not run["validation_preset_id"]:
+        return None
+    return fetch_one("SELECT * FROM validation_presets WHERE id = ?", (run["validation_preset_id"],))
+
+
 def ensure_expected_conditions(run_id: int) -> list[Any]:
     run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (run_id,))
     if run is None or not run["validation_preset_id"]:
         return []
-    preset = fetch_one("SELECT * FROM validation_presets WHERE id = ?", (run["validation_preset_id"],))
+    preset = validation_preset_for_run(run)
     if preset is None:
         return []
     count = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ?", (run_id,))
@@ -210,9 +231,11 @@ def ensure_expected_conditions(run_id: int) -> list[Any]:
             INSERT INTO validation_expected_conditions(
                 validation_run_id, validation_preset_id, prompt_key, seed,
                 lora_weight, hires_enabled, width, height, sampler, steps,
-                cfg_scale, condition_hash, expected_order, created_at
+                cfg_scale, condition_hash, expected_order, preset_version,
+                prompt, webui_prompt, negative_prompt, trigger_word,
+                lora_filename, base_model, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -229,6 +252,13 @@ def ensure_expected_conditions(run_id: int) -> list[Any]:
                     row["cfg_scale"],
                     row["condition_hash"],
                     row["expected_order"],
+                    row.get("preset_version"),
+                    row.get("prompt"),
+                    row.get("webui_prompt"),
+                    row.get("negative_prompt"),
+                    row.get("trigger_word"),
+                    row.get("lora_filename"),
+                    row.get("base_model"),
                     now,
                 )
                 for row in conditions
@@ -246,12 +276,14 @@ def write_validation_prompt_pack(run_id: int) -> dict[str, str]:
     run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (run_id,))
     if run is None:
         raise ValueError(f"Validation run not found: {run_id}")
-    preset = fetch_one("SELECT * FROM validation_presets WHERE id = ?", (run["validation_preset_id"],))
+    preset = validation_preset_for_run(run)
     if preset is None:
         raise ValueError("Validation preset not found")
     output_dir = validation_run_dir(run_id)
     output_dir.mkdir(parents=True, exist_ok=True)
-    conditions = expand_preset_conditions(preset, run["trigger_word"] or "", run["lora_filename"] or "", run["base_model"] or "")
+    conditions = [dict(row) for row in ensure_expected_conditions(run_id)]
+    if not conditions:
+        conditions = expand_preset_conditions(preset, run["trigger_word"] or "", run["lora_filename"] or "", run["base_model"] or "")
     md_lines = [
         f"# Validation Prompts Run #{run_id}",
         "",
@@ -268,15 +300,15 @@ def write_validation_prompt_pack(run_id: int) -> dict[str, str]:
     for index, row in enumerate(conditions, start=1):
         md_lines.extend(
             [
-                f"## {index}. {row['prompt_key']} / seed {row['seed']} / weight {row['lora_weight']:g} / Hires {row['hires_enabled']}",
+                f"## {index}. {row['prompt_key']} / seed {row['seed']} / weight {float(row['lora_weight']):g} / Hires {bool(row['hires_enabled'])}",
                 "",
                 "Prompt:",
                 "```text",
-                row["webui_prompt"],
+                row.get("webui_prompt") or row.get("prompt") or "",
                 "```",
                 "Negative:",
                 "```text",
-                row["negative_prompt"],
+                row.get("negative_prompt") or "",
                 "```",
                 f"Size: {row['width']}x{row['height']} / Sampler: {row['sampler']} / Steps: {row['steps']} / CFG: {row['cfg_scale']}",
                 "",
@@ -322,7 +354,7 @@ def load_validation_run_bundle(run_id: int) -> dict[str, Any]:
     run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (run_id,))
     if run is None:
         raise ValueError(f"Validation run not found: {run_id}")
-    preset = fetch_one("SELECT * FROM validation_presets WHERE id = ?", (run["validation_preset_id"],)) if run["validation_preset_id"] else None
+    preset = validation_preset_for_run(run) if run["validation_preset_id"] else None
     images = fetch_all("SELECT * FROM validation_images WHERE validation_run_id = ? ORDER BY image_role, prompt_key, seed, lora_weight, id", (run_id,))
     conditions = fetch_all("SELECT * FROM validation_expected_conditions WHERE validation_run_id = ? ORDER BY expected_order", (run_id,))
     coverage = build_coverage(run_id, conditions, images)
@@ -561,17 +593,7 @@ def apply_suggestion_to_profile(run_id: int) -> dict[str, Any]:
 
 
 def copy_managed_validation_image(run_id: int, source_path: str) -> str:
-    source = Path(source_path)
-    if not source.exists() or not source.is_file():
-        raise ValueError("Image file not found")
-    target_dir = validation_image_dir(run_id)
-    target_dir.mkdir(parents=True, exist_ok=True)
-    target = target_dir / source.name
-    counter = 1
-    while target.exists():
-        target = target_dir / f"{source.stem}_{counter}{source.suffix}"
-        counter += 1
-    shutil.copy2(source, target)
+    target = unique_copy(Path(source_path), validation_image_dir(run_id))
     return str(target)
 
 

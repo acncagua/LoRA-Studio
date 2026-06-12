@@ -18,6 +18,7 @@ from app.app_version import app_version_info
 from app.db import connect, create_dataset_version, create_job, fetch_all, fetch_one, import_latest_environment, init_db, insert_dataset, upsert_dataset_analysis
 from app.services.command_builder import prepare_job_files
 from app.services.exports import export_selected_lora, write_compare_contact_sheet, write_job_contact_sheet, write_validation_pack
+from app.services.image_store import copy_managed_reference_image, ensure_allowed_file, reference_images_root, unique_copy, validation_images_root
 from app.services.maintenance import create_app_backup, export_diagnostics, maintenance_summary
 from app.services.output_collector import collect_job_results
 from app.services.recommendations import create_draft_job_from_recommendation, list_recommendations, regenerate_recommendations, set_recommendation_status, write_recommendation_report
@@ -1033,6 +1034,10 @@ def job_add_validation_result(
     selected_output = fetch_one("SELECT * FROM training_outputs WHERE job_id = ? AND selected = 1", (job_id,))
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
+    try:
+        managed_image_path = unique_copy(Path(image_path), validation_images_root() / f"legacy_job_{job_id:06d}" / "images")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     now = settings_now()
     with connect() as conn:
         conn.execute(
@@ -1055,7 +1060,7 @@ def job_add_validation_result(
                 clamp_rating(flexibility_score),
                 clamp_rating(overall_score),
                 memo.strip(),
-                image_path.strip(),
+                str(managed_image_path),
                 now,
                 now,
             ),
@@ -1216,8 +1221,11 @@ def validation_image_file(image_id: int) -> FileResponse:
     image = fetch_one("SELECT * FROM validation_images WHERE id = ?", (image_id,))
     if image is None:
         raise HTTPException(status_code=404, detail="Validation image not found")
-    path = Path(image["image_path"]).resolve()
-    if not path.exists() or not path.is_file():
+    try:
+        path = ensure_allowed_file(image["image_path"], validation_images_root(), "Validation image")
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Validation image file not found")
     return FileResponse(path)
 
@@ -1756,9 +1764,10 @@ def reference_image_add(
     row = fetch_one("SELECT * FROM reference_sets WHERE id = ?", (set_id,))
     if row is None:
         raise HTTPException(status_code=404, detail="Reference set not found")
-    source = Path(image_path)
-    if not source.exists() or not source.is_file():
-        raise HTTPException(status_code=400, detail="Reference image file not found")
+    try:
+        managed_path = copy_managed_reference_image(set_id, image_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     valid_roles = {"face", "upper_body", "full_body", "expression", "style", "other"}
     now = settings_now()
     with connect() as conn:
@@ -1767,7 +1776,7 @@ def reference_image_add(
             INSERT INTO reference_images(reference_set_id, image_path, image_role, caption, sort_order, created_at)
             VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (set_id, str(source), image_role if image_role in valid_roles else "other", caption.strip(), sort_order, now),
+            (set_id, managed_path, image_role if image_role in valid_roles else "other", caption.strip(), sort_order, now),
         )
         conn.execute("UPDATE reference_sets SET updated_at = ? WHERE id = ?", (now, set_id))
     return RedirectResponse(f"/reference-sets/{set_id}", status_code=303)
@@ -1778,8 +1787,11 @@ def reference_image_file(image_id: int) -> FileResponse:
     image = fetch_one("SELECT * FROM reference_images WHERE id = ?", (image_id,))
     if image is None:
         raise HTTPException(status_code=404, detail="Reference image not found")
-    path = Path(image["image_path"]).resolve()
-    if not path.exists() or not path.is_file():
+    try:
+        path = ensure_allowed_file(image["image_path"], reference_images_root(), "Reference image")
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Reference image file not found")
     return FileResponse(path)
 
