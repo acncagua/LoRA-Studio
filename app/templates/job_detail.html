@@ -22,6 +22,7 @@
     <form method="post" action="/jobs/{{ job.id }}/reimport"><button type="submit">結果を再取り込み</button></form>
     <form method="post" action="/jobs/{{ job.id }}/export-contact-sheet"><button type="submit">Contact Sheet出力</button></form>
     <form method="post" action="/jobs/{{ job.id }}/export-selected-lora"><button type="submit">採用LoRA出力</button></form>
+    <form method="post" action="/jobs/{{ job.id }}/export-validation-pack"><button type="submit" {% if not selected_output %}disabled{% endif %}>Validation Pack出力</button></form>
   </div>
 </header>
 {% if exported %}<p class="notice">出力しました: {{ exported }}</p>{% endif %}
@@ -52,6 +53,7 @@
     {% if dataset %}<dl><dt>名前</dt><dd>{{ dataset.name }}</dd><dt>画像</dt><dd>{{ dataset.image_count }}</dd><dt>パス</dt><dd>{{ dataset.path }}</dd></dl>{% endif %}
     <h2>採用LoRA</h2>
     <p>{{ job.adopted_model_path or '未選択' }}</p>
+    {% if validation_pack_path %}<p class="muted">Validation Pack: {{ validation_pack_path }}</p>{% endif %}
     <form method="post" action="/jobs/{{ job.id }}/select-epoch" class="inline-form">
       <label>epochから採用LoRAを選択
         <select name="epoch">
@@ -258,6 +260,72 @@
   {% else %}
   <p class="muted">サンプル画像はまだ取り込まれていません。</p>
   {% endfor %}
+</section>
+<section>
+  <h2>Validation Results</h2>
+  <p class="muted">reForge / WebUIで手動生成した結果を記録します。scoreは1〜5、image_pathは任意です。</p>
+  <div class="panel-grid">
+    <div>
+      <h3>サマリー</h3>
+      <dl>
+        <dt>best_weight_by_overall</dt><dd>{{ validation_summary.best_weight_by_overall if validation_summary.best_weight_by_overall is not none else '-' }}</dd>
+        <dt>best_weight_by_stability</dt><dd>{{ validation_summary.best_weight_by_stability if validation_summary.best_weight_by_stability is not none else '-' }}</dd>
+      </dl>
+      <h4>weight別平均</h4>
+      <table>
+        <thead><tr><th>weight</th><th>件数</th><th>顔</th><th>衣装</th><th>安定性</th><th>柔軟性</th><th>総合</th></tr></thead>
+        <tbody>
+          {% for row in validation_summary.by_weight %}
+          <tr><td>{{ row.key }}</td><td>{{ row.count }}</td><td>{{ '%.2f'|format(row.face_score) if row.face_score is not none else '-' }}</td><td>{{ '%.2f'|format(row.costume_score) if row.costume_score is not none else '-' }}</td><td>{{ '%.2f'|format(row.stability_score) if row.stability_score is not none else '-' }}</td><td>{{ '%.2f'|format(row.flexibility_score) if row.flexibility_score is not none else '-' }}</td><td>{{ '%.2f'|format(row.overall_score) if row.overall_score is not none else '-' }}</td></tr>
+          {% else %}
+          <tr><td colspan="7" class="muted">Validation結果はまだありません。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <h4>prompt_type別平均</h4>
+      <table>
+        <thead><tr><th>prompt_type</th><th>件数</th><th>顔</th><th>衣装</th><th>安定性</th><th>柔軟性</th><th>総合</th></tr></thead>
+        <tbody>
+          {% for row in validation_summary.by_prompt_type %}
+          <tr><td>{{ row.key }}</td><td>{{ row.count }}</td><td>{{ '%.2f'|format(row.face_score) if row.face_score is not none else '-' }}</td><td>{{ '%.2f'|format(row.costume_score) if row.costume_score is not none else '-' }}</td><td>{{ '%.2f'|format(row.stability_score) if row.stability_score is not none else '-' }}</td><td>{{ '%.2f'|format(row.flexibility_score) if row.flexibility_score is not none else '-' }}</td><td>{{ '%.2f'|format(row.overall_score) if row.overall_score is not none else '-' }}</td></tr>
+          {% else %}
+          <tr><td colspan="7" class="muted">Validation結果はまだありません。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <h3>結果を追加</h3>
+      <form method="post" action="/jobs/{{ job.id }}/validation-results" class="form-grid">
+        <label>prompt_type<select name="prompt_type">
+          <option value="basic_face">basic_face</option>
+          <option value="full_body">full_body</option>
+          <option value="expression_pose">expression_pose</option>
+          <option value="different_clothes">different_clothes</option>
+          <option value="different_background">different_background</option>
+        </select></label>
+        <label>weight<input type="number" name="lora_weight" value="0.8" min="0" max="2" step="0.1"></label>
+        <label>顔<input type="number" name="face_score" value="0" min="0" max="5"></label>
+        <label>衣装<input type="number" name="costume_score" value="0" min="0" max="5"></label>
+        <label>安定性<input type="number" name="stability_score" value="0" min="0" max="5"></label>
+        <label>柔軟性<input type="number" name="flexibility_score" value="0" min="0" max="5"></label>
+        <label>総合<input type="number" name="overall_score" value="0" min="0" max="5"></label>
+        <label>image_path<input name="image_path"></label>
+        <label>メモ<textarea name="memo"></textarea></label>
+        <button type="submit">Validation結果を保存</button>
+      </form>
+    </div>
+  </div>
+  <table>
+    <thead><tr><th>ID</th><th>prompt_type</th><th>weight</th><th>顔</th><th>衣装</th><th>安定性</th><th>柔軟性</th><th>総合</th><th>メモ</th><th>image_path</th><th>作成日時</th></tr></thead>
+    <tbody>
+      {% for row in validation_results %}
+      <tr><td>#{{ row.id }}</td><td>{{ row.prompt_type }}</td><td>{{ row.lora_weight }}</td><td>{{ row.face_score or '-' }}</td><td>{{ row.costume_score or '-' }}</td><td>{{ row.stability_score or '-' }}</td><td>{{ row.flexibility_score or '-' }}</td><td>{{ row.overall_score or '-' }}</td><td>{{ row.memo or '-' }}</td><td>{{ row.image_path or '-' }}</td><td>{{ row.created_at }}</td></tr>
+      {% else %}
+      <tr><td colspan="11" class="muted">Validation結果はまだ登録されていません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </section>
 <section><h2>パラメータ</h2><pre>{{ job.params_json }}</pre></section>
 {% endblock %}

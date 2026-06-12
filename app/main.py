@@ -14,7 +14,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from app import settings
 from app.db import connect, create_dataset_version, create_job, fetch_all, fetch_one, import_latest_environment, init_db, insert_dataset, upsert_dataset_analysis
 from app.services.command_builder import prepare_job_files
-from app.services.exports import export_selected_lora, write_compare_contact_sheet, write_job_contact_sheet
+from app.services.exports import export_selected_lora, write_compare_contact_sheet, write_job_contact_sheet, write_validation_pack
 from app.services.output_collector import collect_job_results
 from app.services.training_runner import read_log_tail, start_job, stop_job
 
@@ -489,6 +489,8 @@ def job_detail(request: Request, job_id: int, exported: str | None = None) -> HT
     decorated_epochs = decorate_epoch_summaries(epoch_summaries, outputs, samples)
     log_tail = read_log_tail(dict(job))
     selected_output = fetch_one("SELECT * FROM training_outputs WHERE job_id = ? AND selected = 1", (job_id,))
+    validation_results = fetch_all("SELECT * FROM validation_results WHERE job_id = ? ORDER BY created_at DESC, id DESC", (job_id,))
+    validation_summary = build_validation_summary(validation_results)
     dataset_version = fetch_one("SELECT * FROM dataset_versions WHERE id = ?", (job["dataset_version_id"],)) if job["dataset_version_id"] else None
     params = json.loads(job["params_json"])
     return render(
@@ -509,6 +511,9 @@ def job_detail(request: Request, job_id: int, exported: str | None = None) -> HT
         loss_chart=build_loss_chart(metrics),
         log_tail=log_tail,
         selected_output=selected_output,
+        validation_results=validation_results,
+        validation_summary=validation_summary,
+        validation_pack_path=validation_pack_path(job_id),
         dataset_version=dataset_version,
         no_metadata_enabled=bool(params.get("no_metadata")),
         exported=exported,
@@ -697,6 +702,62 @@ def job_export_contact_sheet(job_id: int) -> RedirectResponse:
 def job_export_selected_lora(job_id: int) -> RedirectResponse:
     result = export_selected_lora(job_id)
     return RedirectResponse(f"/jobs/{job_id}?exported={result['directory']}", status_code=303)
+
+
+@app.post("/jobs/{job_id}/export-validation-pack")
+def job_export_validation_pack(job_id: int) -> RedirectResponse:
+    try:
+        result = write_validation_pack(job_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(f"/jobs/{job_id}?exported={result['directory']}", status_code=303)
+
+
+@app.post("/jobs/{job_id}/validation-results")
+def job_add_validation_result(
+    job_id: int,
+    prompt_type: str = Form(...),
+    lora_weight: float = Form(...),
+    face_score: int = Form(0),
+    costume_score: int = Form(0),
+    stability_score: int = Form(0),
+    flexibility_score: int = Form(0),
+    overall_score: int = Form(0),
+    memo: str = Form(""),
+    image_path: str = Form(""),
+) -> RedirectResponse:
+    job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
+    selected_output = fetch_one("SELECT * FROM training_outputs WHERE job_id = ? AND selected = 1", (job_id,))
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    now = settings_now()
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO validation_results(
+                job_id, selected_output_id, prompt_type, lora_weight,
+                face_score, costume_score, stability_score, flexibility_score,
+                overall_score, memo, image_path, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                job_id,
+                selected_output["id"] if selected_output else None,
+                prompt_type.strip(),
+                lora_weight,
+                clamp_rating(face_score),
+                clamp_rating(costume_score),
+                clamp_rating(stability_score),
+                clamp_rating(flexibility_score),
+                clamp_rating(overall_score),
+                memo.strip(),
+                image_path.strip(),
+                now,
+                now,
+            ),
+        )
+    return RedirectResponse(f"/jobs/{job_id}", status_code=303)
 
 
 @app.get("/jobs/{job_id}/samples/{image_id}")
@@ -981,6 +1042,61 @@ def rating_value(sample: Any, key: str) -> int | None:
 def average_rating(samples: list[Any], key: str) -> float | None:
     values = [rating_value(sample, key) for sample in samples]
     values = [value for value in values if value is not None and value > 0]
+    if not values:
+        return None
+    return sum(values) / len(values)
+
+
+def validation_pack_path(job_id: int) -> str | None:
+    path = settings.EXPORTS_DIR / "validation_packs" / f"job_{job_id:06d}"
+    return str(path) if path.exists() else None
+
+
+def build_validation_summary(results: list[Any]) -> dict[str, Any]:
+    rows = [dict(row) for row in results]
+    return {
+        "best_weight_by_overall": best_group_value(rows, "lora_weight", "overall_score"),
+        "best_weight_by_stability": best_group_value(rows, "lora_weight", "stability_score"),
+        "by_weight": average_score_rows(rows, "lora_weight"),
+        "by_prompt_type": average_score_rows(rows, "prompt_type"),
+    }
+
+
+def best_group_value(rows: list[dict[str, Any]], group_key: str, score_key: str) -> Any:
+    averages = average_score_rows(rows, group_key)
+    scored = [row for row in averages if row.get(score_key) is not None]
+    if not scored:
+        return None
+    best = max(scored, key=lambda row: row[score_key])
+    return best["key"]
+
+
+def average_score_rows(rows: list[dict[str, Any]], group_key: str) -> list[dict[str, Any]]:
+    grouped: dict[Any, list[dict[str, Any]]] = {}
+    for row in rows:
+        key = row.get(group_key)
+        if key is None or key == "":
+            continue
+        grouped.setdefault(key, []).append(row)
+    result = []
+    for key in sorted(grouped, key=lambda item: str(item)):
+        items = grouped[key]
+        result.append(
+            {
+                "key": key,
+                "count": len(items),
+                "face_score": average_int_field(items, "face_score"),
+                "costume_score": average_int_field(items, "costume_score"),
+                "stability_score": average_int_field(items, "stability_score"),
+                "flexibility_score": average_int_field(items, "flexibility_score"),
+                "overall_score": average_int_field(items, "overall_score"),
+            }
+        )
+    return result
+
+
+def average_int_field(rows: list[dict[str, Any]], key: str) -> float | None:
+    values = [int(row[key]) for row in rows if row.get(key) is not None and int(row[key]) > 0]
     if not values:
         return None
     return sum(values) / len(values)

@@ -20,5 +20,9 @@
     </tbody>
   </table>
 </section>
-<section><h2>設定</h2><table><tbody>{% for row in settings_rows %}<tr><th>{{ row.key }}</th><td>{{ row.value }}</td><td>{{ row.updated_at }}</td></tr>{% endfor %}</tbody></table></section>
+<section>
+  <h2>設定</h2>
+  <p class="muted">webui_api_* は将来のWebUI API連携用の設定枠です。現時点ではAPI呼び出しは行いません。</p>
+  <table><tbody>{% for row in settings_rows %}<tr><th>{{ row.key }}</th><td>{{ row.value }}</td><td>{{ row.updated_at }}</td></tr>{% endfor %}</tbody></table>
+</section>
 {% endblock %}

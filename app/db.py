@@ -141,6 +141,8 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             ON training_metrics(job_id, step, raw_tag);
         CREATE INDEX IF NOT EXISTS idx_training_jobs_status
             ON training_jobs(status);
+        CREATE INDEX IF NOT EXISTS idx_validation_results_job
+            ON validation_results(job_id);
         """
     )
 
@@ -159,6 +161,8 @@ def seed_app_settings(conn: sqlite3.Connection) -> None:
         "sd_scripts_release_tag": settings.SD_SCRIPTS_RELEASE_TAG,
         "sd_scripts_release_commit": settings.SD_SCRIPTS_RELEASE_COMMIT,
         "sd_scripts_repo_url": settings.SD_SCRIPTS_REPO_URL,
+        "webui_api_enabled": "false",
+        "webui_api_url": "http://127.0.0.1:7865",
     }
     conn.executemany(
         """
@@ -728,6 +732,13 @@ CREATE TABLE IF NOT EXISTS training_outputs (
     id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, epoch INTEGER, step INTEGER,
     file_path TEXT NOT NULL, file_type TEXT NOT NULL, file_size INTEGER, sha256 TEXT,
     selected INTEGER NOT NULL DEFAULT 0, memo TEXT, metadata_error TEXT, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS validation_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, selected_output_id INTEGER,
+    prompt_type TEXT NOT NULL, lora_weight REAL NOT NULL,
+    face_score INTEGER, costume_score INTEGER, stability_score INTEGER,
+    flexibility_score INTEGER, overall_score INTEGER,
+    memo TEXT, image_path TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS caption_edit_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT, dataset_id INTEGER NOT NULL, action TEXT NOT NULL,

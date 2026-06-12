@@ -224,6 +224,31 @@ exports/selected_loras/
 
 `selected_lora_info.json` にはJob ID、Job名、Dataset ID/version、trigger、preset、params、selected epoch、元ファイルパス、export先、file size、sha256、health、export時刻、人間評価メモを保存します。`selected_lora_notes.md` は人間が読むための概要、trigger、Dataset version、選択epoch、loss summary、メモ、注意点です。
 
+## Validation Packと実生成環境での手動検証
+
+Job詳細の `Validation Pack出力` は、採用済みLoRAをreForge / WebUIで検証するためのファイル一式を `exports/validation_packs/job_xxxxxx/` に出力します。Packには以下が含まれます。
+
+- `validation_prompts.md`: LoRA weight別、prompt type別の手動検証prompt。
+- `validation_prompts.json`: 将来のWebUI API連携でも使いやすい構造化prompt。
+- `validation_checklist.md`: 目視確認用チェックリスト。
+- `lora_usage_example.txt`: reForge / WebUIでの短い使い方。
+- `validation_result_template.md`: 手動検証結果の記録テンプレート。
+
+まず `Export Selected LoRA` または `Validation Pack出力` を実行し、採用LoRAを `exports/selected_loras/job_xxxxxx/` に出力します。Validation Pack出力時にも採用LoRA exportは更新され、`selected_lora_info.json` には `validation_pack_path` が追記されます。
+
+reForge / WebUIでは、LoRAファイルを `models/Lora` にコピーし、LoRA一覧を更新してからprompt内で `<lora:filename:weight>` を使います。promptに入れるLoRA名は `.safetensors` 拡張子を除いたファイル名です。最初は学習時と同じbase modelで確認してください。違うbase modelで試すのは、同一base modelで崩れや暴発がないことを見てからにします。
+
+Validation Packは `0.4 / 0.6 / 0.8 / 1.0` のweightを出力します。目安は以下です。
+
+- `0.4`: 弱すぎず、特徴が少し出るか。
+- `0.6`: 自然に特徴が出るか。
+- `0.8`: 顔特徴が安定するか。最初の採用候補になりやすいweightです。
+- `1.0`: 崩れ、固定化、背景汚染が強くならないか。
+
+Job詳細の `Validation Results` では、手動生成した画像の評価を記録できます。`prompt_type`、`weight`、顔、衣装、安定性、柔軟性、総合、メモ、任意の `image_path` を保存します。保存した結果から、weight別・prompt_type別の平均スコア、`best_weight_by_overall`、`best_weight_by_stability` を表示します。best weightは自動採用ではなく、人間が画像とメモを見て判断するための補助値です。
+
+Environment画面には将来のWebUI API連携用に `webui_api_enabled=false` と `webui_api_url=http://127.0.0.1:7865` を表示します。現時点ではWebUI APIによる自動txt2imgは実装しておらず、API呼び出しも行いません。
+
 ## no_metadataとsafetensors取り込み
 
 `no_metadata` は、sd-scriptsが `.safetensors` 保存時にmetadata関連処理で大きなメモリを使う場合の回避策です。Job #11ではsafetensors metadata/hash関連で `MemoryError` が発生しましたが、Standard 6 Epoch presetに `no_metadata: true` を追加したJob #12は完走しました。
