@@ -35,7 +35,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup_app.ps1
 
 ブラウザで `http://127.0.0.1:8768` を開きます。
 
-起動時に指定ポートが既に使用されている場合、WindowsではそのポートをLISTENしている既存プロセスを終了してから起動します。
+通常起動では既存プロセスを自動終了しません。
+指定ポートを強制的に解放したい場合のみ `--force-release-port` を付けて起動します。
+この場合も、LoRA-Studioの指定portだけを対象にします。
 
 起動時に `external/sd-scripts` または `external/sd-scripts/venv` が未作成の場合は、`sd-scripts v0.10.5` のセットアップを自動実行します。
 
