@@ -99,6 +99,10 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         {
             "min_loss_step": "INTEGER",
             "max_loss": "REAL",
+            "moving_avg_final_loss": "REAL",
+            "raw_loss_label": "TEXT",
+            "smoothed_loss_label": "TEXT",
+            "epoch_trend_label": "TEXT",
             "health_message": "TEXT",
             "created_at": "TEXT",
         },
@@ -684,7 +688,15 @@ CREATE TABLE IF NOT EXISTS training_metrics (
 CREATE TABLE IF NOT EXISTS training_metric_summaries (
     job_id INTEGER PRIMARY KEY, initial_loss REAL, final_loss REAL, min_loss REAL, min_loss_epoch REAL,
     loss_drop_rate REAL, loss_volatility REAL, spike_count INTEGER, late_stage_slope REAL,
+    moving_avg_final_loss REAL, raw_loss_label TEXT, smoothed_loss_label TEXT, epoch_trend_label TEXT,
     health_label TEXT, health_score INTEGER, summary_json TEXT, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS training_epoch_summaries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, epoch INTEGER NOT NULL,
+    step_start INTEGER, step_end INTEGER, metric_count INTEGER, avg_loss REAL,
+    min_loss REAL, max_loss REAL, final_loss REAL, moving_avg_final_loss REAL,
+    spike_count INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    UNIQUE(job_id, epoch)
 );
 CREATE TABLE IF NOT EXISTS sample_prompts (
     id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER, name TEXT NOT NULL, prompt TEXT NOT NULL,

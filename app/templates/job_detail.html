@@ -98,6 +98,9 @@
         <dt>Samples</dt><dd>{{ job.sample_image_count if job.sample_image_count is not none else samples|length }}</dd>
         <dt>Health</dt><dd><span class="label {{ (metric_summary.health_label if metric_summary else 'unknown')|lower }}">{{ metric_summary.health_label if metric_summary else 'UNKNOWN' }}</span></dd>
         <dt>Message</dt><dd>{{ metric_summary.health_message if metric_summary else 'No metric summary yet.' }}</dd>
+        <dt>Raw Loss</dt><dd><span class="label {{ (metric_summary.raw_loss_label if metric_summary else 'unknown')|lower }}">{{ metric_summary.raw_loss_label if metric_summary else 'UNKNOWN' }}</span></dd>
+        <dt>Smoothed Loss</dt><dd><span class="label {{ (metric_summary.smoothed_loss_label if metric_summary else 'unknown')|lower }}">{{ metric_summary.smoothed_loss_label if metric_summary else 'UNKNOWN' }}</span></dd>
+        <dt>Epoch Trend</dt><dd><span class="label {{ (metric_summary.epoch_trend_label if metric_summary else 'unknown')|lower }}">{{ metric_summary.epoch_trend_label if metric_summary else 'UNKNOWN' }}</span></dd>
         <dt>Health Note</dt><dd>Loss health is a training-log health check, not an image quality score. WARNING can still be usable when sample images look better.</dd>
       </dl>
     </div>
@@ -106,6 +109,7 @@
         <dt>Initial Loss</dt><dd>{{ '%.6f'|format(metric_summary.initial_loss) if metric_summary and metric_summary.initial_loss is not none else '-' }}</dd>
         <dt>Final Loss</dt><dd>{{ '%.6f'|format(metric_summary.final_loss) if metric_summary and metric_summary.final_loss is not none else '-' }}</dd>
         <dt>Min Loss</dt><dd>{{ '%.6f'|format(metric_summary.min_loss) if metric_summary and metric_summary.min_loss is not none else '-' }}{% if metric_summary and metric_summary.min_loss_step is not none %} @ step {{ metric_summary.min_loss_step }}{% endif %}</dd>
+        <dt>Moving Avg Final</dt><dd>{{ '%.6f'|format(metric_summary.moving_avg_final_loss) if metric_summary and metric_summary.moving_avg_final_loss is not none else '-' }}</dd>
         <dt>Drop Rate</dt><dd>{{ '%.2f%%'|format(metric_summary.loss_drop_rate * 100) if metric_summary and metric_summary.loss_drop_rate is not none else '-' }}</dd>
         <dt>Volatility</dt><dd>{{ '%.6f'|format(metric_summary.loss_volatility) if metric_summary and metric_summary.loss_volatility is not none else '-' }}</dd>
         <dt>Spikes</dt><dd>{{ metric_summary.spike_count if metric_summary else '-' }}</dd>
@@ -121,7 +125,7 @@
     <polyline class="raw" points="{{ loss_chart.raw_points }}"></polyline>
     <polyline class="avg" points="{{ loss_chart.ma_points }}"></polyline>
   </svg>
-  <p class="muted">Raw loss and 3-point moving average. Step {{ loss_chart.min_step }} to {{ loss_chart.max_step }}.</p>
+  <p class="muted">Raw loss and 10-point moving average. Step {{ loss_chart.min_step }} to {{ loss_chart.max_step }}.</p>
   {% else %}
   <p class="muted">No loss chart data yet. Reimport Results will try TensorBoard first, then train.log.</p>
   {% endif %}
@@ -132,6 +136,29 @@
       <tr><td>{{ metric.step }}</td><td>{{ '%.6f'|format(metric.loss) if metric.loss is not none else '-' }}</td><td>{{ metric.learning_rate if metric.learning_rate is not none else '-' }}</td><td>{{ metric.source or '-' }}</td><td>{{ metric.raw_tag or '-' }}</td></tr>
       {% else %}
       <tr><td colspan="5" class="muted">No metrics imported yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <h3>Epoch Summary</h3>
+  <table>
+    <thead><tr><th>Epoch</th><th>Steps</th><th>Metrics</th><th>Avg Loss</th><th>Min</th><th>Max</th><th>Final</th><th>MA Final</th><th>Spikes</th><th>Samples</th><th>Output</th></tr></thead>
+    <tbody>
+      {% for epoch in epoch_summaries %}
+      <tr>
+        <td>{{ epoch.epoch }}</td>
+        <td>{{ epoch.step_start }}-{{ epoch.step_end }}</td>
+        <td>{{ epoch.metric_count }}</td>
+        <td>{{ '%.6f'|format(epoch.avg_loss) if epoch.avg_loss is not none else '-' }}</td>
+        <td>{{ '%.6f'|format(epoch.min_loss) if epoch.min_loss is not none else '-' }}</td>
+        <td>{{ '%.6f'|format(epoch.max_loss) if epoch.max_loss is not none else '-' }}</td>
+        <td>{{ '%.6f'|format(epoch.final_loss) if epoch.final_loss is not none else '-' }}</td>
+        <td>{{ '%.6f'|format(epoch.moving_avg_final_loss) if epoch.moving_avg_final_loss is not none else '-' }}</td>
+        <td>{{ epoch.spike_count }}</td>
+        <td>{{ epoch.sample_count }}</td>
+        <td>{{ epoch.output_file }}{% if epoch.output_selected %} selected{% endif %}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="11" class="muted">No epoch summary yet. Reimport Results will rebuild it.</td></tr>
       {% endfor %}
     </tbody>
   </table>

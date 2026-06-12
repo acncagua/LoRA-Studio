@@ -484,6 +484,7 @@ def job_detail(request: Request, job_id: int) -> HTMLResponse:
     sample_prompts = fetch_all("SELECT * FROM sample_prompts WHERE job_id = ? ORDER BY sort_order, id", (job_id,))
     metrics = fetch_all("SELECT * FROM training_metrics WHERE job_id = ? ORDER BY step, id", (job_id,))
     metric_summary = fetch_one("SELECT * FROM training_metric_summaries WHERE job_id = ?", (job_id,))
+    epoch_summaries = fetch_all("SELECT * FROM training_epoch_summaries WHERE job_id = ? ORDER BY epoch", (job_id,))
     log_tail = read_log_tail(dict(job))
     selected_output = fetch_one("SELECT * FROM training_outputs WHERE job_id = ? AND selected = 1", (job_id,))
     dataset_version = fetch_one("SELECT * FROM dataset_versions WHERE id = ?", (job["dataset_version_id"],)) if job["dataset_version_id"] else None
@@ -498,6 +499,7 @@ def job_detail(request: Request, job_id: int) -> HTMLResponse:
         sample_groups=group_samples(sample_prompts, samples),
         metrics=metrics,
         metric_summary=metric_summary,
+        epoch_summaries=decorate_epoch_summaries(epoch_summaries, outputs, samples),
         health_details=health_details(metric_summary, len(metrics)),
         trigger_status=job_trigger_status(job, dataset, sample_prompts),
         loss_chart=build_loss_chart(metrics),
@@ -834,6 +836,7 @@ def build_job_comparison(job_a: int, job_b: int) -> dict[str, Any]:
         "warnings": compare_warnings(left, right),
         "param_rows": build_param_rows(left["params"], right["params"]),
         "metric_rows": build_metric_rows(left, right),
+        "epoch_rows": build_epoch_compare_rows(left, right),
         "sample_groups": build_compare_sample_groups(left, right),
     }
 
@@ -846,6 +849,7 @@ def load_compare_job(job_id: int) -> dict[str, Any]:
     dataset_version = fetch_one("SELECT * FROM dataset_versions WHERE id = ?", (job["dataset_version_id"],)) if job["dataset_version_id"] else None
     preset = fetch_one("SELECT * FROM presets WHERE id = ?", (job["preset_id"],))
     summary = fetch_one("SELECT * FROM training_metric_summaries WHERE job_id = ?", (job_id,))
+    epoch_summaries = fetch_all("SELECT * FROM training_epoch_summaries WHERE job_id = ? ORDER BY epoch", (job_id,))
     metrics = fetch_all("SELECT * FROM training_metrics WHERE job_id = ? ORDER BY step, id", (job_id,))
     outputs = fetch_all("SELECT * FROM training_outputs WHERE job_id = ? ORDER BY epoch, step, id", (job_id,))
     samples = fetch_all("SELECT * FROM sample_images WHERE job_id = ? ORDER BY epoch, step, id", (job_id,))
@@ -858,6 +862,7 @@ def load_compare_job(job_id: int) -> dict[str, Any]:
         "dataset_version": dataset_version,
         "preset": preset,
         "summary": summary,
+        "epoch_summaries": decorate_epoch_summaries(epoch_summaries, outputs, samples),
         "metrics": metrics,
         "outputs": outputs,
         "samples": samples,
@@ -867,6 +872,23 @@ def load_compare_job(job_id: int) -> dict[str, Any]:
         "loss_chart": build_loss_chart(metrics),
         "health_details": health_details(summary, len(metrics)),
     }
+
+
+def decorate_epoch_summaries(epoch_rows: list[Any], outputs: list[Any], samples: list[Any]) -> list[dict[str, Any]]:
+    output_by_epoch = {row["epoch"]: row for row in outputs if row["epoch"] is not None}
+    sample_counts: dict[int, int] = {}
+    for sample in samples:
+        if sample["epoch"] is not None:
+            sample_counts[int(sample["epoch"])] = sample_counts.get(int(sample["epoch"]), 0) + 1
+    decorated = []
+    for row in epoch_rows:
+        item = dict(row)
+        output = output_by_epoch.get(row["epoch"])
+        item["sample_count"] = sample_counts.get(row["epoch"], 0)
+        item["output_file"] = Path(output["file_path"]).name if output else "-"
+        item["output_selected"] = bool(output["selected"]) if output else False
+        decorated.append(item)
+    return decorated
 
 
 def compare_warnings(left: dict[str, Any], right: dict[str, Any]) -> list[str]:
@@ -887,6 +909,27 @@ def build_param_rows(left_params: dict[str, Any], right_params: dict[str, Any]) 
         left_value = left_params.get(key)
         right_value = right_params.get(key)
         rows.append({"key": key, "left": render_value(left_value), "right": render_value(right_value), "changed": left_value != right_value, "emphasized": key in emphasized})
+    return rows
+
+
+def build_epoch_compare_rows(left: dict[str, Any], right: dict[str, Any]) -> list[dict[str, Any]]:
+    left_rows = {row["epoch"]: row for row in left["epoch_summaries"]}
+    right_rows = {row["epoch"]: row for row in right["epoch_summaries"]}
+    rows = []
+    for epoch in sorted(set(left_rows) | set(right_rows)):
+        left_row = left_rows.get(epoch)
+        right_row = right_rows.get(epoch)
+        rows.append(
+            {
+                "epoch": epoch,
+                "left_avg_loss": render_value(left_row["avg_loss"] if left_row else None),
+                "right_avg_loss": render_value(right_row["avg_loss"] if right_row else None),
+                "left_ma_final": render_value(left_row["moving_avg_final_loss"] if left_row else None),
+                "right_ma_final": render_value(right_row["moving_avg_final_loss"] if right_row else None),
+                "left_samples": left_row["sample_count"] if left_row else 0,
+                "right_samples": right_row["sample_count"] if right_row else 0,
+            }
+        )
     return rows
 
 
@@ -1010,6 +1053,13 @@ def write_comparison_markdown(comparison: dict[str, Any]) -> str:
     for row in comparison["metric_rows"]:
         marker = "changed" if row["changed"] else "same"
         lines.append(f"- {row['key']}: {row['left']} | {row['right']} ({marker})")
+    lines.extend(["", "## Epoch Loss Comparison"])
+    for row in comparison["epoch_rows"]:
+        lines.append(
+            f"- epoch {row['epoch']}: avg_loss {row['left_avg_loss']} | {row['right_avg_loss']}; "
+            f"moving_avg_final {row['left_ma_final']} | {row['right_ma_final']}; "
+            f"samples {row['left_samples']} | {row['right_samples']}"
+        )
     lines.extend(
         [
             "",
@@ -1095,7 +1145,7 @@ def build_loss_chart(metrics: list[Any]) -> dict[str, Any] | None:
         return round(x, 2), round(y, 2)
 
     raw_points = " ".join(f"{x},{y}" for x, y in (point(step, value) for step, value in zip(steps, losses)))
-    averages = moving_average(losses, 3)
+    averages = moving_average(losses, 10)
     ma_points = " ".join(f"{x},{y}" for x, y in (point(step, value) for step, value in zip(steps, averages)))
     return {
         "width": width,

@@ -27,9 +27,10 @@ def collect_job_metrics(job_id: int) -> dict[str, Any]:
     if metrics:
         replace_metrics(job_id, metrics, source)
 
+    epoch_summaries = summarize_epochs(job_id)
     summary = summarize_metrics(job_id)
     consistency = update_step_consistency(job_id)
-    return {"metrics": len(metrics), "source": source if metrics else None, "summary": summary, "consistency": consistency}
+    return {"metrics": len(metrics), "source": source if metrics else None, "summary": summary, "epoch_summaries": epoch_summaries, "consistency": consistency}
 
 
 def read_tensorboard_metrics(metrics_dir: Path) -> list[dict[str, Any]]:
@@ -139,10 +140,14 @@ def summarize_metrics(job_id: int) -> dict[str, Any]:
             "min_loss": rows[0]["loss"] if rows else None,
             "min_loss_step": rows[0]["step"] if rows else None,
             "max_loss": rows[0]["loss"] if rows else None,
+            "moving_avg_final_loss": rows[-1]["loss"] if rows else None,
             "loss_drop_rate": None,
             "loss_volatility": None,
             "spike_count": 0,
             "late_stage_slope": None,
+            "raw_loss_label": "UNKNOWN",
+            "smoothed_loss_label": "UNKNOWN",
+            "epoch_trend_label": "UNKNOWN",
             "health_label": "UNKNOWN",
             "health_message": "Metric count is too small to judge loss health.",
         }
@@ -158,17 +163,35 @@ def summarize_metrics(job_id: int) -> dict[str, Any]:
         late_stage_slope = (losses[-1] - losses[-tail]) / max(1, steps[-1] - steps[-tail])
         loss_drop_rate = (initial - final) / initial if initial else None
         volatility = statistics.pstdev(deltas) if len(deltas) > 1 else abs(deltas[0])
-        health_label, health_message = judge_health(losses, spike_count, late_stage_slope, loss_drop_rate)
+        smoothed = moving_average(losses, 10)
+        moving_avg_final = smoothed[-1]
+        raw_label = judge_raw_loss(losses, spike_count, loss_drop_rate)
+        smoothed_label = judge_smoothed_loss(smoothed)
+        epoch_label = judge_epoch_trend(job_id)
+        health_label, health_message = judge_health(
+            losses,
+            smoothed,
+            spike_count,
+            late_stage_slope,
+            loss_drop_rate,
+            raw_label,
+            smoothed_label,
+            epoch_label,
+        )
         summary = {
             "initial_loss": initial,
             "final_loss": final,
             "min_loss": losses[min_index],
             "min_loss_step": steps[min_index],
             "max_loss": max(losses),
+            "moving_avg_final_loss": moving_avg_final,
             "loss_drop_rate": loss_drop_rate,
             "loss_volatility": volatility,
             "spike_count": spike_count,
             "late_stage_slope": late_stage_slope,
+            "raw_loss_label": raw_label,
+            "smoothed_loss_label": smoothed_label,
+            "epoch_trend_label": epoch_label,
             "health_label": health_label,
             "health_message": health_message,
         }
@@ -178,20 +201,25 @@ def summarize_metrics(job_id: int) -> dict[str, Any]:
             """
             INSERT INTO training_metric_summaries(
                 job_id, initial_loss, final_loss, min_loss, min_loss_step, max_loss,
-                loss_drop_rate, loss_volatility, spike_count, late_stage_slope,
+                moving_avg_final_loss, loss_drop_rate, loss_volatility, spike_count,
+                late_stage_slope, raw_loss_label, smoothed_loss_label, epoch_trend_label,
                 health_label, health_message, summary_json, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(job_id) DO UPDATE SET
                 initial_loss = excluded.initial_loss,
                 final_loss = excluded.final_loss,
                 min_loss = excluded.min_loss,
                 min_loss_step = excluded.min_loss_step,
                 max_loss = excluded.max_loss,
+                moving_avg_final_loss = excluded.moving_avg_final_loss,
                 loss_drop_rate = excluded.loss_drop_rate,
                 loss_volatility = excluded.loss_volatility,
                 spike_count = excluded.spike_count,
                 late_stage_slope = excluded.late_stage_slope,
+                raw_loss_label = excluded.raw_loss_label,
+                smoothed_loss_label = excluded.smoothed_loss_label,
+                epoch_trend_label = excluded.epoch_trend_label,
                 health_label = excluded.health_label,
                 health_message = excluded.health_message,
                 summary_json = excluded.summary_json,
@@ -204,10 +232,14 @@ def summarize_metrics(job_id: int) -> dict[str, Any]:
                 summary["min_loss"],
                 summary["min_loss_step"],
                 summary["max_loss"],
+                summary["moving_avg_final_loss"],
                 summary["loss_drop_rate"],
                 summary["loss_volatility"],
                 summary["spike_count"],
                 summary["late_stage_slope"],
+                summary["raw_loss_label"],
+                summary["smoothed_loss_label"],
+                summary["epoch_trend_label"],
                 summary["health_label"],
                 summary["health_message"],
                 json.dumps(summary, ensure_ascii=False),
@@ -224,19 +256,155 @@ def summarize_metrics(job_id: int) -> dict[str, Any]:
 
 def judge_health(
     losses: list[float],
+    smoothed: list[float],
     spike_count: int,
     late_stage_slope: float | None,
     loss_drop_rate: float | None,
+    raw_label: str,
+    smoothed_label: str,
+    epoch_label: str,
 ) -> tuple[str, str]:
     if len(losses) < 2:
         return "UNKNOWN", "Metric count is too small to judge loss health."
-    if late_stage_slope is not None and late_stage_slope > max(0.01, abs(losses[-1]) * 0.1):
-        return "DANGER", "Loss rises sharply in the late stage."
-    if loss_drop_rate is not None and loss_drop_rate <= 0:
-        return "WARNING", "Loss did not decrease from the first measured point."
+    parts = [f"raw={raw_label}", f"smoothed={smoothed_label}", f"epoch={epoch_label}"]
+    if epoch_label == "DANGER":
+        return "DANGER", "Epoch average loss worsens late in training. " + "; ".join(parts)
+    if smoothed_label == "DANGER":
+        return "DANGER", "Smoothed loss rises sharply in the late stage. " + "; ".join(parts)
+    if raw_label == "WARNING" and smoothed_label == "OK" and epoch_label in {"OK", "UNKNOWN"}:
+        return "WARNING", "Raw loss has spikes, but smoothed trend is acceptable. " + "; ".join(parts)
+    if smoothed_label == "WARNING" or epoch_label == "WARNING" or raw_label == "WARNING":
+        return "WARNING", "Loss health has warnings; inspect smoothed loss and epoch summaries. " + "; ".join(parts)
+    return "OK", "Smoothed loss and epoch trend are acceptable. " + "; ".join(parts)
+
+
+def moving_average(values: list[float], window: int) -> list[float]:
+    if not values:
+        return []
+    window = max(1, min(window, len(values)))
+    result = []
+    for index in range(len(values)):
+        start = max(0, index - window + 1)
+        result.append(sum(values[start:index + 1]) / (index - start + 1))
+    return result
+
+
+def judge_raw_loss(losses: list[float], spike_count: int, loss_drop_rate: float | None) -> str:
+    if len(losses) < 2:
+        return "UNKNOWN"
     if spike_count >= max(2, len(losses) // 3):
-        return "WARNING", "Loss has repeated spikes."
-    return "OK", "Loss decreases without repeated large spikes."
+        return "WARNING"
+    if loss_drop_rate is not None and loss_drop_rate < -0.25:
+        return "WARNING"
+    return "OK"
+
+
+def judge_smoothed_loss(smoothed: list[float]) -> str:
+    if len(smoothed) < 3:
+        return "UNKNOWN"
+    tail = max(2, len(smoothed) // 3)
+    start = smoothed[-tail]
+    final = smoothed[-1]
+    if start and final > start * 1.25:
+        return "DANGER"
+    if start and final > start * 1.10:
+        return "WARNING"
+    return "OK"
+
+
+def judge_epoch_trend(job_id: int) -> str:
+    rows = fetch_all("SELECT * FROM training_epoch_summaries WHERE job_id = ? ORDER BY epoch", (job_id,))
+    if len(rows) < 2:
+        return "UNKNOWN"
+    avg_losses = [float(row["avg_loss"]) for row in rows if row["avg_loss"] is not None]
+    if len(avg_losses) < 2:
+        return "UNKNOWN"
+    min_index = min(range(len(avg_losses)), key=lambda index: avg_losses[index])
+    final = avg_losses[-1]
+    minimum = avg_losses[min_index]
+    if min_index < len(avg_losses) - 1 and minimum and final > minimum * 1.35:
+        return "DANGER"
+    if min_index < len(avg_losses) - 1 and minimum and final > minimum * 1.15:
+        return "WARNING"
+    return "OK"
+
+
+def summarize_epochs(job_id: int) -> list[dict[str, Any]]:
+    rows = fetch_all(
+        "SELECT * FROM training_metrics WHERE job_id = ? AND loss IS NOT NULL ORDER BY step",
+        (job_id,),
+    )
+    if not rows:
+        with connect() as conn:
+            conn.execute("DELETE FROM training_epoch_summaries WHERE job_id = ?", (job_id,))
+        return []
+    job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
+    params = json.loads(job["params_json"]) if job else {}
+    epoch_count = int(params.get("max_train_epochs") or 1)
+    max_step = max(int(row["step"]) for row in rows if row["step"] is not None)
+    steps_per_epoch = max(1, math.ceil(max_step / max(1, epoch_count)))
+    losses_by_epoch: dict[int, list[tuple[int, float]]] = {epoch: [] for epoch in range(1, epoch_count + 1)}
+    for row in rows:
+        step = int(row["step"])
+        epoch = int(row["epoch"]) if row["epoch"] else min(epoch_count, max(1, math.ceil(step / steps_per_epoch)))
+        losses_by_epoch.setdefault(epoch, []).append((step, float(row["loss"])))
+    now = utc_now()
+    summaries = []
+    for epoch in sorted(losses_by_epoch):
+        items = losses_by_epoch[epoch]
+        if not items:
+            continue
+        steps = [step for step, _ in items]
+        losses = [loss for _, loss in items]
+        smoothed = moving_average(losses, 10)
+        deltas = [losses[index] - losses[index - 1] for index in range(1, len(losses))]
+        spike_count = sum(1 for index in range(1, len(losses)) if losses[index] > losses[index - 1] * 1.5)
+        summaries.append(
+            {
+                "job_id": job_id,
+                "epoch": epoch,
+                "step_start": min(steps),
+                "step_end": max(steps),
+                "metric_count": len(items),
+                "avg_loss": sum(losses) / len(losses),
+                "min_loss": min(losses),
+                "max_loss": max(losses),
+                "final_loss": losses[-1],
+                "moving_avg_final_loss": smoothed[-1] if smoothed else losses[-1],
+                "spike_count": spike_count,
+            }
+        )
+    with connect() as conn:
+        conn.execute("DELETE FROM training_epoch_summaries WHERE job_id = ?", (job_id,))
+        conn.executemany(
+            """
+            INSERT INTO training_epoch_summaries(
+                job_id, epoch, step_start, step_end, metric_count, avg_loss,
+                min_loss, max_loss, final_loss, moving_avg_final_loss,
+                spike_count, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    item["job_id"],
+                    item["epoch"],
+                    item["step_start"],
+                    item["step_end"],
+                    item["metric_count"],
+                    item["avg_loss"],
+                    item["min_loss"],
+                    item["max_loss"],
+                    item["final_loss"],
+                    item["moving_avg_final_loss"],
+                    item["spike_count"],
+                    now,
+                    now,
+                )
+                for item in summaries
+            ],
+        )
+    return summaries
 
 
 def update_step_consistency(job_id: int) -> dict[str, Any]:

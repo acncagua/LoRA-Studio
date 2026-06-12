@@ -122,6 +122,20 @@
 </section>
 
 <section>
+  <h2>Epoch Loss Comparison</h2>
+  <table>
+    <thead><tr><th>Epoch</th><th>Job #{{ left.job.id }} avg_loss</th><th>Job #{{ right.job.id }} avg_loss</th><th>Job #{{ left.job.id }} MA final</th><th>Job #{{ right.job.id }} MA final</th><th>Job #{{ left.job.id }} samples</th><th>Job #{{ right.job.id }} samples</th></tr></thead>
+    <tbody>
+      {% for row in comparison.epoch_rows %}
+      <tr><td>{{ row.epoch }}</td><td>{{ row.left_avg_loss }}</td><td>{{ row.right_avg_loss }}</td><td>{{ row.left_ma_final }}</td><td>{{ row.right_ma_final }}</td><td>{{ row.left_samples }}</td><td>{{ row.right_samples }}</td></tr>
+      {% else %}
+      <tr><td colspan="7" class="muted">No epoch summaries yet. Reimport both jobs to rebuild summaries.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section>
   <h2>Samples By Prompt</h2>
   {% for group in comparison.sample_groups %}
   <h3>{{ group.title }}</h3>

@@ -159,10 +159,17 @@ Integration Smokeのようにstep数が極端に少ないジョブでは、loss 
 3. `SDXL 2D Face - Pilot Generalize 3 Epoch`
    Standard寄りのPilotより弱めの短時間確認用です。同じデータセットとbase modelで `Pilot 3 Epoch` と比較し、固定化を避けた設定のsample差、loss推移、採用候補を確認します。
 
-4. `SDXL 2D Face - AdamW8bit Standard`
-   Pilotで評価導線とおおまかな挙動を確認してから、本学習候補として使います。
+4. `SDXL 2D Face - Standard 6 Epoch`
+   Dataset整備後の本番寄り短時間テストです。50枚前後のDatasetでは、おおよそ `50 images * repeats 2 * epochs 6 / batch 2 = 300 steps` を走らせ、epoch 4以降の過学習傾向、sample変化、採用候補epochを確認します。保存時メタデータ計算のメモリ負荷を避けるため `no_metadata` を使います。
+
+5. `SDXL 2D Face - AdamW8bit Standard`
+   PilotとStandard 6 Epochで評価導線とおおまかな挙動を確認してから、本学習候補として使います。
 
 `expected_total_steps` は設定とデータセットから計算した概算、`actual_max_step` はTensorBoardまたは `train.log` から読めた実stepです。差が大きい場合は、dataset_config、batch size、repeat、epoch、`max_train_steps` の指定を確認してください。
+
+lossはraw値だけでなく、10点moving averageとepoch summaryを一緒に見ます。raw lossはsample生成や保存前後でspikeしやすいため、`raw=WARNING` でも `smoothed=OK`、`epoch=OK` なら、lossログとしては即不採用ではありません。`health_label` はLoRA品質評価ではなく学習ログの健全性評価です。画像評価とloss健全性は別軸なので、WARNINGでもsample画像が良ければ採用候補になり得ます。
+
+Job詳細の `Epoch Summary` では、epochごとのavg/min/max/final loss、moving average final、spike count、sample count、出力LoRAを確認できます。Compare画面ではJob同士のepoch別avg lossとmoving average finalも比較できます。Dataset versionが同じJob同士を比較すると、caption条件差を避けやすくなります。
 
 ## Job比較
 
@@ -186,9 +193,10 @@ DashboardのRecent Jobsで2件にチェックを入れて `Compare Selected` を
 8. 再度Rescanし、Trigger ConsistencyとDataset versionを確認する。
 9. `Integration Smoke - SDXL` で結合確認をする。
 10. `Pilot 3 Epoch` と必要なら `Pilot Generalize 3 Epoch` を実行する。
-11. Compare画面でDataset version差分、loss health、step整合性、epoch別sample、rating/memo、selected LoRAを比較する。
-12. 良さそうなJobをCloneし、Quick VariantでLRやdimを小さく変えて再確認する。
-13. Standard本学習または長めの実用設定へ進む。
+11. `Standard 6 Epoch` で本番寄り短時間テストを行う。
+12. Compare画面でDataset version差分、raw/smoothed/epoch loss、step整合性、epoch別sample、rating/memo、selected LoRAを比較する。
+13. 良さそうなJobをCloneし、Quick VariantでLRやdimを小さく変えて再確認する。
+14. Standard本学習または長めの実用設定へ進む。
 
 ## 既知の制限
 
