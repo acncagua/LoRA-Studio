@@ -58,21 +58,24 @@ button, .button { border: 0; border-radius: 6px; background: var(--accent); colo
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(240px, 1fr)); gap: 14px; }
 .form-grid.wide { max-width: 980px; }
 label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; }
-input, select, textarea { border: 1px solid var(--line); border-radius: 6px; padding: 9px 10px; font: inherit; color: var(--ink); background: white; }
+input, select, textarea { border: 1px solid var(--line); border-radius: 6px; padding: 9px 10px; font: inherit; color: var(--ink); background: white; min-width: 0; max-width: 100%; }
 textarea { min-height: 84px; }
 .warning { color: var(--accent-2); }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
 .actions form { padding: 0; border: 0; background: transparent; }
 .danger { background: var(--accent-2); }
 .sample-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; }
-.sample-grid figure { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+.sample-grid figure { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px; min-width: 0; overflow: hidden; }
 .sample-grid img { width: 100%; height: auto; display: block; border-radius: 6px; }
 .sample-grid figcaption { color: var(--muted); font-size: 12px; margin-top: 8px; word-break: break-word; }
-.sample-grid.compare { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); align-items: start; }
+.sample-grid.compare { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); align-items: start; }
 .review-form { display: grid; gap: 8px; margin-top: 10px; }
-.review-form textarea { min-height: 58px; }
+.review-form label { min-width: 0; }
+.review-form textarea { min-height: 58px; width: 100%; resize: vertical; }
+.review-form button { width: 100%; }
 .inline-form { display: grid; gap: 8px; margin-top: 10px; }
-.rating-grid { display: grid; grid-template-columns: repeat(5, minmax(68px, 1fr)); gap: 6px; }
+.rating-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.rating-grid label { min-width: 0; }
 .rating-grid input { width: 100%; min-width: 0; }
 .label { display: inline-block; min-width: 76px; text-align: center; padding: 3px 7px; border-radius: 6px; font-size: 12px; font-weight: 700; background: #dce4df; color: var(--ink); }
 .label.ok { background: #cfe9dd; color: #18543e; }
