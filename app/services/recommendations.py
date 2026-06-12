@@ -63,7 +63,25 @@ def build_context(job_id: int) -> dict[str, Any]:
     summary = fetch_one("SELECT * FROM training_metric_summaries WHERE job_id = ?", (job_id,))
     epochs = fetch_all("SELECT * FROM training_epoch_summaries WHERE job_id = ? ORDER BY epoch", (job_id,))
     samples = fetch_all("SELECT * FROM sample_images WHERE job_id = ?", (job_id,))
-    weight_reviews = fetch_all("SELECT * FROM validation_weight_reviews WHERE job_id = ? ORDER BY lora_weight, id", (job_id,))
+    weight_reviews = fetch_all(
+        """
+        SELECT w.*, p.validation_level
+        FROM validation_weight_reviews w
+        LEFT JOIN validation_presets p ON p.id = w.validation_preset_id
+        WHERE w.job_id = ?
+        ORDER BY
+            CASE COALESCE(p.validation_level, '')
+                WHEN 'standard' THEN 1
+                WHEN 'quick' THEN 2
+                WHEN 'extended' THEN 3
+                ELSE 4
+            END,
+            w.hires_enabled,
+            w.lora_weight,
+            w.id
+        """,
+        (job_id,),
+    )
     dataset_analysis = fetch_one("SELECT * FROM dataset_analysis WHERE dataset_id = ?", (job["dataset_id"],))
     params = json.loads(job["params_json"])
     return {
@@ -91,6 +109,7 @@ def build_recommendations(context: dict[str, Any]) -> list[dict[str, Any]]:
     strong_weight = profile["strong_weight"] if profile else None
     validation_memo = profile["validation_memo"] if profile else ""
     weight_rubric = weight_review_rubric_summary(context["weight_reviews"])
+    validation_scope = validation_condition_scope(context["weight_reviews"])
     epoch_label = summary["epoch_trend_label"] if summary else "UNKNOWN"
     health_label = summary["health_label"] if summary else "UNKNOWN"
     visual_good = selected_epoch_has_good_rating(context, selected_epoch)
@@ -125,6 +144,7 @@ def build_recommendations(context: dict[str, Any]) -> list[dict[str, Any]]:
                             f"推奨weightは {recommended_min:g}〜{recommended_max:g} です。",
                             f"Dataset trigger consistencyは {dataset_label or 'UNKNOWN'} です。",
                             f"Epoch trendは {epoch_label} です。",
+                            validation_scope["note"],
                         ]
                     ),
                     {},
@@ -304,6 +324,7 @@ def contains_strong_warning(text: str | None) -> bool:
 
 
 def weight_review_rubric_summary(rows: list[Any]) -> dict[str, bool]:
+    rows = preferred_weight_reviews(rows)
     strong_labels = {"too_strong", "broken", "strong_but_usable"}
     weak_labels = {"too_weak", "weak_but_usable"}
     strong_tags = {"LoRA効果強すぎ", "画風過多", "背景汚染", "構図固定", "衣装固定", "表情固定"}
@@ -332,6 +353,27 @@ def weight_review_rubric_summary(rows: list[Any]) -> dict[str, bool]:
         if strength in weak_labels or any(tag in weak_tags for tag in tags):
             result["weak_warning"] = True
     return result
+
+
+def preferred_weight_reviews(rows: list[Any]) -> list[Any]:
+    non_hires = [row for row in rows if "hires_enabled" not in row.keys() or not row["hires_enabled"]]
+    standard_or_quick = [
+        row for row in non_hires
+        if "validation_level" not in row.keys() or row["validation_level"] in {"standard", "quick", None, ""}
+    ]
+    return standard_or_quick or non_hires or rows
+
+
+def validation_condition_scope(rows: list[Any]) -> dict[str, Any]:
+    if not rows:
+        return {"mixed": False, "note": "Validation reviews are not available."}
+    levels = {row["validation_level"] for row in rows if "validation_level" in row.keys() and row["validation_level"]}
+    hires_values = {int(row["hires_enabled"] or 0) for row in rows if "hires_enabled" in row.keys()}
+    mixed = len(levels) > 1 or len(hires_values) > 1
+    note = "Validation basis: non-Hires Standard/Quick reviews are preferred."
+    if mixed:
+        note += " Validation条件が混在しているため注意してください。"
+    return {"mixed": mixed, "note": note}
 
 
 def parse_tags(value: str | None) -> list[str]:

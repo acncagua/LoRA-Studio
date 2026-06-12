@@ -19,6 +19,17 @@ from app.services.exports import export_selected_lora, write_compare_contact_she
 from app.services.output_collector import collect_job_results
 from app.services.recommendations import create_draft_job_from_recommendation, list_recommendations, regenerate_recommendations, set_recommendation_status, write_recommendation_report
 from app.services.training_runner import read_log_tail, start_job, stop_job
+from app.services.validation_runs import (
+    copy_managed_validation_image,
+    create_validation_run,
+    expand_preset_conditions,
+    load_validation_run_bundle,
+    make_condition_hash,
+    update_validation_run_counts,
+    validation_presets,
+    validation_run_dir,
+    write_validation_prompt_pack,
+)
 
 app = FastAPI(title=settings.APP_NAME)
 app.mount("/static", StaticFiles(directory=settings.ROOT_DIR / "app" / "static"), name="static")
@@ -649,6 +660,7 @@ def job_detail(request: Request, job_id: int, exported: str | None = None) -> HT
     validation_results = fetch_all("SELECT * FROM validation_results WHERE job_id = ? ORDER BY created_at DESC, id DESC", (job_id,))
     validation_images = fetch_all("SELECT * FROM validation_images WHERE job_id = ? ORDER BY created_at DESC, id DESC", (job_id,))
     validation_weight_reviews = fetch_all("SELECT * FROM validation_weight_reviews WHERE job_id = ? ORDER BY lora_weight, id", (job_id,))
+    validation_runs = fetch_all("SELECT * FROM validation_runs WHERE job_id = ? ORDER BY id DESC", (job_id,))
     validation_summary = build_validation_summary(validation_results)
     selected_lora_profile = ensure_selected_lora_profile(job_id) if selected_output else None
     recommendations = list_recommendations(job_id)
@@ -675,6 +687,8 @@ def job_detail(request: Request, job_id: int, exported: str | None = None) -> HT
         validation_results=validation_results,
         validation_images=validation_images,
         validation_weight_reviews=validation_weight_reviews,
+        validation_runs=validation_runs,
+        validation_presets=validation_presets(),
         validation_summary=validation_summary,
         selected_lora_profile=selected_lora_profile,
         recommendations=recommendations,
@@ -1158,6 +1172,188 @@ def validation_image_file(image_id: int) -> FileResponse:
     return FileResponse(path)
 
 
+@app.get("/validation-presets", response_class=HTMLResponse)
+def validation_preset_list(request: Request) -> HTMLResponse:
+    return render(request, "validation_presets.html", presets=validation_presets())
+
+
+@app.post("/jobs/{job_id}/validation-runs")
+def job_create_validation_run(
+    job_id: int,
+    validation_preset_id: str = Form(...),
+    base_model: str = Form(""),
+    trigger_word: str = Form(""),
+    memo: str = Form(""),
+) -> RedirectResponse:
+    try:
+        run_id = create_validation_run(job_id, validation_preset_id, base_model, trigger_word, memo)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
+
+
+@app.get("/validation-runs/{run_id}", response_class=HTMLResponse)
+def validation_run_detail(request: Request, run_id: int) -> HTMLResponse:
+    try:
+        bundle = load_validation_run_bundle(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return render(request, "validation_run_detail.html", **bundle, default_project_path=str(settings.ROOT_DIR))
+
+
+@app.post("/validation-runs/{run_id}/export")
+def validation_run_export(run_id: int) -> RedirectResponse:
+    try:
+        write_validation_prompt_pack(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
+
+
+@app.post("/validation-runs/{run_id}/images/individual")
+def validation_run_add_individual_image(
+    run_id: int,
+    image_path: str = Form(...),
+    prompt_key: str = Form(...),
+    seed: int = Form(...),
+    lora_weight: float = Form(...),
+    hires_enabled: str = Form(""),
+    memo: str = Form(""),
+) -> RedirectResponse:
+    register_validation_run_image(
+        run_id=run_id,
+        source_path=image_path,
+        image_role="individual",
+        prompt_key=prompt_key,
+        seed=seed,
+        lora_weight=lora_weight,
+        hires_enabled=bool(hires_enabled),
+        memo=memo,
+    )
+    return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
+
+
+@app.post("/validation-runs/{run_id}/images/grid")
+def validation_run_add_grid_image(
+    run_id: int,
+    image_path: str = Form(...),
+    prompt_key: str = Form(""),
+    hires_enabled: str = Form(""),
+    grid_axis_x: str = Form("weight"),
+    grid_axis_y: str = Form("seed"),
+    memo: str = Form(""),
+) -> RedirectResponse:
+    grid_memo = "\n".join(part for part in [memo.strip(), f"grid_axis_x={grid_axis_x}", f"grid_axis_y={grid_axis_y}"] if part)
+    register_validation_run_image(
+        run_id=run_id,
+        source_path=image_path,
+        image_role="grid",
+        prompt_key=prompt_key,
+        seed=None,
+        lora_weight=None,
+        hires_enabled=bool(hires_enabled),
+        memo=grid_memo,
+    )
+    return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
+
+
+def register_validation_run_image(
+    run_id: int,
+    source_path: str,
+    image_role: str,
+    prompt_key: str,
+    seed: int | None,
+    lora_weight: float | None,
+    hires_enabled: bool,
+    memo: str,
+) -> None:
+    bundle = load_validation_run_bundle(run_id)
+    run = bundle["run"]
+    preset = bundle["preset"]
+    if preset is None:
+        raise HTTPException(status_code=400, detail="Validation preset is required for run image registration.")
+    try:
+        managed_path = copy_managed_validation_image(run_id, source_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    condition = None
+    if image_role == "individual":
+        for row in bundle["conditions"]:
+            if (
+                row["prompt_key"] == prompt_key
+                and int(row["seed"]) == int(seed or 0)
+                and float(row["lora_weight"]) == float(lora_weight or 0)
+                and bool(row["hires_enabled"]) == hires_enabled
+            ):
+                condition = row
+                break
+    if condition is None:
+        condition = {
+            "validation_preset_id": preset["id"],
+            "prompt_key": prompt_key.strip() or None,
+            "seed": seed,
+            "lora_weight": lora_weight,
+            "width": preset["width"],
+            "height": preset["height"],
+            "hires_enabled": hires_enabled,
+            "hires_scale": preset["hires_scale"],
+            "hires_denoising_strength": preset["hires_denoising_strength"],
+            "sampler": preset["sampler"],
+            "steps": preset["steps"],
+            "cfg_scale": preset["cfg_scale"],
+            "negative_prompt": preset["negative_prompt"],
+            "base_model": run["base_model"] or "",
+            "prompt": "",
+        }
+        if image_role == "individual":
+            condition["condition_hash"] = make_condition_hash(condition)
+        else:
+            condition["condition_hash"] = None
+    now = settings_now()
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO validation_images(
+                job_id, selected_output_id, validation_run_id, validation_preset_id,
+                prompt_key, seed, lora_weight, image_path, validation_type,
+                prompt, negative_prompt, base_model, sampler, steps, cfg_scale,
+                width, height, hires_enabled, hires_scale, lora_weights, seeds,
+                grid_image_flag, image_role, condition_hash, memo, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'external_run', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run["job_id"],
+                run["selected_output_id"],
+                run_id,
+                preset["id"],
+                condition.get("prompt_key"),
+                condition.get("seed"),
+                condition.get("lora_weight"),
+                managed_path,
+                condition.get("prompt") or "",
+                condition.get("negative_prompt") or preset["negative_prompt"] or "",
+                run["base_model"] or "",
+                condition.get("sampler") or preset["sampler"],
+                condition.get("steps") or preset["steps"],
+                condition.get("cfg_scale") or preset["cfg_scale"],
+                condition.get("width") or preset["width"],
+                condition.get("height") or preset["height"],
+                1 if hires_enabled else 0,
+                condition.get("hires_scale") or preset["hires_scale"],
+                "" if lora_weight is None else str(lora_weight),
+                "" if seed is None else str(seed),
+                1 if image_role == "grid" else 0,
+                image_role,
+                condition.get("condition_hash"),
+                memo.strip(),
+                now,
+                now,
+            ),
+        )
+    update_validation_run_counts(run_id)
+
+
 @app.get("/lora-library", response_class=HTMLResponse)
 def lora_library(request: Request) -> HTMLResponse:
     rows = fetch_all(
@@ -1187,8 +1383,21 @@ def lora_profile_edit(request: Request, profile_id: int) -> HTMLResponse:
         raise HTTPException(status_code=404, detail="LoRA profile not found")
     weight_reviews = fetch_all("SELECT * FROM validation_weight_reviews WHERE job_id = ? ORDER BY lora_weight, id", (profile["job_id"],))
     validation_images = fetch_all("SELECT * FROM validation_images WHERE job_id = ? ORDER BY created_at DESC, id DESC", (profile["job_id"],))
+    validation_runs = fetch_all("SELECT * FROM validation_runs WHERE selected_lora_profile_id = ? OR job_id = ? ORDER BY id DESC", (profile_id, profile["job_id"]))
+    reference_sets_rows = fetch_all("SELECT * FROM reference_sets ORDER BY updated_at DESC, id DESC")
     recommendations = list_recommendations(int(profile["job_id"]))
-    return render(request, "lora_profile_edit.html", profile=profile, weight_reviews=weight_reviews, validation_images=validation_images, recommendations=recommendations, rubric_options=rubric_options())
+    return render(
+        request,
+        "lora_profile_edit.html",
+        profile=profile,
+        weight_reviews=weight_reviews,
+        validation_images=validation_images,
+        validation_runs=validation_runs,
+        validation_presets=validation_presets(),
+        reference_sets=reference_sets_rows,
+        recommendations=recommendations,
+        rubric_options=rubric_options(),
+    )
 
 
 @app.post("/lora-library/{profile_id}/edit")
@@ -1201,6 +1410,9 @@ def lora_profile_update(
     recommended_weight_max: str = Form(""),
     light_weight: str = Form(""),
     strong_weight: str = Form(""),
+    default_validation_preset_id: str = Form(""),
+    reference_set_id: str = Form(""),
+    validation_policy_memo: str = Form(""),
     validation_memo: str = Form(""),
     library_memo: str = Form(""),
 ) -> RedirectResponse:
@@ -1212,6 +1424,8 @@ def lora_profile_update(
             SET profile_name = ?, trigger_word = ?, base_model = ?,
                 recommended_weight_min = ?, recommended_weight_max = ?,
                 light_weight = ?, strong_weight = ?,
+                default_validation_preset_id = ?, reference_set_id = ?,
+                validation_policy_memo = ?,
                 validation_memo = ?, library_memo = ?, updated_at = ?
             WHERE id = ?
             """,
@@ -1223,6 +1437,9 @@ def lora_profile_update(
                 optional_float(recommended_weight_max),
                 optional_float(light_weight),
                 optional_float(strong_weight),
+                default_validation_preset_id.strip() or None,
+                int(reference_set_id) if reference_set_id else None,
+                validation_policy_memo.strip(),
                 validation_memo.strip(),
                 library_memo.strip(),
                 now,
@@ -1232,6 +1449,131 @@ def lora_profile_update(
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="LoRA profile not found")
     return RedirectResponse(f"/lora-library/{profile_id}/edit", status_code=303)
+
+
+@app.post("/lora-library/{profile_id}/validation-runs")
+def profile_create_validation_run(
+    profile_id: int,
+    validation_preset_id: str = Form(...),
+    base_model: str = Form(""),
+    trigger_word: str = Form(""),
+    memo: str = Form(""),
+) -> RedirectResponse:
+    profile = fetch_one("SELECT * FROM selected_lora_profiles WHERE id = ?", (profile_id,))
+    if profile is None:
+        raise HTTPException(status_code=404, detail="LoRA profile not found")
+    try:
+        run_id = create_validation_run(int(profile["job_id"]), validation_preset_id, base_model, trigger_word, memo, profile_id=profile_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
+
+
+@app.get("/reference-sets", response_class=HTMLResponse)
+def reference_sets(request: Request) -> HTMLResponse:
+    rows = fetch_all(
+        """
+        SELECT r.*, d.name AS dataset_name
+        FROM reference_sets r
+        LEFT JOIN datasets d ON d.id = r.dataset_id
+        ORDER BY r.updated_at DESC, r.id DESC
+        """
+    )
+    datasets = fetch_all("SELECT id, name, trigger_word FROM datasets ORDER BY id DESC")
+    return render(request, "reference_sets.html", reference_sets=rows, datasets=datasets)
+
+
+@app.post("/reference-sets")
+def reference_set_create(
+    name: str = Form(...),
+    dataset_id: str = Form(""),
+    trigger_word: str = Form(""),
+    description: str = Form(""),
+    memo: str = Form(""),
+) -> RedirectResponse:
+    dataset_version_id = None
+    if dataset_id:
+        version = fetch_one("SELECT id FROM dataset_versions WHERE dataset_id = ? ORDER BY version_no DESC LIMIT 1", (int(dataset_id),))
+        dataset_version_id = version["id"] if version else None
+    now = settings_now()
+    with connect() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO reference_sets(
+                name, dataset_id, dataset_version_id, trigger_word,
+                description, created_at, updated_at, memo
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                name.strip(),
+                int(dataset_id) if dataset_id else None,
+                dataset_version_id,
+                trigger_word.strip(),
+                description.strip(),
+                now,
+                now,
+                memo.strip(),
+            ),
+        )
+        set_id = int(cur.lastrowid)
+    return RedirectResponse(f"/reference-sets/{set_id}", status_code=303)
+
+
+@app.get("/reference-sets/{set_id}", response_class=HTMLResponse)
+def reference_set_detail(request: Request, set_id: int) -> HTMLResponse:
+    row = fetch_one(
+        """
+        SELECT r.*, d.name AS dataset_name
+        FROM reference_sets r
+        LEFT JOIN datasets d ON d.id = r.dataset_id
+        WHERE r.id = ?
+        """,
+        (set_id,),
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Reference set not found")
+    images = fetch_all("SELECT * FROM reference_images WHERE reference_set_id = ? ORDER BY sort_order, id", (set_id,))
+    return render(request, "reference_set_detail.html", reference_set=row, images=images, default_project_path=str(settings.ROOT_DIR))
+
+
+@app.post("/reference-sets/{set_id}/images")
+def reference_image_add(
+    set_id: int,
+    image_path: str = Form(...),
+    image_role: str = Form("other"),
+    caption: str = Form(""),
+    sort_order: int = Form(0),
+) -> RedirectResponse:
+    row = fetch_one("SELECT * FROM reference_sets WHERE id = ?", (set_id,))
+    if row is None:
+        raise HTTPException(status_code=404, detail="Reference set not found")
+    source = Path(image_path)
+    if not source.exists() or not source.is_file():
+        raise HTTPException(status_code=400, detail="Reference image file not found")
+    valid_roles = {"face", "upper_body", "full_body", "expression", "style", "other"}
+    now = settings_now()
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO reference_images(reference_set_id, image_path, image_role, caption, sort_order, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (set_id, str(source), image_role if image_role in valid_roles else "other", caption.strip(), sort_order, now),
+        )
+        conn.execute("UPDATE reference_sets SET updated_at = ? WHERE id = ?", (now, set_id))
+    return RedirectResponse(f"/reference-sets/{set_id}", status_code=303)
+
+
+@app.get("/reference-images/{image_id}")
+def reference_image_file(image_id: int) -> FileResponse:
+    image = fetch_one("SELECT * FROM reference_images WHERE id = ?", (image_id,))
+    if image is None:
+        raise HTTPException(status_code=404, detail="Reference image not found")
+    path = Path(image["image_path"]).resolve()
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Reference image file not found")
+    return FileResponse(path)
 
 
 @app.get("/jobs/{job_id}/samples/{image_id}")
@@ -1461,6 +1803,14 @@ def load_compare_job(job_id: int) -> dict[str, Any]:
     samples = fetch_all("SELECT * FROM sample_images WHERE job_id = ? ORDER BY epoch, step, id", (job_id,))
     sample_prompts = fetch_all("SELECT * FROM sample_prompts WHERE job_id = ? ORDER BY sort_order, id", (job_id,))
     selected_output = fetch_one("SELECT * FROM training_outputs WHERE job_id = ? AND selected = 1", (job_id,))
+    validation_image = fetch_one(
+        """
+        SELECT * FROM validation_images
+        WHERE job_id = ? AND image_role = 'individual'
+        ORDER BY validation_run_id DESC, updated_at DESC, id DESC LIMIT 1
+        """,
+        (job_id,),
+    )
     params = json.loads(job["params_json"])
     decorated_epochs = decorate_epoch_summaries(epoch_summaries, outputs, samples)
     return {
@@ -1476,6 +1826,7 @@ def load_compare_job(job_id: int) -> dict[str, Any]:
         "samples": samples,
         "sample_prompts": sample_prompts,
         "selected_output": selected_output,
+        "validation_image": validation_image,
         "params": params,
         "loss_chart": build_loss_chart(metrics),
         "health_details": health_details(summary, len(metrics)),
@@ -1651,9 +2002,10 @@ def ensure_selected_lora_profile(job_id: int) -> Any:
                 job_id, selected_output_id, profile_name, trigger_word, selected_epoch,
                 selected_model_path, exported_model_path, base_model,
                 recommended_weight_min, recommended_weight_max, light_weight, strong_weight,
-                validation_memo, library_memo, created_at, updated_at
+                validation_memo, library_memo, default_validation_preset_id,
+                validation_policy_memo, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, '', '', ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, '', '', ?, ?, ?, ?)
             """,
             (
                 job_id,
@@ -1664,6 +2016,8 @@ def ensure_selected_lora_profile(job_id: int) -> Any:
                 output["file_path"],
                 exported_model_path(job_id),
                 base_model_label(job["base_model_path"]),
+                "standard_validation_v1",
+                "通常比較はHiresなしのStandard Validationを基準にする。HiresありはExtended Validationで最終見栄え確認として扱う。",
                 now,
                 now,
             ),
@@ -1827,6 +2181,26 @@ def compare_warnings(left: dict[str, Any], right: dict[str, Any]) -> list[str]:
         warnings.append("WARNING: These jobs were trained with different or unavailable dataset versions.")
     if left["job"]["trigger_word_at_creation"] != right["job"]["trigger_word_at_creation"]:
         warnings.append("WARNING: These jobs used different trigger_word values at creation.")
+    validation_keys = [
+        ("validation_preset_id", "validation presets"),
+        ("base_model", "base models"),
+        ("width", "image widths"),
+        ("height", "image heights"),
+        ("hires_enabled", "Hires settings"),
+        ("seed", "seeds"),
+        ("prompt_key", "prompt keys"),
+        ("sampler", "samplers"),
+        ("steps", "step counts"),
+        ("cfg_scale", "CFG scales"),
+    ]
+    left_image = left.get("validation_image")
+    right_image = right.get("validation_image")
+    if left_image and right_image:
+        for key, label in validation_keys:
+            if left_image[key] != right_image[key]:
+                warnings.append(f"WARNING: Latest validation images use different {label}.")
+        if left_image["hires_enabled"] != right_image["hires_enabled"]:
+            warnings.append("WARNING: Hires images should not be directly compared with non-Hires baseline images.")
     return warnings
 
 

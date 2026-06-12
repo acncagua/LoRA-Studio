@@ -1,0 +1,53 @@
+{% extends "base.html" %}{% block content %}
+<header class="page-head">
+  <h1>Reference Set #{{ reference_set.id }} {{ reference_set.name }}</h1>
+  <a class="button" href="/reference-sets">一覧へ戻る</a>
+</header>
+<section class="panel-grid">
+  <div>
+    <h2>基本情報</h2>
+    <dl>
+      <dt>Dataset</dt><dd>{{ reference_set.dataset_name or '-' }}</dd>
+      <dt>Dataset version</dt><dd>{{ reference_set.dataset_version_id or '-' }}</dd>
+      <dt>Trigger</dt><dd>{{ reference_set.trigger_word or '-' }}</dd>
+      <dt>説明</dt><dd>{{ reference_set.description or '-' }}</dd>
+      <dt>メモ</dt><dd>{{ reference_set.memo or '-' }}</dd>
+    </dl>
+  </div>
+  <div>
+    <h2>画像登録</h2>
+    <form method="post" action="/reference-sets/{{ reference_set.id }}/images" class="form-grid">
+      <label class="wide-field">画像パス
+        <span class="path-picker">
+          <input id="reference-image-path" name="image_path" required>
+          <button type="button" data-browse-target="#reference-image-path" data-browse-kind="image" data-browse-title="Reference画像を選択" data-browse-initial="{{ default_project_path }}">参照</button>
+        </span>
+      </label>
+      <label>Role<select name="image_role">
+        <option value="face">face</option>
+        <option value="upper_body">upper_body</option>
+        <option value="full_body">full_body</option>
+        <option value="expression">expression</option>
+        <option value="style">style</option>
+        <option value="other">other</option>
+      </select></label>
+      <label>Sort<input type="number" name="sort_order" value="0"></label>
+      <label class="wide-field">Caption<textarea name="caption"></textarea></label>
+      <button type="submit">画像を登録</button>
+    </form>
+  </div>
+</section>
+<section>
+  <h2>登録画像</h2>
+  <div class="sample-grid">
+    {% for image in images %}
+    <figure>
+      <img src="/reference-images/{{ image.id }}" alt="reference image {{ image.id }}">
+      <figcaption>#{{ image.id }} {{ image.image_role }} / sort {{ image.sort_order }}<br>{{ image.caption or '' }}</figcaption>
+    </figure>
+    {% else %}
+    <p class="muted">Reference画像はまだありません。</p>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

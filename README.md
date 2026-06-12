@@ -263,6 +263,30 @@ Job詳細の `External Validation` では、reForge / WebUIなど外部生成環
 
 `Export Contact Sheet` と `selected_lora_notes.md` にはExternal ValidationのProfile、weight評価、Validation画像情報も追記されます。外部生成環境での目視結果を、学習時のlossやsample ratingと一緒に残せます。
 
+## Validation PresetとReference Set
+
+Validation Presetは、reForge / WebUIなど外部生成環境で人間がValidation画像を作る時の標準条件です。LoRA-Studioは画像生成を自動実行せず、prompt、seed、weight、Hires条件を固定したPrompt Packを出力し、生成後の画像をValidation Runへ登録します。
+
+built-in presetは以下の3段階です。
+
+- `Quick Validation v1`: 3 prompts × 1 seed × 3 weights × Hiresなし = 9枚。採用LoRAが使えそうかを短時間で確認します。
+- `Standard Validation v1`: 3 prompts × 3 seeds × 5 weights × Hiresなし = 45枚。採用候補LoRAの標準比較です。推奨weightは原則としてこのHiresなし結果を基準にします。
+- `Extended Validation v1`: 3 prompts × 2 seeds × 2 weights × Hiresあり/なし = 24枚。採用候補の最終見栄え確認です。
+
+標準比較はHiresなしで行います。Hiresありは最終見栄え確認であり、Hiresなしの素のLoRA比較とは直接混ぜて判断しません。seedは固定で構いません。weightを毎回細かく刻みすぎると生成時間が増えるため、まずはQuick、採用候補ならStandard、最後にExtendedの順で確認します。
+
+Job詳細またはLoRA Profile編集画面の `Create Validation Run` からPresetを選ぶと、`exports/validation_runs/validation_run_xxxxxx/` に以下を出力します。
+
+- `validation_prompts.md`: WebUI / reForgeでそのまま使えるprompt一覧。
+- `validation_prompts.json`: 将来のWebUI API連携や自動処理でも使いやすい構造化条件。
+- `validation_conditions.json`: condition hash付きの全条件。
+- `validation_grid_plan.md`: weight × seedなどのGrid作成方針。
+- `validation_checklist.md`: 目視確認用チェックリスト。
+
+Validation Run詳細では、個別画像またはGrid画像を登録できます。個別画像はprompt_key、seed、weight、Hires条件から `condition_hash` を作り、同一条件比較に使います。Grid画像は資料として登録でき、初期版では自動分割しません。条件が違うValidation画像は直接比較せず、画面上の警告を確認してください。
+
+Reference Setは、人間評価時に見る参考画像の固定セットです。DatasetやLoRA Profileに紐づけて、顔、上半身、全身、表情、スタイルなどの参照画像を登録できます。現時点ではAI評価には使いませんが、将来のWebUI API / ChatGPT API評価でもValidation PresetとReference Setを使う予定です。
+
 ## Recommendation Engineと次回実験提案
 
 Job詳細の `提案を再生成` は、loss summary、epoch summary、sample rating、External Validation、推奨weight、Dataset trigger consistencyを見て、次回試すべき実験案をルールベースで作成します。提案は `experiment_recommendations` に保存され、Job詳細とLoRAライブラリのProfile編集画面で確認できます。

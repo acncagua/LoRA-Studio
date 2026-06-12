@@ -1,0 +1,102 @@
+{% extends "base.html" %}{% block content %}
+<header class="page-head">
+  <h1>Validation Run #{{ run.id }}</h1>
+  <div class="actions">
+    <a class="button" href="/jobs/{{ run.job_id }}">Jobへ戻る</a>
+    {% if run.selected_lora_profile_id %}<a class="button" href="/lora-library/{{ run.selected_lora_profile_id }}/edit">Profileへ戻る</a>{% endif %}
+    <form method="post" action="/validation-runs/{{ run.id }}/export"><button type="submit">Prompt Pack再出力</button></form>
+  </div>
+</header>
+<section class="panel-grid">
+  <div>
+    <h2>Run情報</h2>
+    <dl>
+      <dt>名前</dt><dd>{{ run.name }}</dd>
+      <dt>Preset</dt><dd>{{ preset.name if preset else 'legacy / preset unspecified' }}</dd>
+      <dt>Level</dt><dd>{{ run.validation_level or '-' }}</dd>
+      <dt>Status</dt><dd>{{ run.status }}</dd>
+      <dt>画像数</dt><dd>{{ run.actual_image_count }} / {{ run.expected_image_count }}</dd>
+      <dt>出力先</dt><dd>{{ output_dir }}</dd>
+    </dl>
+  </div>
+  <div>
+    <h2>生成条件</h2>
+    <dl>
+      <dt>Base model</dt><dd>{{ run.base_model or '-' }}</dd>
+      <dt>Trigger</dt><dd>{{ run.trigger_word or '-' }}</dd>
+      <dt>LoRA</dt><dd>{{ run.lora_filename or '-' }}</dd>
+      <dt>推奨weight</dt><dd>{{ run.recommended_weight_min if run.recommended_weight_min is not none else '-' }} - {{ run.recommended_weight_max if run.recommended_weight_max is not none else '-' }}</dd>
+      <dt>メモ</dt><dd>{{ run.memo or '-' }}</dd>
+    </dl>
+  </div>
+</section>
+
+<section class="panel-grid">
+  <div>
+    <h2>Individual画像登録</h2>
+    <form method="post" action="/validation-runs/{{ run.id }}/images/individual" class="form-grid">
+      <label class="wide-field">画像パス
+        <span class="path-picker">
+          <input id="individual-image-path" name="image_path" required>
+          <button type="button" data-browse-target="#individual-image-path" data-browse-kind="image" data-browse-title="Validation画像を選択" data-browse-initial="{{ default_project_path }}">参照</button>
+        </span>
+      </label>
+      <label>Prompt key<select name="prompt_key">{% for c in conditions|unique(attribute='prompt_key') %}<option value="{{ c.prompt_key }}">{{ c.prompt_key }}</option>{% endfor %}</select></label>
+      <label>Seed<select name="seed">{% for c in conditions|unique(attribute='seed') %}<option value="{{ c.seed }}">{{ c.seed }}</option>{% endfor %}</select></label>
+      <label>Weight<select name="lora_weight">{% for c in conditions|unique(attribute='lora_weight') %}<option value="{{ c.lora_weight }}">{{ c.lora_weight }}</option>{% endfor %}</select></label>
+      <label>Hires<select name="hires_enabled"><option value="">なし</option><option value="1">あり</option></select></label>
+      <label class="wide-field">メモ<textarea name="memo"></textarea></label>
+      <button type="submit">Individual画像を登録</button>
+    </form>
+  </div>
+  <div>
+    <h2>Grid画像登録</h2>
+    <form method="post" action="/validation-runs/{{ run.id }}/images/grid" class="form-grid">
+      <label class="wide-field">画像パス
+        <span class="path-picker">
+          <input id="grid-image-path" name="image_path" required>
+          <button type="button" data-browse-target="#grid-image-path" data-browse-kind="image" data-browse-title="Grid画像を選択" data-browse-initial="{{ default_project_path }}">参照</button>
+        </span>
+      </label>
+      <label>Prompt key<input name="prompt_key" placeholder="basic_face"></label>
+      <label>Hires<select name="hires_enabled"><option value="">なし</option><option value="1">あり</option></select></label>
+      <label>X軸<input name="grid_axis_x" value="weight"></label>
+      <label>Y軸<input name="grid_axis_y" value="seed"></label>
+      <label class="wide-field">メモ<textarea name="memo"></textarea></label>
+      <button type="submit">Grid画像を登録</button>
+    </form>
+  </div>
+</section>
+
+<section>
+  <h2>登録済み画像</h2>
+  <div class="sample-grid">
+    {% for image in images %}
+    <figure>
+      <img src="/validation-images/{{ image.id }}" alt="validation image {{ image.id }}">
+      <figcaption>
+        #{{ image.id }} {{ image.image_role }} / {{ image.prompt_key or '-' }} / seed {{ image.seed or '-' }} / weight {{ image.lora_weight if image.lora_weight is not none else '-' }} / Hires {{ 'あり' if image.hires_enabled else 'なし' }}<br>
+        {{ image.memo or '' }}
+      </figcaption>
+    </figure>
+    {% else %}
+    <p class="muted">登録済み画像はありません。</p>
+    {% endfor %}
+  </div>
+</section>
+
+<section>
+  <h2>Missing Expected Conditions</h2>
+  <p class="muted">未登録の想定条件です。Grid画像は資料として扱うため、個別条件の消化には使いません。</p>
+  <table>
+    <thead><tr><th>Prompt</th><th>Seed</th><th>Weight</th><th>Hires</th><th>Hash</th></tr></thead>
+    <tbody>
+      {% for row in missing[:100] %}
+      <tr><td>{{ row.prompt_key }}</td><td>{{ row.seed }}</td><td>{{ row.lora_weight }}</td><td>{{ row.hires_enabled }}</td><td>{{ row.condition_hash[:12] }}</td></tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">想定条件はすべて登録済みです。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

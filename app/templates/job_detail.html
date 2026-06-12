@@ -307,6 +307,45 @@
   {% endfor %}
 </section>
 <section>
+  <h2>Validation Run</h2>
+  <p class="muted">外部生成の条件をValidation Presetで固定し、WebUI / reForge用のprompt packを出力します。画像生成自体は自動実行しません。</p>
+  <div class="panel-grid">
+    <div>
+      <h3>Create Validation Run</h3>
+      <form method="post" action="/jobs/{{ job.id }}/validation-runs" class="form-grid">
+        <label>Preset<select name="validation_preset_id">
+          {% for preset in validation_presets %}
+          <option value="{{ preset.id }}" {{ 'selected' if selected_lora_profile and selected_lora_profile.default_validation_preset_id == preset.id else '' }}>{{ preset.name }} / {{ preset.expected_image_count }}枚</option>
+          {% endfor %}
+        </select></label>
+        <label>Base model<input name="base_model" value="{{ selected_lora_profile.base_model if selected_lora_profile else '' }}"></label>
+        <label>Trigger<input name="trigger_word" value="{{ selected_lora_profile.trigger_word if selected_lora_profile else job.trigger_word_at_creation or '' }}"></label>
+        <label class="wide-field">メモ<textarea name="memo"></textarea></label>
+        <button type="submit" {% if not selected_output %}disabled{% endif %}>Validation Runを作成</button>
+      </form>
+    </div>
+    <div>
+      <h3>Validation Runs</h3>
+      <table>
+        <thead><tr><th>ID</th><th>Preset</th><th>Status</th><th>画像数</th><th></th></tr></thead>
+        <tbody>
+          {% for run in validation_runs %}
+          <tr>
+            <td>#{{ run.id }}</td>
+            <td>{{ run.name }}</td>
+            <td>{{ run.status }}</td>
+            <td>{{ run.actual_image_count }} / {{ run.expected_image_count }}</td>
+            <td><a class="button" href="/validation-runs/{{ run.id }}">詳細</a></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="muted">Validation Runはまだありません。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+<section>
   <h2>External Validation</h2>
   <p class="muted">reForge / WebUIなど外部生成環境で作成した画像とweight評価を、採用LoRAに紐づけて保存します。</p>
   {% if selected_lora_profile %}

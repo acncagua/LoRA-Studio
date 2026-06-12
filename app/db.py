@@ -32,6 +32,9 @@ def init_db() -> None:
         seed_presets(conn)
         seed_sample_prompt_templates(conn)
         seed_evaluation_rubrics(conn)
+        seed_validation_presets(conn)
+        seed_job12_validation_defaults(conn)
+        seed_legacy_validation_run(conn)
         import_latest_environment(conn)
 
 
@@ -131,6 +134,14 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         conn,
         "validation_images",
         {
+            "validation_run_id": "INTEGER",
+            "validation_preset_id": "TEXT",
+            "prompt_key": "TEXT",
+            "seed": "INTEGER",
+            "lora_weight": "REAL",
+            "grid_image_flag": "INTEGER NOT NULL DEFAULT 0",
+            "image_role": "TEXT NOT NULL DEFAULT 'individual'",
+            "condition_hash": "TEXT",
             "strength_label": "TEXT",
             "overfit_level": "TEXT",
             "adoption_label": "TEXT",
@@ -142,6 +153,9 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         conn,
         "validation_weight_reviews",
         {
+            "validation_run_id": "INTEGER",
+            "validation_preset_id": "TEXT",
+            "hires_enabled": "INTEGER NOT NULL DEFAULT 0",
             "strength_label": "TEXT",
             "overfit_level": "TEXT",
             "adoption_label": "TEXT",
@@ -150,6 +164,16 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         },
     )
     conn.execute("UPDATE sample_images SET rating_overall = rating WHERE rating_overall IS NULL AND rating IS NOT NULL")
+    ensure_columns(
+        conn,
+        "selected_lora_profiles",
+        {
+            "default_validation_preset_id": "TEXT",
+            "last_validation_preset_id": "TEXT",
+            "validation_policy_memo": "TEXT",
+            "reference_set_id": "INTEGER",
+        },
+    )
     ensure_columns(
         conn,
         "dataset_analysis",
@@ -173,8 +197,16 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             ON validation_results(job_id);
         CREATE INDEX IF NOT EXISTS idx_validation_images_job
             ON validation_images(job_id);
+        CREATE INDEX IF NOT EXISTS idx_validation_images_run
+            ON validation_images(validation_run_id);
         CREATE INDEX IF NOT EXISTS idx_validation_weight_reviews_job
             ON validation_weight_reviews(job_id);
+        CREATE INDEX IF NOT EXISTS idx_validation_weight_reviews_run
+            ON validation_weight_reviews(validation_run_id);
+        CREATE INDEX IF NOT EXISTS idx_validation_runs_job
+            ON validation_runs(job_id);
+        CREATE INDEX IF NOT EXISTS idx_reference_images_set
+            ON reference_images(reference_set_id);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_selected_lora_profiles_job_output
             ON selected_lora_profiles(job_id, selected_output_id);
         CREATE INDEX IF NOT EXISTS idx_experiment_recommendations_job
@@ -336,6 +368,215 @@ def seed_evaluation_rubrics(conn: sqlite3.Connection) -> None:
             now,
         ),
     )
+
+
+def validation_prompt_rows() -> list[dict[str, Any]]:
+    return [
+        {
+            "prompt_key": "basic_face",
+            "name": "Basic Face",
+            "prompt": "{trigger_word}, 1girl, upper body, looking at viewer, simple background",
+            "seed_offset": 0,
+        },
+        {
+            "prompt_key": "full_body",
+            "name": "Full Body",
+            "prompt": "{trigger_word}, 1girl, full body, standing, outdoors",
+            "seed_offset": 0,
+        },
+        {
+            "prompt_key": "expression_pose",
+            "name": "Expression / Pose",
+            "prompt": "{trigger_word}, 1girl, smile, dynamic pose, city background",
+            "seed_offset": 0,
+        },
+    ]
+
+
+def seed_validation_presets(conn: sqlite3.Connection) -> None:
+    now = utc_now()
+    negative = "low quality, worst quality, bad anatomy, bad hands"
+    rows = [
+        {
+            "id": "quick_validation_v1",
+            "name": "Quick Validation v1",
+            "version": "1.0",
+            "description": "採用LoRAが使えそうかを短時間で確認する推奨weight帯の初期確認用。",
+            "validation_level": "quick",
+            "seeds": [111111],
+            "weights": [0.4, 0.6, 0.8],
+            "hires_modes": [False],
+            "hires_scale": None,
+            "hires_denoising_strength": None,
+            "hires_upscaler": "",
+            "memo": "3 prompts x 1 seed x 3 weights x no hires = 9 images.",
+        },
+        {
+            "id": "standard_validation_v1",
+            "name": "Standard Validation v1",
+            "version": "1.0",
+            "description": "採用候補LoRAの正式なweight比較。LoRA Libraryに残す標準Validation。",
+            "validation_level": "standard",
+            "seeds": [111111, 222222, 333333],
+            "weights": [0, 0.4, 0.6, 0.8, 1.0],
+            "hires_modes": [False],
+            "hires_scale": None,
+            "hires_denoising_strength": None,
+            "hires_upscaler": "",
+            "memo": "weight 0はベースモデルとの差分確認用。標準比較はHiresなしを基準にします。",
+        },
+        {
+            "id": "extended_validation_v1",
+            "name": "Extended Validation v1",
+            "version": "1.0",
+            "description": "採用候補LoRAの最終確認。Hiresあり/なしの見え方の差を確認する。",
+            "validation_level": "extended",
+            "seeds": [111111, 222222],
+            "weights": [0.6, 0.8],
+            "hires_modes": [False, True],
+            "hires_scale": 2.0,
+            "hires_denoising_strength": 0.4,
+            "hires_upscaler": "Latent",
+            "memo": "HiresはLoRAの素の比較ではなく、最終見栄え確認として扱います。",
+        },
+    ]
+    prompts = validation_prompt_rows()
+    for row in rows:
+        expected = len(prompts) * len(row["seeds"]) * len(row["weights"]) * len(row["hires_modes"])
+        conn.execute(
+            """
+            INSERT INTO validation_presets(
+                id, name, version, description, validation_level, prompts_json,
+                seeds_json, weights_json, width, height, hires_modes_json,
+                hires_scale, hires_denoising_strength, hires_upscaler, sampler,
+                steps, cfg_scale, negative_prompt, reference_set_id,
+                expected_image_count, is_builtin, is_active, created_at,
+                updated_at, memo
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1024, 1024, ?, ?, ?, ?, 'Euler a',
+                28, 7, ?, NULL, ?, 1, 1, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                version = excluded.version,
+                description = excluded.description,
+                validation_level = excluded.validation_level,
+                prompts_json = excluded.prompts_json,
+                seeds_json = excluded.seeds_json,
+                weights_json = excluded.weights_json,
+                width = excluded.width,
+                height = excluded.height,
+                hires_modes_json = excluded.hires_modes_json,
+                hires_scale = excluded.hires_scale,
+                hires_denoising_strength = excluded.hires_denoising_strength,
+                hires_upscaler = excluded.hires_upscaler,
+                sampler = excluded.sampler,
+                steps = excluded.steps,
+                cfg_scale = excluded.cfg_scale,
+                negative_prompt = excluded.negative_prompt,
+                expected_image_count = excluded.expected_image_count,
+                is_builtin = excluded.is_builtin,
+                is_active = excluded.is_active,
+                updated_at = excluded.updated_at,
+                memo = excluded.memo
+            """,
+            (
+                row["id"],
+                row["name"],
+                row["version"],
+                row["description"],
+                row["validation_level"],
+                json.dumps(prompts, ensure_ascii=False, indent=2),
+                json.dumps(row["seeds"], ensure_ascii=False),
+                json.dumps(row["weights"], ensure_ascii=False),
+                json.dumps(row["hires_modes"], ensure_ascii=False),
+                row["hires_scale"],
+                row["hires_denoising_strength"],
+                row["hires_upscaler"],
+                negative,
+                expected,
+                now,
+                now,
+                row["memo"],
+            ),
+        )
+
+
+def seed_job12_validation_defaults(conn: sqlite3.Connection) -> None:
+    now = utc_now()
+    preset = conn.execute("SELECT id FROM validation_presets WHERE id = 'standard_validation_v1'").fetchone()
+    profile = conn.execute("SELECT id FROM selected_lora_profiles WHERE id = 1 AND job_id = 12").fetchone()
+    if preset and profile:
+        conn.execute(
+            """
+            UPDATE selected_lora_profiles
+            SET default_validation_preset_id = COALESCE(default_validation_preset_id, 'standard_validation_v1'),
+                validation_policy_memo = COALESCE(
+                    NULLIF(validation_policy_memo, ''),
+                    '通常比較はHiresなしのStandard Validationを基準にする。HiresありはExtended Validationで最終見栄え確認として扱う。'
+                ),
+                updated_at = ?
+            WHERE id = 1 AND job_id = 12
+            """,
+            (now,),
+        )
+
+
+def seed_legacy_validation_run(conn: sqlite3.Connection) -> None:
+    now = utc_now()
+    jobs = conn.execute(
+        """
+        SELECT DISTINCT job_id
+        FROM (
+            SELECT job_id FROM validation_images WHERE validation_run_id IS NULL
+            UNION
+            SELECT job_id FROM validation_weight_reviews WHERE validation_run_id IS NULL
+        )
+        """
+    ).fetchall()
+    for job in jobs:
+        job_id = int(job["job_id"])
+        existing = conn.execute(
+            "SELECT id FROM validation_runs WHERE job_id = ? AND validation_preset_id IS NULL AND name LIKE 'Legacy Validation%'",
+            (job_id,),
+        ).fetchone()
+        if existing:
+            run_id = int(existing["id"])
+        else:
+            profile = conn.execute(
+                "SELECT * FROM selected_lora_profiles WHERE job_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1",
+                (job_id,),
+            ).fetchone()
+            output_id = profile["selected_output_id"] if profile else None
+            count = conn.execute("SELECT COUNT(*) AS count FROM validation_images WHERE job_id = ?", (job_id,)).fetchone()["count"]
+            cur = conn.execute(
+                """
+                INSERT INTO validation_runs(
+                    job_id, selected_output_id, selected_lora_profile_id, validation_preset_id,
+                    name, validation_level, base_model, trigger_word, lora_filename,
+                    recommended_weight_min, recommended_weight_max, expected_image_count,
+                    actual_image_count, status, created_at, updated_at, memo
+                )
+                VALUES (?, ?, ?, NULL, ?, 'legacy', ?, ?, ?, ?, ?, NULL, ?, 'images_registered', ?, ?, ?)
+                """,
+                (
+                    job_id,
+                    output_id,
+                    profile["id"] if profile else None,
+                    f"Legacy Validation Job #{job_id}",
+                    profile["base_model"] if profile else "",
+                    profile["trigger_word"] if profile else "",
+                    Path(profile["selected_model_path"]).name if profile and profile["selected_model_path"] else "",
+                    profile["recommended_weight_min"] if profile else None,
+                    profile["recommended_weight_max"] if profile else None,
+                    count,
+                    now,
+                    now,
+                    "legacy / preset unspecified",
+                ),
+            )
+            run_id = int(cur.lastrowid)
+        conn.execute("UPDATE validation_images SET validation_run_id = ? WHERE job_id = ? AND validation_run_id IS NULL", (run_id, job_id))
+        conn.execute("UPDATE validation_weight_reviews SET validation_run_id = ? WHERE job_id = ? AND validation_run_id IS NULL", (run_id, job_id))
 
 
 def fetch_all(query: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
@@ -829,11 +1070,35 @@ CREATE TABLE IF NOT EXISTS evaluation_rubrics (
     description TEXT, schema_json TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS validation_presets (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, version TEXT NOT NULL,
+    description TEXT, validation_level TEXT NOT NULL, prompts_json TEXT NOT NULL,
+    seeds_json TEXT NOT NULL, weights_json TEXT NOT NULL, width INTEGER NOT NULL,
+    height INTEGER NOT NULL, hires_modes_json TEXT NOT NULL, hires_scale REAL,
+    hires_denoising_strength REAL, hires_upscaler TEXT, sampler TEXT,
+    steps INTEGER, cfg_scale REAL, negative_prompt TEXT, reference_set_id INTEGER,
+    expected_image_count INTEGER, is_builtin INTEGER NOT NULL DEFAULT 0,
+    is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL, memo TEXT
+);
+CREATE TABLE IF NOT EXISTS validation_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL,
+    selected_output_id INTEGER, selected_lora_profile_id INTEGER,
+    validation_preset_id TEXT, name TEXT NOT NULL, validation_level TEXT,
+    base_model TEXT, trigger_word TEXT, lora_filename TEXT,
+    recommended_weight_min REAL, recommended_weight_max REAL,
+    expected_image_count INTEGER, actual_image_count INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'planned', created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL, memo TEXT
+);
 CREATE TABLE IF NOT EXISTS validation_images (
     id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, selected_output_id INTEGER,
-    image_path TEXT NOT NULL, validation_type TEXT, prompt TEXT, negative_prompt TEXT,
+    validation_run_id INTEGER, validation_preset_id TEXT, prompt_key TEXT, seed INTEGER,
+    lora_weight REAL, image_path TEXT NOT NULL, validation_type TEXT, prompt TEXT, negative_prompt TEXT,
     base_model TEXT, sampler TEXT, steps INTEGER, cfg_scale REAL, width INTEGER, height INTEGER,
     hires_enabled INTEGER NOT NULL DEFAULT 0, hires_scale REAL, lora_weights TEXT, seeds TEXT,
+    grid_image_flag INTEGER NOT NULL DEFAULT 0, image_role TEXT NOT NULL DEFAULT 'individual',
+    condition_hash TEXT,
     rating_face INTEGER, rating_costume INTEGER, rating_style INTEGER,
     rating_stability INTEGER, rating_overall INTEGER,
     strength_label TEXT, overfit_level TEXT, adoption_label TEXT,
@@ -843,6 +1108,7 @@ CREATE TABLE IF NOT EXISTS validation_images (
 );
 CREATE TABLE IF NOT EXISTS validation_weight_reviews (
     id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, selected_output_id INTEGER,
+    validation_run_id INTEGER, validation_preset_id TEXT, hires_enabled INTEGER NOT NULL DEFAULT 0,
     lora_weight REAL NOT NULL, validation_type TEXT, rating_face INTEGER, rating_costume INTEGER,
     rating_style INTEGER, rating_stability INTEGER, rating_overall INTEGER,
     strength_label TEXT, overfit_level TEXT, adoption_label TEXT,
@@ -855,7 +1121,19 @@ CREATE TABLE IF NOT EXISTS selected_lora_profiles (
     profile_name TEXT NOT NULL, trigger_word TEXT, selected_epoch INTEGER, selected_model_path TEXT,
     exported_model_path TEXT, base_model TEXT, recommended_weight_min REAL,
     recommended_weight_max REAL, light_weight REAL, strong_weight REAL,
-    validation_memo TEXT, library_memo TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    validation_memo TEXT, library_memo TEXT, default_validation_preset_id TEXT,
+    last_validation_preset_id TEXT, validation_policy_memo TEXT, reference_set_id INTEGER,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS reference_sets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, dataset_id INTEGER,
+    dataset_version_id INTEGER, trigger_word TEXT, description TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, memo TEXT
+);
+CREATE TABLE IF NOT EXISTS reference_images (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, reference_set_id INTEGER NOT NULL,
+    image_path TEXT NOT NULL, image_role TEXT NOT NULL DEFAULT 'other',
+    caption TEXT, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS recommendation_rules (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, recommendation_type TEXT NOT NULL,
