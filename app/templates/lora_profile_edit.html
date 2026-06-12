@@ -1,63 +1,63 @@
 {% extends "base.html" %}{% block content %}
-<header class="page-head"><h1>LoRA Profile編集</h1><a class="button" href="/lora-library">ライブラリへ戻る</a></header>
+<header class="page-head"><h1>LoRAプロファイル編集</h1><a class="button" href="/lora-library">ライブラリへ戻る</a></header>
 <section>
   <dl>
-    <dt>Job</dt><dd><a href="/jobs/{{ profile.job_id }}">#{{ profile.job_id }} {{ profile.job_name or '' }}</a></dd>
-    <dt>Selected LoRA</dt><dd>{{ profile.selected_model_path or '-' }}</dd>
-    <dt>Exported</dt><dd>{{ profile.exported_model_path or '-' }}</dd>
+    <dt>ジョブ</dt><dd><a href="/jobs/{{ profile.job_id }}">#{{ profile.job_id }} {{ profile.job_name or '' }}</a></dd>
+    <dt>採用LoRA</dt><dd>{{ profile.selected_model_path or '-' }}</dd>
+    <dt>出力済み</dt><dd>{{ profile.exported_model_path or '-' }}</dd>
   </dl>
   <form method="post" action="/lora-library/{{ profile.id }}/edit" class="form-grid wide">
-    <label>Profile名<input name="profile_name" value="{{ profile.profile_name }}" required></label>
-    <label>Trigger<input name="trigger_word" value="{{ profile.trigger_word or '' }}"></label>
-    <label>Base model<input name="base_model" value="{{ profile.base_model or '' }}"></label>
+    <label>プロファイル名<input name="profile_name" value="{{ profile.profile_name }}" required></label>
+    <label>トリガー<input name="trigger_word" value="{{ profile.trigger_word or '' }}"></label>
+    <label>ベースモデル<input name="base_model" value="{{ profile.base_model or '' }}"></label>
     <label>推奨weight min<input type="number" name="recommended_weight_min" value="{{ profile.recommended_weight_min if profile.recommended_weight_min is not none else '' }}" min="0" max="2" step="0.1"></label>
     <label>推奨weight max<input type="number" name="recommended_weight_max" value="{{ profile.recommended_weight_max if profile.recommended_weight_max is not none else '' }}" min="0" max="2" step="0.1"></label>
-    <label>light weight<input type="number" name="light_weight" value="{{ profile.light_weight if profile.light_weight is not none else '' }}" min="0" max="2" step="0.1"></label>
-    <label>strong weight<input type="number" name="strong_weight" value="{{ profile.strong_weight if profile.strong_weight is not none else '' }}" min="0" max="2" step="0.1"></label>
-    <label>Default Validation Preset<select name="default_validation_preset_id">
+    <label>弱めweight<input type="number" name="light_weight" value="{{ profile.light_weight if profile.light_weight is not none else '' }}" min="0" max="2" step="0.1"></label>
+    <label>強めweight<input type="number" name="strong_weight" value="{{ profile.strong_weight if profile.strong_weight is not none else '' }}" min="0" max="2" step="0.1"></label>
+    <label>標準の検証プリセット<select name="default_validation_preset_id">
       <option value="">未指定</option>
       {% for preset in validation_presets %}
       <option value="{{ preset.id }}" {{ 'selected' if profile.default_validation_preset_id == preset.id else '' }}>{{ preset.name }}</option>
       {% endfor %}
     </select></label>
-    <label>Reference Set<select name="reference_set_id">
+    <label>リファレンスセット<select name="reference_set_id">
       <option value="">未指定</option>
       {% for ref in reference_sets %}
       <option value="{{ ref.id }}" {{ 'selected' if profile.reference_set_id == ref.id else '' }}>#{{ ref.id }} {{ ref.name }}</option>
       {% endfor %}
     </select></label>
-    <label class="wide-field">Validation policy memo<textarea name="validation_policy_memo">{{ profile.validation_policy_memo or '' }}</textarea></label>
-    <label class="wide-field">Validation memo<textarea name="validation_memo">{{ profile.validation_memo or '' }}</textarea></label>
-    <label class="wide-field">Library memo<textarea name="library_memo">{{ profile.library_memo or '' }}</textarea></label>
-    <button type="submit">Profileを保存</button>
+    <label class="wide-field">検証方針メモ<textarea name="validation_policy_memo">{{ profile.validation_policy_memo or '' }}</textarea></label>
+    <label class="wide-field">検証メモ<textarea name="validation_memo">{{ profile.validation_memo or '' }}</textarea></label>
+    <label class="wide-field">ライブラリメモ<textarea name="library_memo">{{ profile.library_memo or '' }}</textarea></label>
+    <button type="submit">プロファイルを保存</button>
   </form>
 </section>
 <section>
-  <h2>Validation Run</h2>
+  <h2>外部検証</h2>
   <div class="panel-grid">
     <div>
-      <h3>Create Validation Run</h3>
+      <h3>外部検証を作成</h3>
       <form method="post" action="/lora-library/{{ profile.id }}/validation-runs" class="form-grid">
-        <label>Preset<select name="validation_preset_id">
+        <label>プリセット<select name="validation_preset_id">
           {% for preset in validation_presets %}
           <option value="{{ preset.id }}" {{ 'selected' if profile.default_validation_preset_id == preset.id else '' }}>{{ preset.name }} / {{ preset.expected_image_count }}枚</option>
           {% endfor %}
         </select></label>
-        <label>Base model<input name="base_model" value="{{ profile.base_model or '' }}"></label>
-        <label>Trigger<input name="trigger_word" value="{{ profile.trigger_word or '' }}"></label>
+        <label>ベースモデル<input name="base_model" value="{{ profile.base_model or '' }}"></label>
+        <label>トリガー<input name="trigger_word" value="{{ profile.trigger_word or '' }}"></label>
         <label class="wide-field">メモ<textarea name="memo"></textarea></label>
-        <button type="submit">Validation Runを作成</button>
+        <button type="submit">外部検証を作成</button>
       </form>
     </div>
     <div>
-      <h3>Validation Runs</h3>
+      <h3>外部検証一覧</h3>
       <table>
-        <thead><tr><th>ID</th><th>Preset</th><th>Status</th><th>画像数</th><th></th></tr></thead>
+        <thead><tr><th>ID</th><th>プリセット</th><th>状態</th><th>画像数</th><th></th></tr></thead>
         <tbody>
           {% for run in validation_runs %}
           <tr><td>#{{ run.id }}</td><td>{{ run.name }}</td><td>{{ run.status }}</td><td>{{ run.actual_image_count }} / {{ run.expected_image_count }}</td><td><a class="button" href="/validation-runs/{{ run.id }}">詳細</a></td></tr>
           {% else %}
-          <tr><td colspan="5" class="muted">Validation Runはまだありません。</td></tr>
+          <tr><td colspan="5" class="muted">外部検証はまだありません。</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -65,10 +65,10 @@
   </div>
 </section>
 <section>
-  <h2>Recommendations</h2>
-  <p class="muted">このLoRA Profileのsource Jobに対する次回実験提案です。</p>
+  <h2>次回実験提案</h2>
+  <p class="muted">このLoRAプロファイルの元ジョブに対する次回実験提案です。</p>
   <table>
-    <thead><tr><th>優先度</th><th>Type</th><th>Title</th><th>Summary</th><th>Status</th><th>Created Job</th></tr></thead>
+    <thead><tr><th>優先度</th><th>種別</th><th>タイトル</th><th>概要</th><th>状態</th><th>作成ジョブ</th></tr></thead>
     <tbody>
       {% for rec in recommendations %}
       <tr>
@@ -80,7 +80,7 @@
         <td>{% if rec.created_job_id %}<a href="/jobs/{{ rec.created_job_id }}">#{{ rec.created_job_id }}</a>{% else %}-{% endif %}</td>
       </tr>
       {% else %}
-      <tr><td colspan="6" class="muted">Recommendationsはまだありません。Job詳細から再生成してください。</td></tr>
+      <tr><td colspan="6" class="muted">提案はまだありません。ジョブ詳細から再生成してください。</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -99,7 +99,7 @@
   </table>
 </section>
 <section>
-  <h2>外部Validation画像</h2>
+  <h2>外部検証画像</h2>
   <div class="sample-grid">
     {% for image in validation_images %}
     <figure>
@@ -107,7 +107,7 @@
       <figcaption>#{{ image.id }} {{ image.validation_type or '-' }} / weight {{ image.lora_weights or '-' }}<br>強さ {{ image.strength_label or '-' }} / 過学習 {{ image.overfit_level or '-' }} / 採用 {{ image.adoption_label or '-' }}<br>{{ image.memo or '' }}</figcaption>
     </figure>
     {% else %}
-    <p class="muted">外部Validation画像はまだありません。</p>
+    <p class="muted">外部検証画像はまだありません。</p>
     {% endfor %}
   </div>
 </section>

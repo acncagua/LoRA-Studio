@@ -1,9 +1,9 @@
 {% extends "base.html" %}{% block content %}
 <header class="page-head">
-  <h1>Validationプリセット</h1>
+  <h1>検証プリセット</h1>
 </header>
 <section>
-  <p class="muted">外部生成環境で人間がValidation画像を作る時の標準条件です。LoRA-Studioは画像生成を自動実行せず、prompt packと条件管理を担当します。</p>
+  <p class="muted">外部生成環境で人間が検証画像を作る時の標準条件です。LoRA-Studioは画像生成を自動実行せず、プロンプトパックと条件管理を担当します。</p>
   <table>
     <thead>
       <tr><th>ID</th><th>名前</th><th>レベル</th><th>画像数</th><th>サイズ</th><th>Sampler</th><th>Steps</th><th>CFG</th><th>メモ</th></tr>
@@ -22,7 +22,7 @@
         <td>{{ preset.memo or preset.description or '-' }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="9" class="muted">Validationプリセットはまだ登録されていません。</td></tr>
+      <tr><td colspan="9" class="muted">検証プリセットはまだ登録されていません。</td></tr>
       {% endfor %}
     </tbody>
   </table>

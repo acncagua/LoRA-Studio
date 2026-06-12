@@ -270,7 +270,7 @@ def recommended_next_action(job: Any, selected_output: Any | None = None) -> str
     if status == "running":
         return "次にやること: 学習中です。train.logを確認できます。必要なら停止してください。"
     if status == "completed" and selected_output is not None:
-        return "次にやること: 採用LoRA出力またはValidation Runを作成してください。"
+        return "次にやること: 採用LoRA出力または外部検証を作成してください。"
     if status == "completed":
         return "次にやること: sample画像を評価し、採用LoRAを選択してください。"
     if status == "failed":

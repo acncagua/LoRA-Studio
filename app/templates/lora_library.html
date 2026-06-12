@@ -1,13 +1,13 @@
 {% extends "base.html" %}{% block content %}
 <header class="page-head"><h1>LoRAライブラリ</h1></header>
 <section>
-  <p class="muted">採用済みLoRAをJob横断で管理します。推奨weight、trigger、Validation status、Reference Setをここで確認できます。</p>
+  <p class="muted">採用済みLoRAをジョブ横断で管理します。推奨weight、トリガー、検証状態、リファレンスセットをここで確認できます。</p>
   <table class="wide-table lora-library-table">
     <thead>
       <tr>
-        <th>ID</th><th>Profile</th><th>Job</th><th>Trigger</th><th>Epoch</th>
-        <th>推奨weight</th><th>Validation Preset</th><th>Last Run</th>
-        <th>Expected / Registered / Reviewed</th><th>Coverage</th><th>Warning</th><th>Base model</th><th>操作</th>
+        <th>ID</th><th>プロファイル</th><th>ジョブ</th><th>トリガー</th><th>epoch</th>
+        <th>推奨weight</th><th>検証プリセット</th><th>最新の外部検証</th>
+        <th>予定 / 登録 / レビュー済み</th><th>カバー率</th><th>警告</th><th>ベースモデル</th><th>操作</th>
       </tr>
     </thead>
     <tbody>
@@ -28,7 +28,7 @@
         <td class="nowrap"><a class="button small-button" href="/lora-library/{{ profile.id }}/edit">編集</a></td>
       </tr>
       {% else %}
-      <tr><td colspan="13" class="muted">LoRA Profileはまだありません。Job詳細で採用LoRAを選択すると作成されます。</td></tr>
+      <tr><td colspan="13" class="muted">LoRAプロファイルはまだありません。ジョブ詳細で採用LoRAを選択すると作成されます。</td></tr>
       {% endfor %}
     </tbody>
   </table>

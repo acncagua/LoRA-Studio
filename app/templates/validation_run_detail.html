@@ -1,83 +1,83 @@
 {% extends "base.html" %}{% block content %}
 <header class="page-head">
-  <h1>Validation Run #{{ run.id }}</h1>
+  <h1>外部検証 #{{ run.id }}</h1>
   <div class="actions">
-    <a class="button" href="/jobs/{{ run.job_id }}">Jobへ戻る</a>
-    {% if run.selected_lora_profile_id %}<a class="button" href="/lora-library/{{ run.selected_lora_profile_id }}/edit">Profileへ戻る</a>{% endif %}
-    <form method="post" action="/validation-runs/{{ run.id }}/export"><button type="submit">Prompt Pack再出力</button></form>
-    <form method="post" action="/validation-runs/{{ run.id }}/export-report"><button type="submit">Validation Report出力</button></form>
+    <a class="button" href="/jobs/{{ run.job_id }}">ジョブへ戻る</a>
+    {% if run.selected_lora_profile_id %}<a class="button" href="/lora-library/{{ run.selected_lora_profile_id }}/edit">プロファイルへ戻る</a>{% endif %}
+    <form method="post" action="/validation-runs/{{ run.id }}/export"><button type="submit">プロンプトパック再出力</button></form>
+    <form method="post" action="/validation-runs/{{ run.id }}/export-report"><button type="submit">検証レポート出力</button></form>
   </div>
 </header>
 
-{% if report_path %}<p class="notice">Validation Reportを出力しました: {{ report_path }}</p>{% endif %}
+{% if report_path %}<p class="notice">検証レポートを出力しました: {{ report_path }}</p>{% endif %}
 {% if condition_warning %}<p class="notice warning">{{ condition_warning }}</p>{% endif %}
 {% if apply_result %}
 <section class="notice">
-  <h2>Profile反映結果</h2>
-  <p>人間操作により、suggested weightをLoRA Profileへ反映しました。</p>
+  <h2>プロファイル反映結果</h2>
+  <p>人間操作により、推奨weightをLoRAプロファイルへ反映しました。</p>
   <dl>
-    <dt>recommended</dt><dd>{{ apply_result.before.recommended_weight_min }} - {{ apply_result.before.recommended_weight_max }} → {{ apply_result.after.recommended_weight_min }} - {{ apply_result.after.recommended_weight_max }}</dd>
-    <dt>light / strong</dt><dd>{{ apply_result.before.light_weight }} / {{ apply_result.before.strong_weight }} → {{ apply_result.after.light_weight }} / {{ apply_result.after.strong_weight }}</dd>
+    <dt>推奨</dt><dd>{{ apply_result.before.recommended_weight_min }} - {{ apply_result.before.recommended_weight_max }} → {{ apply_result.after.recommended_weight_min }} - {{ apply_result.after.recommended_weight_max }}</dd>
+    <dt>弱め / 強め</dt><dd>{{ apply_result.before.light_weight }} / {{ apply_result.before.strong_weight }} → {{ apply_result.after.light_weight }} / {{ apply_result.after.strong_weight }}</dd>
   </dl>
 </section>
 {% endif %}
 
 <section class="panel-grid">
   <div>
-    <h2>Run情報</h2>
+    <h2>実行情報</h2>
     <dl>
       <dt>名前</dt><dd>{{ run.name }}</dd>
-      <dt>Preset</dt><dd>{{ preset.name if preset else 'legacy / preset unspecified' }}</dd>
-      <dt>Level</dt><dd>{{ run.validation_level or '-' }}</dd>
-      <dt>Status</dt><dd><span class="label {{ run.status }}">{{ run.status }}</span></dd>
+      <dt>プリセット</dt><dd>{{ preset.name if preset else '旧形式 / プリセット未指定' }}</dd>
+      <dt>レベル</dt><dd>{{ run.validation_level or '-' }}</dd>
+      <dt>状態</dt><dd><span class="label {{ run.status }}">{{ run.status }}</span></dd>
       <dt>出力先</dt><dd>{{ output_dir }}</dd>
-      <dt>Base model</dt><dd>{{ run.base_model or '-' }}</dd>
-      <dt>Trigger</dt><dd>{{ run.trigger_word or '-' }}</dd>
+      <dt>ベースモデル</dt><dd>{{ run.base_model or '-' }}</dd>
+      <dt>トリガー</dt><dd>{{ run.trigger_word or '-' }}</dd>
       <dt>LoRA</dt><dd>{{ run.lora_filename or '-' }}</dd>
     </dl>
   </div>
   <div>
-    <h2>Coverage</h2>
+    <h2>カバー状況</h2>
     <dl>
-      <dt>expected</dt><dd>{{ coverage.expected_image_count }}</dd>
-      <dt>registered</dt><dd>{{ coverage.registered_condition_count }}</dd>
-      <dt>reviewed</dt><dd>{{ coverage.reviewed_condition_count }}</dd>
-      <dt>missing</dt><dd>{{ coverage.missing_condition_count }}</dd>
-      <dt>coverage rate</dt><dd>{{ '%.1f%%'|format(coverage.coverage_rate * 100) }}</dd>
-      <dt>review rate</dt><dd>{{ '%.1f%%'|format(coverage.review_rate * 100) }}</dd>
+      <dt>予定</dt><dd>{{ coverage.expected_image_count }}</dd>
+      <dt>登録済み</dt><dd>{{ coverage.registered_condition_count }}</dd>
+      <dt>レビュー済み</dt><dd>{{ coverage.reviewed_condition_count }}</dd>
+      <dt>未登録</dt><dd>{{ coverage.missing_condition_count }}</dd>
+      <dt>登録カバー率</dt><dd>{{ '%.1f%%'|format(coverage.coverage_rate * 100) }}</dd>
+      <dt>レビュー率</dt><dd>{{ '%.1f%%'|format(coverage.review_rate * 100) }}</dd>
     </dl>
     <form method="post" action="/validation-runs/{{ run.id }}/status" class="inline-form">
-      <label>Status変更<select name="status">
+      <label>状態変更<select name="status">
         {% for status in ['planned','images_registered','partially_reviewed','reviewed','completed','archived'] %}
         <option value="{{ status }}" {{ 'selected' if run.status == status else '' }}>{{ status }}</option>
         {% endfor %}
       </select></label>
-      <button type="submit">Statusを保存</button>
+      <button type="submit">状態を保存</button>
     </form>
   </div>
 </section>
 
 <section class="panel-grid">
   <div>
-    <h2>Suggested Weight</h2>
+    <h2>推奨weight</h2>
     <dl>
-      <dt>min / max</dt><dd>{{ suggestion.suggested_weight_min if suggestion.suggested_weight_min is not none else '-' }} - {{ suggestion.suggested_weight_max if suggestion.suggested_weight_max is not none else '-' }}</dd>
-      <dt>light / strong</dt><dd>{{ suggestion.suggested_light_weight if suggestion.suggested_light_weight is not none else '-' }} / {{ suggestion.suggested_strong_weight if suggestion.suggested_strong_weight is not none else '-' }}</dd>
-      <dt>reason</dt><dd>{{ suggestion.suggested_weight_reason }}</dd>
+      <dt>最小 / 最大</dt><dd>{{ suggestion.suggested_weight_min if suggestion.suggested_weight_min is not none else '-' }} - {{ suggestion.suggested_weight_max if suggestion.suggested_weight_max is not none else '-' }}</dd>
+      <dt>弱め / 強め</dt><dd>{{ suggestion.suggested_light_weight if suggestion.suggested_light_weight is not none else '-' }} / {{ suggestion.suggested_strong_weight if suggestion.suggested_strong_weight is not none else '-' }}</dd>
+      <dt>理由</dt><dd>{{ suggestion.suggested_weight_reason }}</dd>
     </dl>
     <div class="actions">
-      <form method="post" action="/validation-runs/{{ run.id }}/suggest"><button type="submit">Suggested Weightを保存</button></form>
-      <form method="post" action="/validation-runs/{{ run.id }}/apply"><button type="submit">Apply to LoRA Profile</button></form>
+      <form method="post" action="/validation-runs/{{ run.id }}/suggest"><button type="submit">推奨weightを保存</button></form>
+      <form method="post" action="/validation-runs/{{ run.id }}/apply"><button type="submit">LoRAプロファイルへ反映</button></form>
     </div>
-    <p class="muted">自動反映はしません。Profileへ反映する場合は必ずApplyボタンを押してください。</p>
+    <p class="muted">自動反映はしません。プロファイルへ反映する場合は必ず反映ボタンを押してください。</p>
   </div>
   <div>
-    <h2>Reference Set</h2>
+    <h2>リファレンスセット</h2>
     {% if reference_set %}
     <dl>
       <dt>ID</dt><dd>#{{ reference_set.id }}</dd>
       <dt>名前</dt><dd>{{ reference_set.name }}</dd>
-      <dt>Trigger</dt><dd>{{ reference_set.trigger_word or '-' }}</dd>
+      <dt>トリガー</dt><dd>{{ reference_set.trigger_word or '-' }}</dd>
       <dt>メモ</dt><dd>{{ reference_set.memo or '-' }}</dd>
     </dl>
     <div class="sample-grid">
@@ -89,52 +89,52 @@
       {% endfor %}
     </div>
     {% else %}
-    <p class="muted">紐づくReference Setはありません。</p>
+    <p class="muted">紐づくリファレンスセットはありません。</p>
     {% endif %}
   </div>
 </section>
 
 <section class="panel-grid">
   <div>
-    <h2>Individual画像登録</h2>
+      <h2>個別画像登録</h2>
     <form method="post" action="/validation-runs/{{ run.id }}/images/individual" class="form-grid">
       <label class="wide-field">画像パス
         <span class="path-picker">
           <input id="individual-image-path" name="image_path" required>
-          <button type="button" data-browse-target="#individual-image-path" data-browse-kind="image" data-browse-title="Validation画像を選択" data-browse-initial="{{ default_project_path }}">参照</button>
+          <button type="button" data-browse-target="#individual-image-path" data-browse-kind="image" data-browse-title="検証画像を選択" data-browse-initial="{{ default_project_path }}">参照</button>
         </span>
       </label>
-      <label>Prompt key<select name="prompt_key">{% for c in coverage.rows|unique(attribute='prompt_key') %}<option value="{{ c.prompt_key }}">{{ c.prompt_key }}</option>{% endfor %}</select></label>
-      <label>Seed<select name="seed">{% for c in coverage.rows|unique(attribute='seed') %}<option value="{{ c.seed }}">{{ c.seed }}</option>{% endfor %}</select></label>
+      <label>プロンプトキー<select name="prompt_key">{% for c in coverage.rows|unique(attribute='prompt_key') %}<option value="{{ c.prompt_key }}">{{ c.prompt_key }}</option>{% endfor %}</select></label>
+      <label>seed<select name="seed">{% for c in coverage.rows|unique(attribute='seed') %}<option value="{{ c.seed }}">{{ c.seed }}</option>{% endfor %}</select></label>
       <label>Weight<select name="lora_weight">{% for c in coverage.rows|unique(attribute='lora_weight') %}<option value="{{ c.lora_weight }}">{{ c.lora_weight }}</option>{% endfor %}</select></label>
       <label>Hires<select name="hires_enabled"><option value="">なし</option><option value="1">あり</option></select></label>
       <label class="wide-field">メモ<textarea name="memo"></textarea></label>
-      <button type="submit">Individual画像を登録</button>
+      <button type="submit">個別画像を登録</button>
     </form>
   </div>
   <div>
-    <h2>Grid画像登録</h2>
+      <h2>グリッド画像登録</h2>
     <form method="post" action="/validation-runs/{{ run.id }}/images/grid" class="form-grid">
       <label class="wide-field">画像パス
         <span class="path-picker">
           <input id="grid-image-path" name="image_path" required>
-          <button type="button" data-browse-target="#grid-image-path" data-browse-kind="image" data-browse-title="Grid画像を選択" data-browse-initial="{{ default_project_path }}">参照</button>
+          <button type="button" data-browse-target="#grid-image-path" data-browse-kind="image" data-browse-title="グリッド画像を選択" data-browse-initial="{{ default_project_path }}">参照</button>
         </span>
       </label>
-      <label>Prompt key<input name="prompt_key" placeholder="basic_face"></label>
+      <label>プロンプトキー<input name="prompt_key" placeholder="basic_face"></label>
       <label>Hires<select name="hires_enabled"><option value="">なし</option><option value="1">あり</option></select></label>
       <label>X軸<input name="grid_axis_x" value="weight"></label>
       <label>Y軸<input name="grid_axis_y" value="seed"></label>
       <label class="wide-field">メモ<textarea name="memo"></textarea></label>
-      <button type="submit">Grid画像を登録</button>
+      <button type="submit">グリッド画像を登録</button>
     </form>
   </div>
 </section>
 
 <section>
-  <h2>Coverage Matrix</h2>
+  <h2>条件カバレッジ</h2>
   <table>
-    <thead><tr><th>#</th><th>Prompt</th><th>Seed</th><th>Weight</th><th>Hires</th><th>Status</th><th>Images</th><th>Hash</th></tr></thead>
+    <thead><tr><th>#</th><th>プロンプト</th><th>seed</th><th>weight</th><th>Hires</th><th>状態</th><th>画像</th><th>Hash</th></tr></thead>
     <tbody>
       {% for row in coverage.rows %}
       <tr>
@@ -148,19 +148,19 @@
         <td>{{ row.condition_hash[:12] }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="8" class="muted">Expected conditionがありません。</td></tr>
+      <tr><td colspan="8" class="muted">予定条件がありません。</td></tr>
       {% endfor %}
     </tbody>
   </table>
 </section>
 
 <section>
-  <h2>Weight Review Matrix</h2>
+  <h2>weightレビュー表</h2>
   <div class="panel-grid">
     <div>
       <h3>Weight別</h3>
       <table>
-        <thead><tr><th>Weight</th><th>件数</th><th>Avg Overall</th><th>Strength</th><th>Adoption</th></tr></thead>
+        <thead><tr><th>weight</th><th>件数</th><th>総合平均</th><th>強さ</th><th>採用判断</th></tr></thead>
         <tbody>
           {% for row in weight_matrix.by_weight %}
           <tr><td>{{ row.key }}</td><td>{{ row.count }}</td><td>{{ '%.2f'|format(row.avg_overall) if row.avg_overall is not none else '-' }}</td><td>{{ row.strength_distribution }}</td><td>{{ row.adoption_distribution }}</td></tr>
@@ -173,12 +173,12 @@
     <div>
       <h3>分布</h3>
       <dl>
-        <dt>recommended weights</dt><dd>{{ weight_matrix.recommended_weights or '-' }}</dd>
-        <dt>too strong weights</dt><dd>{{ weight_matrix.too_strong_weights or '-' }}</dd>
-        <dt>too weak weights</dt><dd>{{ weight_matrix.too_weak_weights or '-' }}</dd>
-        <dt>strength</dt><dd>{{ weight_matrix.strength_distribution }}</dd>
-        <dt>overfit</dt><dd>{{ weight_matrix.overfit_distribution }}</dd>
-        <dt>adoption</dt><dd>{{ weight_matrix.adoption_distribution }}</dd>
+        <dt>推奨weight</dt><dd>{{ weight_matrix.recommended_weights or '-' }}</dd>
+        <dt>強すぎるweight</dt><dd>{{ weight_matrix.too_strong_weights or '-' }}</dd>
+        <dt>弱すぎるweight</dt><dd>{{ weight_matrix.too_weak_weights or '-' }}</dd>
+        <dt>強さ</dt><dd>{{ weight_matrix.strength_distribution }}</dd>
+        <dt>過学習</dt><dd>{{ weight_matrix.overfit_distribution }}</dd>
+        <dt>採用判断</dt><dd>{{ weight_matrix.adoption_distribution }}</dd>
       </dl>
     </div>
   </div>
@@ -192,7 +192,7 @@
       <img src="/validation-images/{{ image.id }}" alt="validation image {{ image.id }}">
       <figcaption>
         #{{ image.id }} {{ image.image_role }} / {{ image.prompt_key or '-' }} / seed {{ image.seed or '-' }} / weight {{ image.lora_weight if image.lora_weight is not none else '-' }} / Hires {{ 'あり' if image.hires_enabled else 'なし' }}<br>
-        condition: {{ image.expected_condition_id or 'unmatched / grid' }}
+        条件: {{ image.expected_condition_id or '未一致 / グリッド' }}
       </figcaption>
       <form method="post" action="/validation-runs/{{ run.id }}/images/{{ image.id }}/review" class="review-form">
         <div class="rating-grid">
@@ -211,7 +211,7 @@
           <label><input type="checkbox" name="failure_tags" value="{{ tag }}"> {{ tag }}</label>
           {% endfor %}
         </div>
-        <label><input type="checkbox" name="ignored" value="1" {{ 'checked' if image.ignored else '' }}> coverage上はignored扱いにする</label>
+        <label><input type="checkbox" name="ignored" value="1" {{ 'checked' if image.ignored else '' }}> カバー判定では無視扱いにする</label>
         <label>メモ<textarea name="memo">{{ image.memo or '' }}</textarea></label>
         <button type="submit">レビューを保存</button>
       </form>

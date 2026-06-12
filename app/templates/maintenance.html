@@ -2,49 +2,49 @@
 <header class="page-head"><h1>メンテナンス</h1></header>
 
 {% if backup_path %}
-<p class="notice">Backupを作成しました: <code>{{ backup_path }}</code></p>
+<p class="notice">バックアップを作成しました: <code>{{ backup_path }}</code></p>
 {% endif %}
 {% if diagnostics_path %}
-<p class="notice">Diagnosticsを出力しました: <code>{{ diagnostics_path }}</code></p>
+<p class="notice">診断レポートを出力しました: <code>{{ diagnostics_path }}</code></p>
 {% endif %}
 
 <section class="panel-grid">
   <div>
     <h2>バージョン</h2>
     <dl>
-      <dt>App version</dt><dd>{{ summary.version.app_version }}</dd>
+      <dt>アプリバージョン</dt><dd>{{ summary.version.app_version }}</dd>
       <dt>Git commit</dt><dd>{{ summary.version.git_commit }}</dd>
-      <dt>DB schema</dt><dd>{{ summary.version.db_schema_version }}</dd>
+      <dt>DBスキーマ</dt><dd>{{ summary.version.db_schema_version }}</dd>
       <dt>sd-scripts</dt><dd>{{ summary.environment.sd_scripts_commit_hash if summary.environment else '-' }}</dd>
     </dl>
   </div>
   <div>
     <h2>件数</h2>
     <dl>
-      <dt>Datasets</dt><dd>{{ summary.counts.datasets }}</dd>
-      <dt>Jobs</dt><dd>{{ summary.counts.jobs }}</dd>
-      <dt>Completed / Failed / Running</dt><dd>{{ summary.status_counts.get('completed', 0) }} / {{ summary.status_counts.get('failed', 0) }} / {{ summary.status_counts.get('running', 0) }}</dd>
-      <dt>LoRA Library</dt><dd>{{ summary.counts.profiles }}</dd>
-      <dt>Validation Runs</dt><dd>{{ summary.counts.validation_runs }}</dd>
+      <dt>データセット</dt><dd>{{ summary.counts.datasets }}</dd>
+      <dt>ジョブ</dt><dd>{{ summary.counts.jobs }}</dd>
+      <dt>完了 / 失敗 / 実行中</dt><dd>{{ summary.status_counts.get('completed', 0) }} / {{ summary.status_counts.get('failed', 0) }} / {{ summary.status_counts.get('running', 0) }}</dd>
+      <dt>LoRAライブラリ</dt><dd>{{ summary.counts.profiles }}</dd>
+      <dt>外部検証</dt><dd>{{ summary.counts.validation_runs }}</dd>
     </dl>
   </div>
 </section>
 
 <section class="panel-grid">
   <form method="post" action="/maintenance/backup">
-    <h2>Backup</h2>
-    <p class="muted">DB、app settings、exports内の軽量ファイル、runs配下のreportsを `backups/app_backups/` に保存します。大型モデルや画像は初期版では除外します。</p>
-    <button type="submit">Backupを作成</button>
+    <h2>バックアップ</h2>
+    <p class="muted">DB、アプリ設定、exports内の軽量ファイル、runs配下のreportsを `backups/app_backups/` に保存します。大型モデルや画像は初期版では除外します。</p>
+    <button type="submit">バックアップを作成</button>
   </form>
   <form method="post" action="/maintenance/diagnostics">
-    <h2>Diagnostics</h2>
-    <p class="muted">環境、件数、latest errors、known warningsをMarkdownで `exports/diagnostics/` に出力します。API tokenなどの秘密情報は出力しません。</p>
-    <button type="submit">Diagnosticsを出力</button>
+    <h2>診断レポート</h2>
+    <p class="muted">環境、件数、最新エラー、既知の警告をMarkdownで `exports/diagnostics/` に出力します。API tokenなどの秘密情報は出力しません。</p>
+    <button type="submit">診断レポートを出力</button>
   </form>
 </section>
 
 <section>
-  <h2>Known Warnings</h2>
+  <h2>既知の警告</h2>
   <ul class="workflow-list">
     {% for warning in summary.warnings %}
     <li>{{ warning }}</li>

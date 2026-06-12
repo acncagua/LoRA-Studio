@@ -39,7 +39,7 @@
     {% if action_state.revised %}<form method="post" action="/jobs/{{ job.id }}/revised-draft"><button type="submit">派生ドラフトを作成</button></form>{% else %}<span class="button disabled">派生ドラフトを作成</span>{% endif %}
     {% if action_state.compare %}<a class="button" href="/compare?job_a={{ job.id }}">比較</a>{% else %}<span class="button disabled">比較</span>{% endif %}
     {% if action_state.export %}<form method="post" action="/jobs/{{ job.id }}/export-selected-lora"><button type="submit">採用LoRA出力</button></form>{% else %}<span class="button disabled">採用LoRA出力</span>{% endif %}
-    {% if action_state.contact_sheet %}<form method="post" action="/jobs/{{ job.id }}/export-contact-sheet"><button type="submit">Contact Sheet出力</button></form>{% else %}<span class="button disabled">Contact Sheet出力</span>{% endif %}
+    {% if action_state.contact_sheet %}<form method="post" action="/jobs/{{ job.id }}/export-contact-sheet"><button type="submit">コンタクトシート出力</button></form>{% else %}<span class="button disabled">コンタクトシート出力</span>{% endif %}
   </div>
 </section>
 <section class="panel-grid">
@@ -69,7 +69,7 @@
     {% if dataset %}<dl><dt>名前</dt><dd>{{ dataset.name }}</dd><dt>画像</dt><dd>{{ dataset.image_count }}</dd><dt>パス</dt><dd>{{ dataset.path }}</dd></dl>{% endif %}
     <h2>採用LoRA</h2>
     <p>{{ job.adopted_model_path or '未選択' }}</p>
-    {% if validation_pack_path %}<p class="muted">Validation Pack: {{ validation_pack_path }}</p>{% endif %}
+    {% if validation_pack_path %}<p class="muted">検証パック: {{ validation_pack_path }}</p>{% endif %}
     <form method="post" action="/jobs/{{ job.id }}/select-epoch" class="inline-form">
       <label>epochから採用LoRAを選択
         <select name="epoch">
@@ -83,10 +83,10 @@
   </div>
 </section>
 <section>
-  <h2>Recommendations</h2>
+  <h2>次回実験提案</h2>
   <p class="muted">ルールベースの次回実験提案です。自動実行はしません。必要な提案だけ下書きジョブ化して、人間が実行を押してください。</p>
   <table>
-    <thead><tr><th>優先度</th><th>Type</th><th>Title</th><th>Summary</th><th>Reason</th><th>Expected</th><th>Risk</th><th>Status</th><th>Created Job</th><th>操作</th></tr></thead>
+    <thead><tr><th>優先度</th><th>種別</th><th>タイトル</th><th>概要</th><th>理由</th><th>期待効果</th><th>リスク</th><th>状態</th><th>作成ジョブ</th><th>操作</th></tr></thead>
     <tbody>
       {% for rec in recommendations %}
       <tr>
@@ -101,9 +101,9 @@
         <td>{% if rec.created_job_id %}<a href="/jobs/{{ rec.created_job_id }}">#{{ rec.created_job_id }}</a>{% else %}-{% endif %}</td>
         <td>
           <div class="actions">
-            <form method="post" action="/recommendations/{{ rec.id }}/create-draft"><button type="submit">Draft Job作成</button></form>
-            <form method="post" action="/recommendations/{{ rec.id }}/accept"><button type="submit">Accepted</button></form>
-            <form method="post" action="/recommendations/{{ rec.id }}/dismiss"><button type="submit">Dismiss</button></form>
+            <form method="post" action="/recommendations/{{ rec.id }}/create-draft"><button type="submit">下書きジョブ作成</button></form>
+            <form method="post" action="/recommendations/{{ rec.id }}/accept"><button type="submit">採用済みにする</button></form>
+            <form method="post" action="/recommendations/{{ rec.id }}/dismiss"><button type="submit">非表示にする</button></form>
           </div>
         </td>
       </tr>
@@ -321,27 +321,27 @@
   {% endfor %}
 </section>
 <section>
-  <h2>Validation Run</h2>
-  <p class="muted">外部生成の条件をValidation Presetで固定し、WebUI / reForge用のprompt packを出力します。画像生成自体は自動実行しません。</p>
+  <h2>外部検証</h2>
+  <p class="muted">外部生成の条件を検証プリセットで固定し、WebUI / reForge用のプロンプトパックを出力します。画像生成自体は自動実行しません。</p>
   <div class="panel-grid">
     <div>
-      <h3>Validation Run作成</h3>
+      <h3>外部検証を作成</h3>
       <form method="post" action="/jobs/{{ job.id }}/validation-runs" class="form-grid">
-        <label>Preset<select name="validation_preset_id">
+        <label>プリセット<select name="validation_preset_id">
           {% for preset in validation_presets %}
           <option value="{{ preset.id }}" {{ 'selected' if selected_lora_profile and selected_lora_profile.default_validation_preset_id == preset.id else '' }}>{{ preset.name }} / {{ preset.expected_image_count }}枚</option>
           {% endfor %}
         </select></label>
-        <label>Base model<input name="base_model" value="{{ selected_lora_profile.base_model if selected_lora_profile else '' }}"></label>
-        <label>Trigger<input name="trigger_word" value="{{ selected_lora_profile.trigger_word if selected_lora_profile else job.trigger_word_at_creation or '' }}"></label>
+        <label>ベースモデル<input name="base_model" value="{{ selected_lora_profile.base_model if selected_lora_profile else '' }}"></label>
+        <label>トリガー<input name="trigger_word" value="{{ selected_lora_profile.trigger_word if selected_lora_profile else job.trigger_word_at_creation or '' }}"></label>
         <label class="wide-field">メモ<textarea name="memo"></textarea></label>
-        <button type="submit" {% if not selected_output %}disabled{% endif %}>Validation Runを作成</button>
+        <button type="submit" {% if not selected_output %}disabled{% endif %}>外部検証を作成</button>
       </form>
     </div>
     <div>
-      <h3>Validation Run一覧</h3>
+      <h3>外部検証一覧</h3>
       <table>
-        <thead><tr><th>ID</th><th>Preset</th><th>Status</th><th>画像数</th><th></th></tr></thead>
+        <thead><tr><th>ID</th><th>プリセット</th><th>状態</th><th>画像数</th><th></th></tr></thead>
         <tbody>
           {% for run in validation_runs %}
           <tr>
@@ -352,7 +352,7 @@
             <td><a class="button" href="/validation-runs/{{ run.id }}">詳細</a></td>
           </tr>
           {% else %}
-          <tr><td colspan="5" class="muted">Validation Runはまだありません。</td></tr>
+          <tr><td colspan="5" class="muted">外部検証はまだありません。</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -360,42 +360,42 @@
   </div>
 </section>
 <section>
-  <h2>External Validation Legacy</h2>
-  <p class="notice">新規の標準ワークフローでは、LoRAライブラリまたはJob詳細のValidation PresetからValidation Runを作成し、Coverage Matrixで条件単位にレビューしてください。この欄は旧形式の画像/weightメモを残すためのLegacy入力です。</p>
+  <h2>旧形式の外部検証</h2>
+  <p class="notice">新規の標準ワークフローでは、LoRAライブラリまたはジョブ詳細の検証プリセットから外部検証を作成し、条件カバレッジで条件単位にレビューしてください。この欄は旧形式の画像/weightメモを残すための入力です。</p>
   <p class="muted">reForge / WebUIなど外部生成環境で作成した画像とweight評価を、採用LoRAに紐づけて保存します。</p>
   {% if selected_lora_profile %}
   <dl>
-    <dt>ライブラリProfile</dt><dd><a href="/lora-library/{{ selected_lora_profile.id }}/edit">#{{ selected_lora_profile.id }} {{ selected_lora_profile.profile_name }}</a></dd>
+    <dt>ライブラリプロファイル</dt><dd><a href="/lora-library/{{ selected_lora_profile.id }}/edit">#{{ selected_lora_profile.id }} {{ selected_lora_profile.profile_name }}</a></dd>
     <dt>推奨weight</dt><dd>{{ selected_lora_profile.recommended_weight_min if selected_lora_profile.recommended_weight_min is not none else '-' }} - {{ selected_lora_profile.recommended_weight_max if selected_lora_profile.recommended_weight_max is not none else '-' }}</dd>
-    <dt>light / strong</dt><dd>{{ selected_lora_profile.light_weight if selected_lora_profile.light_weight is not none else '-' }} / {{ selected_lora_profile.strong_weight if selected_lora_profile.strong_weight is not none else '-' }}</dd>
-    <dt>Validation memo</dt><dd>{{ selected_lora_profile.validation_memo or '-' }}</dd>
+    <dt>弱め / 強めweight</dt><dd>{{ selected_lora_profile.light_weight if selected_lora_profile.light_weight is not none else '-' }} / {{ selected_lora_profile.strong_weight if selected_lora_profile.strong_weight is not none else '-' }}</dd>
+    <dt>検証メモ</dt><dd>{{ selected_lora_profile.validation_memo or '-' }}</dd>
   </dl>
   {% else %}
-  <p class="notice">採用LoRAを選択すると、LoRAライブラリProfileとExternal Validationを保存できます。</p>
+  <p class="notice">採用LoRAを選択すると、LoRAライブラリプロファイルと外部検証を保存できます。</p>
   {% endif %}
   <div class="panel-grid">
     <div>
-      <h3>Legacy Validation画像を登録</h3>
+      <h3>旧形式の検証画像を登録</h3>
       <form method="post" action="/jobs/{{ job.id }}/external-validation/images" class="form-grid">
         <label>画像パス
           <span class="path-picker">
             <input id="external-validation-image-path" name="image_path" required>
-            <button type="button" data-browse-target="#external-validation-image-path" data-browse-kind="image" data-browse-title="外部Validation画像を選択" data-browse-initial="{{ default_project_path }}">参照</button>
+            <button type="button" data-browse-target="#external-validation-image-path" data-browse-kind="image" data-browse-title="外部検証画像を選択" data-browse-initial="{{ default_project_path }}">参照</button>
           </span>
         </label>
-        <label>validation_type<input name="validation_type" value="external"></label>
-        <label>base_model<input name="base_model" value="{{ selected_lora_profile.base_model if selected_lora_profile else '' }}"></label>
-        <label>sampler<input name="sampler" placeholder="DPM++ 2M Karras"></label>
-        <label>steps<input type="number" name="steps" value="28" min="1"></label>
+        <label>検証種別<input name="validation_type" value="external"></label>
+        <label>ベースモデル<input name="base_model" value="{{ selected_lora_profile.base_model if selected_lora_profile else '' }}"></label>
+        <label>サンプラー<input name="sampler" placeholder="DPM++ 2M Karras"></label>
+        <label>ステップ数<input type="number" name="steps" value="28" min="1"></label>
         <label>cfg_scale<input type="number" name="cfg_scale" value="7" min="0" step="0.5"></label>
-        <label>width<input type="number" name="width" value="1024" min="1"></label>
-        <label>height<input type="number" name="height" value="1024" min="1"></label>
+        <label>幅<input type="number" name="width" value="1024" min="1"></label>
+        <label>高さ<input type="number" name="height" value="1024" min="1"></label>
         <label>Hires<input type="checkbox" name="hires_enabled" value="1"></label>
-        <label>hires_scale<input type="number" name="hires_scale" min="0" step="0.1"></label>
-        <label>lora_weights<input name="lora_weights" placeholder="0.6"></label>
-        <label>seeds<input name="seeds"></label>
-        <label class="wide-field">prompt<textarea name="prompt"></textarea></label>
-        <label class="wide-field">negative_prompt<textarea name="negative_prompt"></textarea></label>
+        <label>Hires倍率<input type="number" name="hires_scale" min="0" step="0.1"></label>
+        <label>LoRA weight<input name="lora_weights" placeholder="0.6"></label>
+        <label>seed<input name="seeds"></label>
+        <label class="wide-field">プロンプト<textarea name="prompt"></textarea></label>
+        <label class="wide-field">ネガティブプロンプト<textarea name="negative_prompt"></textarea></label>
         <label>顔<input type="number" name="rating_face" value="0" min="0" max="5"></label>
         <label>衣装<input type="number" name="rating_costume" value="0" min="0" max="5"></label>
         <label>スタイル<input type="number" name="rating_style" value="0" min="0" max="5"></label>
@@ -412,14 +412,14 @@
         <label>推奨min<input type="number" name="recommended_weight_min" min="0" max="2" step="0.1"></label>
         <label>推奨max<input type="number" name="recommended_weight_max" min="0" max="2" step="0.1"></label>
         <label class="wide-field">メモ<textarea name="memo"></textarea></label>
-        <button type="submit">画像Validationを保存</button>
+        <button type="submit">検証画像を保存</button>
       </form>
     </div>
     <div>
-      <h3>Legacy weight別評価を追加</h3>
+      <h3>旧形式のweight別評価を追加</h3>
       <form method="post" action="/jobs/{{ job.id }}/external-validation/weight-review" class="form-grid">
         <label>weight<input type="number" name="lora_weight" value="0.8" min="0" max="2" step="0.1"></label>
-        <label>validation_type<input name="validation_type" value="external"></label>
+        <label>検証種別<input name="validation_type" value="external"></label>
         <label>顔<input type="number" name="rating_face" value="0" min="0" max="5"></label>
         <label>衣装<input type="number" name="rating_costume" value="0" min="0" max="5"></label>
         <label>スタイル<input type="number" name="rating_style" value="0" min="0" max="5"></label>
@@ -451,7 +451,7 @@
       </table>
     </div>
   </div>
-  <h3>登録済みValidation画像</h3>
+  <h3>登録済み検証画像</h3>
   <div class="sample-grid">
     {% for image in validation_images %}
     <figure>
@@ -459,19 +459,19 @@
       <figcaption>#{{ image.id }} {{ image.validation_type or '-' }} / weight {{ image.lora_weights or '-' }}<br>{{ image.base_model or '-' }} / {{ image.sampler or '-' }}<br>顔 {{ image.rating_face or '-' }} 衣装 {{ image.rating_costume or '-' }} スタイル {{ image.rating_style or '-' }} 安定性 {{ image.rating_stability or '-' }} 総合 {{ image.rating_overall or '-' }}<br>強さ {{ image.strength_label or '-' }} / 過学習 {{ image.overfit_level or '-' }} / 採用 {{ image.adoption_label or '-' }}<br>{{ image.memo or '' }}</figcaption>
     </figure>
     {% else %}
-    <p class="muted">外部Validation画像はまだありません。</p>
+    <p class="muted">外部検証画像はまだありません。</p>
     {% endfor %}
   </div>
 </section>
 <section>
-  <h2>Validation Results</h2>
-  <p class="muted">reForge / WebUIで手動生成した結果を記録します。scoreは1〜5、image_pathは任意です。</p>
+  <h2>検証結果</h2>
+  <p class="muted">reForge / WebUIで手動生成した結果を記録します。スコアは1〜5、画像パスは任意です。</p>
   <div class="panel-grid">
     <div>
       <h3>サマリー</h3>
       <dl>
-        <dt>best_weight_by_overall</dt><dd>{{ validation_summary.best_weight_by_overall if validation_summary.best_weight_by_overall is not none else '-' }}</dd>
-        <dt>best_weight_by_stability</dt><dd>{{ validation_summary.best_weight_by_stability if validation_summary.best_weight_by_stability is not none else '-' }}</dd>
+        <dt>総合ベストweight</dt><dd>{{ validation_summary.best_weight_by_overall if validation_summary.best_weight_by_overall is not none else '-' }}</dd>
+        <dt>安定性ベストweight</dt><dd>{{ validation_summary.best_weight_by_stability if validation_summary.best_weight_by_stability is not none else '-' }}</dd>
       </dl>
       <h4>weight別平均</h4>
       <table>
@@ -480,18 +480,18 @@
           {% for row in validation_summary.by_weight %}
           <tr><td>{{ row.key }}</td><td>{{ row.count }}</td><td>{{ '%.2f'|format(row.face_score) if row.face_score is not none else '-' }}</td><td>{{ '%.2f'|format(row.costume_score) if row.costume_score is not none else '-' }}</td><td>{{ '%.2f'|format(row.stability_score) if row.stability_score is not none else '-' }}</td><td>{{ '%.2f'|format(row.flexibility_score) if row.flexibility_score is not none else '-' }}</td><td>{{ '%.2f'|format(row.overall_score) if row.overall_score is not none else '-' }}</td></tr>
           {% else %}
-          <tr><td colspan="7" class="muted">Validation結果はまだありません。</td></tr>
+          <tr><td colspan="7" class="muted">検証結果はまだありません。</td></tr>
           {% endfor %}
         </tbody>
       </table>
-      <h4>prompt_type別平均</h4>
+      <h4>プロンプト種別別平均</h4>
       <table>
-        <thead><tr><th>prompt_type</th><th>件数</th><th>顔</th><th>衣装</th><th>安定性</th><th>柔軟性</th><th>総合</th></tr></thead>
+        <thead><tr><th>プロンプト種別</th><th>件数</th><th>顔</th><th>衣装</th><th>安定性</th><th>柔軟性</th><th>総合</th></tr></thead>
         <tbody>
           {% for row in validation_summary.by_prompt_type %}
           <tr><td>{{ row.key }}</td><td>{{ row.count }}</td><td>{{ '%.2f'|format(row.face_score) if row.face_score is not none else '-' }}</td><td>{{ '%.2f'|format(row.costume_score) if row.costume_score is not none else '-' }}</td><td>{{ '%.2f'|format(row.stability_score) if row.stability_score is not none else '-' }}</td><td>{{ '%.2f'|format(row.flexibility_score) if row.flexibility_score is not none else '-' }}</td><td>{{ '%.2f'|format(row.overall_score) if row.overall_score is not none else '-' }}</td></tr>
           {% else %}
-          <tr><td colspan="7" class="muted">Validation結果はまだありません。</td></tr>
+          <tr><td colspan="7" class="muted">検証結果はまだありません。</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -499,7 +499,7 @@
     <div>
       <h3>結果を追加</h3>
       <form method="post" action="/jobs/{{ job.id }}/validation-results" class="form-grid">
-        <label>prompt_type<select name="prompt_type">
+        <label>プロンプト種別<select name="prompt_type">
           <option value="basic_face">basic_face</option>
           <option value="full_body">full_body</option>
           <option value="expression_pose">expression_pose</option>
@@ -512,24 +512,24 @@
         <label>安定性<input type="number" name="stability_score" value="0" min="0" max="5"></label>
         <label>柔軟性<input type="number" name="flexibility_score" value="0" min="0" max="5"></label>
         <label>総合<input type="number" name="overall_score" value="0" min="0" max="5"></label>
-        <label>image_path
+        <label>画像パス
           <span class="path-picker">
             <input id="validation-image-path" name="image_path">
             <button type="button" data-browse-target="#validation-image-path" data-browse-kind="image" data-browse-title="検証画像を選択" data-browse-initial="{{ default_project_path }}">参照</button>
           </span>
         </label>
         <label>メモ<textarea name="memo"></textarea></label>
-        <button type="submit">Validation結果を保存</button>
+        <button type="submit">検証結果を保存</button>
       </form>
     </div>
   </div>
   <table>
-    <thead><tr><th>ID</th><th>prompt_type</th><th>weight</th><th>顔</th><th>衣装</th><th>安定性</th><th>柔軟性</th><th>総合</th><th>メモ</th><th>image_path</th><th>作成日時</th></tr></thead>
+    <thead><tr><th>ID</th><th>プロンプト種別</th><th>weight</th><th>顔</th><th>衣装</th><th>安定性</th><th>柔軟性</th><th>総合</th><th>メモ</th><th>画像パス</th><th>作成日時</th></tr></thead>
     <tbody>
       {% for row in validation_results %}
       <tr><td>#{{ row.id }}</td><td>{{ row.prompt_type }}</td><td>{{ row.lora_weight }}</td><td>{{ row.face_score or '-' }}</td><td>{{ row.costume_score or '-' }}</td><td>{{ row.stability_score or '-' }}</td><td>{{ row.flexibility_score or '-' }}</td><td>{{ row.overall_score or '-' }}</td><td>{{ row.memo or '-' }}</td><td>{{ row.image_path or '-' }}</td><td>{{ row.created_at }}</td></tr>
       {% else %}
-      <tr><td colspan="11" class="muted">Validation結果はまだ登録されていません。</td></tr>
+      <tr><td colspan="11" class="muted">検証結果はまだ登録されていません。</td></tr>
       {% endfor %}
     </tbody>
   </table>

@@ -1,15 +1,15 @@
 {% extends "base.html" %}{% block content %}
-<header class="page-head"><h1>Reference Set</h1></header>
+<header class="page-head"><h1>リファレンスセット</h1></header>
 <section class="panel-grid">
   <div>
-    <h2>Reference Set作成</h2>
+    <h2>リファレンスセット作成</h2>
     <form method="post" action="/reference-sets" class="form-grid">
       <label>名前<input name="name" required></label>
       <label>Dataset<select name="dataset_id">
         <option value="">未指定</option>
         {% for dataset in datasets %}<option value="{{ dataset.id }}">#{{ dataset.id }} {{ dataset.name }}</option>{% endfor %}
       </select></label>
-      <label>Trigger<input name="trigger_word"></label>
+      <label>トリガー<input name="trigger_word"></label>
       <label class="wide-field">説明<textarea name="description"></textarea></label>
       <label class="wide-field">メモ<textarea name="memo"></textarea></label>
       <button type="submit">作成</button>
@@ -17,13 +17,13 @@
   </div>
   <div>
     <h2>使い方</h2>
-    <p class="muted">Reference Setは、人間評価時に見る参考画像の固定セットです。現時点ではAI評価には使わず、将来のChatGPT評価や比較資料のために保存します。</p>
+    <p class="muted">リファレンスセットは、人間評価時に見る参考画像の固定セットです。現時点ではAI評価には使わず、将来のChatGPT評価や比較資料のために保存します。</p>
   </div>
 </section>
 <section>
   <h2>一覧</h2>
   <table>
-    <thead><tr><th>ID</th><th>名前</th><th>Dataset</th><th>Trigger</th><th>説明</th><th></th></tr></thead>
+    <thead><tr><th>ID</th><th>名前</th><th>データセット</th><th>トリガー</th><th>説明</th><th></th></tr></thead>
     <tbody>
       {% for row in reference_sets %}
       <tr>
@@ -35,7 +35,7 @@
         <td><a class="button" href="/reference-sets/{{ row.id }}">詳細</a></td>
       </tr>
       {% else %}
-      <tr><td colspan="6" class="muted">Reference Setはまだありません。</td></tr>
+      <tr><td colspan="6" class="muted">リファレンスセットはまだありません。</td></tr>
       {% endfor %}
     </tbody>
   </table>
