@@ -3,7 +3,12 @@
 <section>
   <form method="post" action="/datasets" class="form-grid">
     <label>名前<input name="name" required></label>
-    <label>パス<input name="path" required placeholder="D:\datasets\character_a"></label>
+    <label>パス
+      <span class="path-picker">
+        <input id="dataset-path" name="path" required placeholder="D:\datasets\character_a">
+        <button type="button" data-browse-target="#dataset-path" data-browse-kind="directory" data-browse-title="データセットフォルダを選択">参照</button>
+      </span>
+    </label>
     <label>モデル種別<select name="model_family"><option>SDXL</option><option>SD1.5</option></select></label>
     <label>トリガーワード<input name="trigger_word" placeholder="char_name"></label>
     <label>クラストークン<input name="class_token" value="person"></label>

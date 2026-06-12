@@ -68,10 +68,10 @@ Set-Content -Encoding UTF8 .\data\python_cmd.txt "C:\path\to\python.exe"
 ## 初回学習の流れ
 
 1. Environment画面で `sd-scripts` の設定方針を確認する。
-2. Datasets画面で画像フォルダを登録する。
+2. Datasets画面で画像フォルダを登録する。Windowsでは `参照` ボタンからフォルダ選択ダイアログを開けます。
 3. Dataset詳細画面で画像、caption、trigger word、タグ傾向を検査する。
 4. Presets画面で初期プリセットを確認する。
-5. New Job画面でデータセット、プリセット、base model path、必要ならSample Prompt Templateを指定してdraftを作る。
+5. New Job画面でデータセット、プリセット、使用モデル、必要ならSample Prompt Templateを指定してdraftを作る。
 6. Job詳細画面で `Prepare Files` を押し、設定ファイルと実行コマンドを生成する。
 7. `Run` を押して学習を開始する。必要なら `Stop` で停止する。
 8. 完了後、Job詳細画面でログ、出力LoRA、サンプル画像を確認する。手動で再取り込みしたい場合は `Reimport Results` を押す。
@@ -81,6 +81,10 @@ Set-Content -Encoding UTF8 .\data\python_cmd.txt "C:\path\to\python.exe"
 ## Dataset Inspector
 
 Datasets画面のIDリンクからDataset詳細を開くと、登録済みデータセットを再検査できます。`Rescan` は既存データを消さずに、画像数、caption数、欠損caption、壊れた画像、未対応ファイル、caption文字コード、画像サイズ、タグ集計、trigger word出現率を更新します。
+
+Datasets画面の登録フォームでは、`参照` ボタンからWindowsのフォルダ選択ダイアログを開き、選んだフォルダの絶対パスを入力欄へセットできます。
+
+使用する学習モデルはNew Job画面の `使用モデル` で指定します。プロジェクト直下の `models` フォルダに置いた `.safetensors` / `.ckpt` は候補として表示されます。別の場所のモデルを使う場合は、`参照` ボタンからWindowsのファイル選択ダイアログで選択できます。
 
 `Top Caption Tags` はcaption内のカンマ区切りタグを集計したものです。キャラクター名や衣装、構図タグが想定通り多いかを確認します。`Trigger Count` は登録したtrigger wordがcaptionに何回出ているかを示します。0%の場合でも学習自体は可能ですが、trigger wordで呼び出すLoRAを作るならcaptionまたはsample prompt設計を見直してください。
 

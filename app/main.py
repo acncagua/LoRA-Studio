@@ -2,6 +2,7 @@
 
 import json
 import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,75 @@ def render(request: Request, template: str, **context: Any) -> HTMLResponse:
     context.setdefault("sd_scripts_release_tag", settings.SD_SCRIPTS_RELEASE_TAG)
     context.setdefault("sd_scripts_release_commit", settings.SD_SCRIPTS_RELEASE_COMMIT)
     return HTMLResponse(tpl.render(**context))
+
+
+@app.get("/api/browse-directory")
+def api_browse_directory(title: str = "フォルダを選択") -> dict[str, str]:
+    return {"path": open_windows_directory_dialog(title)}
+
+
+@app.get("/api/browse-file")
+def api_browse_file(title: str = "ファイルを選択", kind: str = "file") -> dict[str, str]:
+    return {"path": open_windows_file_dialog(title, kind)}
+
+
+def open_windows_directory_dialog(title: str) -> str:
+    command = (
+        "Add-Type -AssemblyName System.Windows.Forms; "
+        "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
+        "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog; "
+        f"$dialog.Description = {ps_quote(title)}; "
+        "$dialog.ShowNewFolderButton = $false; "
+        "if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { "
+        "  Write-Output $dialog.SelectedPath "
+        "}"
+    )
+    return run_dialog_command(command)
+
+
+def open_windows_file_dialog(title: str, kind: str) -> str:
+    if kind == "model":
+        filter_text = "Stable Diffusion model (*.safetensors;*.ckpt)|*.safetensors;*.ckpt|All files (*.*)|*.*"
+    else:
+        filter_text = "All files (*.*)|*.*"
+    command = (
+        "Add-Type -AssemblyName System.Windows.Forms; "
+        "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
+        "$dialog = New-Object System.Windows.Forms.OpenFileDialog; "
+        f"$dialog.Title = {ps_quote(title)}; "
+        f"$dialog.Filter = {ps_quote(filter_text)}; "
+        "if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { "
+        "  Write-Output $dialog.FileName "
+        "}"
+    )
+    return run_dialog_command(command)
+
+
+def run_dialog_command(command: str) -> str:
+    if not is_windows():
+        raise HTTPException(status_code=400, detail="Windows dialog is only available on Windows.")
+    result = subprocess.run(
+        ["powershell", "-NoProfile", "-Sta", "-Command", command],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=300,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise HTTPException(status_code=400, detail=(result.stderr or "Dialog was not completed.").strip())
+    return result.stdout.strip()
+
+
+def ps_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def is_windows() -> bool:
+    import sys
+
+    return sys.platform == "win32"
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -465,6 +535,7 @@ def job_new(request: Request) -> HTMLResponse:
         presets=presets,
         sample_prompt_templates=sample_prompt_templates,
         trigger_infos=trigger_infos,
+        available_models=list_available_models(),
     )
 
 
@@ -472,6 +543,17 @@ def job_new(request: Request) -> HTMLResponse:
 def job_create(name: str = Form(...), dataset_id: int = Form(...), preset_id: str = Form(...), base_model_path: str = Form(...), vae_path: str = Form(""), output_name: str = Form(""), memo: str = Form(""), sample_prompt_template_id: str = Form("")) -> RedirectResponse:
     job_id = create_job({"name": name, "dataset_id": dataset_id, "preset_id": preset_id, "base_model_path": base_model_path, "vae_path": vae_path, "output_name": output_name, "memo": memo, "sample_prompt_template_id": sample_prompt_template_id})
     return RedirectResponse(f"/jobs/{job_id}", status_code=303)
+
+
+def list_available_models() -> list[dict[str, str]]:
+    models_dir = settings.ROOT_DIR / "models"
+    if not models_dir.exists():
+        return []
+    extensions = {".safetensors", ".ckpt"}
+    rows = []
+    for path in sorted(p for p in models_dir.rglob("*") if p.is_file() and p.suffix.lower() in extensions):
+        rows.append({"name": path.name, "path": str(path)})
+    return rows
 
 
 @app.get("/jobs/{job_id}", response_class=HTMLResponse)

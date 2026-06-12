@@ -23,7 +23,24 @@
   <label>データセット<select name="dataset_id" required>{% for dataset in datasets %}<option value="{{ dataset.id }}">#{{ dataset.id }} {{ dataset.name }}</option>{% endfor %}</select></label>
   <label>プリセット<select name="preset_id" required>{% for preset in presets %}<option value="{{ preset.id }}">{{ preset.model_family }} / {{ preset.name }}</option>{% endfor %}</select></label>
   <label>サンプルプロンプトテンプレート<select name="sample_prompt_template_id"><option value="">デフォルト生成プロンプト</option>{% for template in sample_prompt_templates %}<option value="{{ template.id }}">{{ template.name }}</option>{% endfor %}</select></label>
-  <label>ベースモデルパス<input name="base_model_path" required></label>
+  <fieldset class="form-fieldset">
+    <legend>使用モデル</legend>
+    <p class="muted">学習に使うStable Diffusionのbase modelを指定します。modelsフォルダ内の候補を選ぶか、参照ボタンで .safetensors / .ckpt を選択してください。</p>
+    <label>modelsフォルダ内のモデル
+      <select data-fill-target="#base-model-path">
+        <option value="">候補から選択</option>
+        {% for model in available_models %}
+        <option value="{{ model.path }}" {% if available_models|length == 1 %}selected{% endif %}>{{ model.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>ベースモデルパス
+      <span class="path-picker">
+        <input id="base-model-path" name="base_model_path" required value="{{ available_models[0].path if available_models|length == 1 else '' }}" placeholder="D:\...\models\model.safetensors">
+        <button type="button" data-browse-target="#base-model-path" data-browse-kind="model" data-browse-title="ベースモデルを選択">参照</button>
+      </span>
+    </label>
+  </fieldset>
   <label>VAEパス<input name="vae_path"></label>
   <label>出力名<input name="output_name"></label>
   <label>メモ<textarea name="memo"></textarea></label>

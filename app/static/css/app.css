@@ -60,6 +60,11 @@ button, .button { border: 0; border-radius: 6px; background: var(--accent); colo
 label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; }
 input, select, textarea { border: 1px solid var(--line); border-radius: 6px; padding: 9px 10px; font: inherit; color: var(--ink); background: white; min-width: 0; max-width: 100%; }
 textarea { min-height: 84px; }
+.form-fieldset { grid-column: 1 / -1; display: grid; gap: 12px; border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: #fbfcfa; min-width: 0; }
+.form-fieldset legend { padding: 0 6px; font-weight: 700; color: var(--ink); }
+.form-fieldset p { margin: 0; }
+.path-picker { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; min-width: 0; }
+.path-picker button { white-space: nowrap; }
 .warning { color: var(--accent-2); }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
 .actions form { padding: 0; border: 0; background: transparent; }
@@ -101,6 +106,7 @@ tr.emphasis td:first-child { font-weight: 700; color: var(--accent-2); }
   nav { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
   .content { margin-left: 0; width: auto; padding: 22px 16px 36px; }
   .metric-grid, .panel-grid, .form-grid, .compare-columns { grid-template-columns: 1fr; }
+  .path-picker { grid-template-columns: 1fr; }
   .rating-grid { grid-template-columns: repeat(2, minmax(80px, 1fr)); }
   .actions { justify-content: flex-start; }
   table { min-width: 640px; }
