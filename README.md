@@ -261,6 +261,18 @@ Job詳細の `External Validation` では、reForge / WebUIなど外部生成環
 
 `Export Contact Sheet` と `selected_lora_notes.md` にはExternal ValidationのProfile、weight評価、Validation画像情報も追記されます。外部生成環境での目視結果を、学習時のlossやsample ratingと一緒に残せます。
 
+## Recommendation Engineと次回実験提案
+
+Job詳細の `提案を再生成` は、loss summary、epoch summary、sample rating、External Validation、推奨weight、Dataset trigger consistencyを見て、次回試すべき実験案をルールベースで作成します。提案は `experiment_recommendations` に保存され、Job詳細とLoRAライブラリのProfile編集画面で確認できます。
+
+Recommendation Engineは自動実行を行いません。`Draft Job作成` を押すと、提案の `suggested_params_json` を使った下書きJobだけを作成します。元Jobのdataset、dataset version、base model、sample prompt template、trigger情報を引き継ぎ、`parent_job_id` とmemoに推薦元を残します。Runは必ず人間がJob詳細で押してください。
+
+推奨weightは次回パラメータ提案の重要な材料です。0.6〜0.8でよく効き、1.0が強い場合は、現状採用またはLower LR/短縮epochを優先します。0.8以上でも弱い場合は、higher dimやstrengthen寄りの提案が出ます。0.4〜0.6で強すぎる場合は、lower LR、lower dim、fewer epochなどを検討します。
+
+health WARNINGは即不採用ではありません。step単位の揺れがあっても、epoch trendがOKで画像評価や外部Validationが良ければ採用候補として扱います。逆にhealth OKでも画像評価が低い場合は、パラメータよりDataset、caption、sample promptの見直しを優先します。
+
+`提案レポート出力` は `runs/job_xxxxxx/reports/recommendations_job_xxxxxx.md` にMarkdownを保存します。source job、selected LoRA、Profile、Validation summary、loss summary、recommendations一覧、suggested params差分、注意事項を含みます。自動リトライ、ChatGPT API評価、AI画像評価は将来拡張です。
+
 Environment画面には将来のWebUI API連携用に `webui_api_enabled=false` と `webui_api_url=http://127.0.0.1:7865` を表示します。現時点ではWebUI APIによる自動txt2imgは実装しておらず、API呼び出しも行いません。
 
 ## no_metadataとsafetensors取り込み

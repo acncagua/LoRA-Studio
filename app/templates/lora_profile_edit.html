@@ -20,6 +20,27 @@
   </form>
 </section>
 <section>
+  <h2>Recommendations</h2>
+  <p class="muted">このLoRA Profileのsource Jobに対する次回実験提案です。</p>
+  <table>
+    <thead><tr><th>優先度</th><th>Type</th><th>Title</th><th>Summary</th><th>Status</th><th>Created Job</th></tr></thead>
+    <tbody>
+      {% for rec in recommendations %}
+      <tr>
+        <td><span class="label {{ rec.priority }}">{{ rec.priority }}</span></td>
+        <td>{{ rec.recommendation_type }}</td>
+        <td>{{ rec.title }}</td>
+        <td>{{ rec.summary or '-' }}</td>
+        <td>{{ rec.status }}</td>
+        <td>{% if rec.created_job_id %}<a href="/jobs/{{ rec.created_job_id }}">#{{ rec.created_job_id }}</a>{% else %}-{% endif %}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">Recommendationsはまだありません。Job詳細から再生成してください。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+<section>
   <h2>weight評価</h2>
   <table>
     <thead><tr><th>weight</th><th>顔</th><th>衣装</th><th>スタイル</th><th>安定性</th><th>総合</th><th>推奨</th><th>メモ</th></tr></thead>

@@ -17,6 +17,7 @@ from app.db import connect, create_dataset_version, create_job, fetch_all, fetch
 from app.services.command_builder import prepare_job_files
 from app.services.exports import export_selected_lora, write_compare_contact_sheet, write_job_contact_sheet, write_validation_pack
 from app.services.output_collector import collect_job_results
+from app.services.recommendations import create_draft_job_from_recommendation, list_recommendations, regenerate_recommendations, set_recommendation_status, write_recommendation_report
 from app.services.training_runner import read_log_tail, start_job, stop_job
 
 app = FastAPI(title=settings.APP_NAME)
@@ -622,6 +623,7 @@ def job_detail(request: Request, job_id: int, exported: str | None = None) -> HT
     validation_weight_reviews = fetch_all("SELECT * FROM validation_weight_reviews WHERE job_id = ? ORDER BY lora_weight, id", (job_id,))
     validation_summary = build_validation_summary(validation_results)
     selected_lora_profile = ensure_selected_lora_profile(job_id) if selected_output else None
+    recommendations = list_recommendations(job_id)
     dataset_version = fetch_one("SELECT * FROM dataset_versions WHERE id = ?", (job["dataset_version_id"],)) if job["dataset_version_id"] else None
     params = json.loads(job["params_json"])
     return render(
@@ -647,6 +649,7 @@ def job_detail(request: Request, job_id: int, exported: str | None = None) -> HT
         validation_weight_reviews=validation_weight_reviews,
         validation_summary=validation_summary,
         selected_lora_profile=selected_lora_profile,
+        recommendations=recommendations,
         validation_pack_path=validation_pack_path(job_id),
         default_project_path=str(settings.ROOT_DIR),
         dataset_version=dataset_version,
@@ -852,6 +855,51 @@ def job_export_validation_pack(job_id: int) -> RedirectResponse:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     ensure_selected_lora_profile(job_id)
     return RedirectResponse(f"/jobs/{job_id}?exported={result['directory']}", status_code=303)
+
+
+@app.post("/jobs/{job_id}/recommendations/regenerate")
+def job_regenerate_recommendations(job_id: int) -> RedirectResponse:
+    try:
+        regenerate_recommendations(job_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(f"/jobs/{job_id}", status_code=303)
+
+
+@app.post("/jobs/{job_id}/recommendations/export")
+def job_export_recommendation_report(job_id: int) -> RedirectResponse:
+    try:
+        path = write_recommendation_report(job_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(f"/jobs/{job_id}?exported={path}", status_code=303)
+
+
+@app.post("/recommendations/{recommendation_id}/create-draft")
+def recommendation_create_draft(recommendation_id: int) -> RedirectResponse:
+    try:
+        job_id = create_draft_job_from_recommendation(recommendation_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(f"/jobs/{job_id}", status_code=303)
+
+
+@app.post("/recommendations/{recommendation_id}/dismiss")
+def recommendation_dismiss(recommendation_id: int) -> RedirectResponse:
+    try:
+        job_id = set_recommendation_status(recommendation_id, "dismissed")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(f"/jobs/{job_id}", status_code=303)
+
+
+@app.post("/recommendations/{recommendation_id}/accept")
+def recommendation_accept(recommendation_id: int) -> RedirectResponse:
+    try:
+        job_id = set_recommendation_status(recommendation_id, "accepted")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(f"/jobs/{job_id}", status_code=303)
 
 
 @app.post("/jobs/{job_id}/validation-results")
@@ -1069,7 +1117,8 @@ def lora_profile_edit(request: Request, profile_id: int) -> HTMLResponse:
         raise HTTPException(status_code=404, detail="LoRA profile not found")
     weight_reviews = fetch_all("SELECT * FROM validation_weight_reviews WHERE job_id = ? ORDER BY lora_weight, id", (profile["job_id"],))
     validation_images = fetch_all("SELECT * FROM validation_images WHERE job_id = ? ORDER BY created_at DESC, id DESC", (profile["job_id"],))
-    return render(request, "lora_profile_edit.html", profile=profile, weight_reviews=weight_reviews, validation_images=validation_images)
+    recommendations = list_recommendations(int(profile["job_id"]))
+    return render(request, "lora_profile_edit.html", profile=profile, weight_reviews=weight_reviews, validation_images=validation_images, recommendations=recommendations)
 
 
 @app.post("/lora-library/{profile_id}/edit")

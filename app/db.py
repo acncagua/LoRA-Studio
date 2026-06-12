@@ -149,6 +149,8 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             ON validation_weight_reviews(job_id);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_selected_lora_profiles_job_output
             ON selected_lora_profiles(job_id, selected_output_id);
+        CREATE INDEX IF NOT EXISTS idx_experiment_recommendations_job
+            ON experiment_recommendations(source_job_id, status);
         """
     )
 
@@ -769,6 +771,18 @@ CREATE TABLE IF NOT EXISTS selected_lora_profiles (
     exported_model_path TEXT, base_model TEXT, recommended_weight_min REAL,
     recommended_weight_max REAL, light_weight REAL, strong_weight REAL,
     validation_memo TEXT, library_memo TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS recommendation_rules (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, recommendation_type TEXT NOT NULL,
+    priority TEXT NOT NULL, description TEXT, enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS experiment_recommendations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, source_job_id INTEGER NOT NULL,
+    source_profile_id INTEGER, recommendation_type TEXT NOT NULL, priority TEXT NOT NULL,
+    title TEXT NOT NULL, summary TEXT, reason TEXT, suggested_params_json TEXT,
+    expected_effect TEXT, risk_note TEXT, created_job_id INTEGER,
+    status TEXT NOT NULL DEFAULT 'proposed', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS caption_edit_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT, dataset_id INTEGER NOT NULL, action TEXT NOT NULL,

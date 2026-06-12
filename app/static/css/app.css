@@ -85,6 +85,9 @@ textarea { min-height: 84px; }
 .rating-grid input { width: 100%; min-width: 0; }
 .label { display: inline-block; min-width: 76px; text-align: center; padding: 3px 7px; border-radius: 6px; font-size: 12px; font-weight: 700; background: #dce4df; color: var(--ink); }
 .label.ok { background: #cfe9dd; color: #18543e; }
+.label.high { background: #cfe9dd; color: #18543e; }
+.label.medium { background: #f5e4c3; color: #73521a; }
+.label.low { background: #dde1e5; color: #4b5560; }
 .label.warning { background: #f5e4c3; color: #73521a; }
 .label.danger, .label.error { background: #efcaca; color: #7d2525; }
 .label.unknown { background: #dde1e5; color: #4b5560; }
