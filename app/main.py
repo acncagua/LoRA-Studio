@@ -76,6 +76,8 @@ def open_windows_directory_dialog(title: str, initial_path: str = "") -> str:
 def open_windows_file_dialog(title: str, kind: str, initial_path: str = "") -> str:
     if kind == "model":
         filter_text = "Stable Diffusion model (*.safetensors;*.ckpt)|*.safetensors;*.ckpt|All files (*.*)|*.*"
+    elif kind == "image":
+        filter_text = "Image files (*.png;*.jpg;*.jpeg;*.webp)|*.png;*.jpg;*.jpeg;*.webp|All files (*.*)|*.*"
     else:
         filter_text = "All files (*.*)|*.*"
     initial_directory, file_name = resolve_file_dialog_initial_values(initial_path)
@@ -579,6 +581,7 @@ def job_new(request: Request) -> HTMLResponse:
         trigger_infos=trigger_infos,
         available_models=list_available_models(),
         default_model_path=str(settings.ROOT_DIR / "models"),
+        default_project_path=str(settings.ROOT_DIR),
     )
 
 
@@ -639,6 +642,7 @@ def job_detail(request: Request, job_id: int, exported: str | None = None) -> HT
         validation_results=validation_results,
         validation_summary=validation_summary,
         validation_pack_path=validation_pack_path(job_id),
+        default_project_path=str(settings.ROOT_DIR),
         dataset_version=dataset_version,
         no_metadata_enabled=bool(params.get("no_metadata")),
         exported=exported,

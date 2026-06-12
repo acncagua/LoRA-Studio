@@ -41,7 +41,12 @@
       </span>
     </label>
   </fieldset>
-  <label>VAEパス<input name="vae_path"></label>
+  <label>VAEパス
+    <span class="path-picker">
+      <input id="vae-path" name="vae_path" placeholder="D:\...\vae.safetensors">
+      <button type="button" data-browse-target="#vae-path" data-browse-kind="model" data-browse-title="VAEを選択" data-browse-initial="{{ default_model_path }}">参照</button>
+    </span>
+  </label>
   <label>出力名<input name="output_name"></label>
   <label>メモ<textarea name="memo"></textarea></label>
   <button type="submit">下書きを作成</button>

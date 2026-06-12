@@ -310,7 +310,12 @@
         <label>安定性<input type="number" name="stability_score" value="0" min="0" max="5"></label>
         <label>柔軟性<input type="number" name="flexibility_score" value="0" min="0" max="5"></label>
         <label>総合<input type="number" name="overall_score" value="0" min="0" max="5"></label>
-        <label>image_path<input name="image_path"></label>
+        <label>image_path
+          <span class="path-picker">
+            <input id="validation-image-path" name="image_path">
+            <button type="button" data-browse-target="#validation-image-path" data-browse-kind="image" data-browse-title="検証画像を選択" data-browse-initial="{{ default_project_path }}">参照</button>
+          </span>
+        </label>
         <label>メモ<textarea name="memo"></textarea></label>
         <button type="submit">Validation結果を保存</button>
       </form>
