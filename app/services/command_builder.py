@@ -56,7 +56,8 @@ batch_size = {batch_size}
 
 def normalize_resolution(value: Any) -> list[int]:
     if isinstance(value, str):
-        parts = [part.strip() for part in value.replace("x", ",").split(",") if part.strip()]
+        cleaned = value.strip().strip("[]()")
+        parts = [part.strip() for part in cleaned.replace("x", ",").split(",") if part.strip()]
         if len(parts) == 2:
             return [int(parts[0]), int(parts[1])]
     if isinstance(value, (list, tuple)) and len(value) == 2:

@@ -83,7 +83,7 @@
     <label>text_encoder_lr<input name="text_encoder_lr" value="{{ params.text_encoder_lr if params.text_encoder_lr is defined else '' }}"></label>
     <label>network_dim<input name="network_dim" value="{{ params.network_dim or '' }}"></label>
     <label>network_alpha<input name="network_alpha" value="{{ params.network_alpha or '' }}"></label>
-    <label>resolution<input name="resolution" value="{{ params.resolution or '' }}"></label>
+    <label>resolution<input name="resolution" value="{{ params.resolution|join(',') if params.resolution is sequence and params.resolution is not string else params.resolution or '' }}"></label>
     <label>save_every_n_epochs<input name="save_every_n_epochs" value="{{ params.save_every_n_epochs or '' }}"></label>
     <label>sample_every_n_epochs<input name="sample_every_n_epochs" value="{{ params.sample_every_n_epochs or '' }}"></label>
     <label>optimizer_type<input name="optimizer_type" value="{{ params.optimizer_type or '' }}"></label>
