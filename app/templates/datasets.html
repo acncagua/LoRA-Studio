@@ -6,7 +6,7 @@
     <label>パス
       <span class="path-picker">
         <input id="dataset-path" name="path" required placeholder="D:\datasets\character_a">
-        <button type="button" data-browse-target="#dataset-path" data-browse-kind="directory" data-browse-title="データセットフォルダを選択">参照</button>
+        <button type="button" data-browse-target="#dataset-path" data-browse-kind="directory" data-browse-title="データセットフォルダを選択" data-browse-initial="{{ default_dataset_path }}">参照</button>
       </span>
     </label>
     <label>モデル種別<select name="model_family"><option>SDXL</option><option>SD1.5</option></select></label>

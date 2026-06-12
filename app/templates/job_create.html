@@ -37,7 +37,7 @@
     <label>ベースモデルパス
       <span class="path-picker">
         <input id="base-model-path" name="base_model_path" required value="{{ available_models[0].path if available_models|length == 1 else '' }}" placeholder="D:\...\models\model.safetensors">
-        <button type="button" data-browse-target="#base-model-path" data-browse-kind="model" data-browse-title="ベースモデルを選択">参照</button>
+        <button type="button" data-browse-target="#base-model-path" data-browse-kind="model" data-browse-title="ベースモデルを選択" data-browse-initial="{{ default_model_path }}">参照</button>
       </span>
     </label>
   </fieldset>

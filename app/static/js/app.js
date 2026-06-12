@@ -13,9 +13,11 @@ document.addEventListener("click", async (event) => {
 
   const kind = button.getAttribute("data-browse-kind") || "directory";
   const title = button.getAttribute("data-browse-title") || "選択";
+  const initialPath = target.value || button.getAttribute("data-browse-initial") || "";
+  const query = new URLSearchParams({ title, initial_path: initialPath });
   const url = kind === "directory"
-    ? `/api/browse-directory?title=${encodeURIComponent(title)}`
-    : `/api/browse-file?kind=${encodeURIComponent(kind)}&title=${encodeURIComponent(title)}`;
+    ? `/api/browse-directory?${query.toString()}`
+    : `/api/browse-file?${new URLSearchParams({ kind, title, initial_path: initialPath }).toString()}`;
 
   const originalText = button.textContent;
   button.disabled = true;

@@ -43,22 +43,29 @@ def render(request: Request, template: str, **context: Any) -> HTMLResponse:
 
 
 @app.get("/api/browse-directory")
-def api_browse_directory(title: str = "フォルダを選択") -> dict[str, str]:
-    return {"path": open_windows_directory_dialog(title)}
+def api_browse_directory(title: str = "フォルダを選択", initial_path: str = "") -> dict[str, str]:
+    return {"path": open_windows_directory_dialog(title, initial_path)}
 
 
 @app.get("/api/browse-file")
-def api_browse_file(title: str = "ファイルを選択", kind: str = "file") -> dict[str, str]:
-    return {"path": open_windows_file_dialog(title, kind)}
+def api_browse_file(title: str = "ファイルを選択", kind: str = "file", initial_path: str = "") -> dict[str, str]:
+    return {"path": open_windows_file_dialog(title, kind, initial_path)}
 
 
-def open_windows_directory_dialog(title: str) -> str:
+def open_windows_directory_dialog(title: str, initial_path: str = "") -> str:
+    initial_directory = resolve_dialog_initial_path(initial_path)
+    selected_path_command = (
+        f"$dialog.SelectedPath = {ps_quote(initial_directory)}; "
+        if initial_directory
+        else ""
+    )
     command = (
         "Add-Type -AssemblyName System.Windows.Forms; "
         "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
         "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog; "
         f"$dialog.Description = {ps_quote(title)}; "
         "$dialog.ShowNewFolderButton = $false; "
+        f"{selected_path_command}"
         "if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { "
         "  Write-Output $dialog.SelectedPath "
         "}"
@@ -66,22 +73,57 @@ def open_windows_directory_dialog(title: str) -> str:
     return run_dialog_command(command)
 
 
-def open_windows_file_dialog(title: str, kind: str) -> str:
+def open_windows_file_dialog(title: str, kind: str, initial_path: str = "") -> str:
     if kind == "model":
         filter_text = "Stable Diffusion model (*.safetensors;*.ckpt)|*.safetensors;*.ckpt|All files (*.*)|*.*"
     else:
         filter_text = "All files (*.*)|*.*"
+    initial_directory, file_name = resolve_file_dialog_initial_values(initial_path)
+    initial_directory_command = (
+        f"$dialog.InitialDirectory = {ps_quote(initial_directory)}; "
+        if initial_directory
+        else ""
+    )
+    file_name_command = f"$dialog.FileName = {ps_quote(file_name)}; " if file_name else ""
     command = (
         "Add-Type -AssemblyName System.Windows.Forms; "
         "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
         "$dialog = New-Object System.Windows.Forms.OpenFileDialog; "
         f"$dialog.Title = {ps_quote(title)}; "
         f"$dialog.Filter = {ps_quote(filter_text)}; "
+        f"{initial_directory_command}"
+        f"{file_name_command}"
         "if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { "
         "  Write-Output $dialog.FileName "
         "}"
     )
     return run_dialog_command(command)
+
+
+def resolve_dialog_initial_path(initial_path: str) -> str:
+    if not initial_path:
+        return ""
+    path = Path(initial_path)
+    if path.is_file():
+        return str(path.parent)
+    if path.is_dir():
+        return str(path)
+    if path.parent.is_dir():
+        return str(path.parent)
+    return ""
+
+
+def resolve_file_dialog_initial_values(initial_path: str) -> tuple[str, str]:
+    if not initial_path:
+        return "", ""
+    path = Path(initial_path)
+    if path.is_file():
+        return str(path.parent), path.name
+    if path.is_dir():
+        return str(path), ""
+    if path.parent.is_dir():
+        return str(path.parent), path.name
+    return "", ""
 
 
 def run_dialog_command(command: str) -> str:
@@ -151,7 +193,7 @@ def preset_detail(request: Request, preset_id: str) -> HTMLResponse:
 @app.get("/datasets", response_class=HTMLResponse)
 def datasets(request: Request) -> HTMLResponse:
     rows = fetch_all("SELECT * FROM datasets ORDER BY id DESC")
-    return render(request, "datasets.html", datasets=rows)
+    return render(request, "datasets.html", datasets=rows, default_dataset_path=str(settings.ROOT_DIR / "datasets"))
 
 
 @app.post("/datasets")
@@ -536,6 +578,7 @@ def job_new(request: Request) -> HTMLResponse:
         sample_prompt_templates=sample_prompt_templates,
         trigger_infos=trigger_infos,
         available_models=list_available_models(),
+        default_model_path=str(settings.ROOT_DIR / "models"),
     )
 
 
