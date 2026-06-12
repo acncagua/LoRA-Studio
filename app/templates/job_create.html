@@ -21,7 +21,7 @@
 <form method="post" action="/jobs" class="form-grid wide">
   <label>名前<input name="name" required></label>
   <label>データセット<select name="dataset_id" required>{% for dataset in datasets %}<option value="{{ dataset.id }}">#{{ dataset.id }} {{ dataset.name }}</option>{% endfor %}</select></label>
-  <label>プリセット<select name="preset_id" required>{% for preset in presets %}<option value="{{ preset.id }}">{{ preset.model_family }} / {{ preset.name }}</option>{% endfor %}</select></label>
+  <label>プリセット<select name="preset_id" required>{% for preset in presets %}<option value="{{ preset.id }}" {{ 'selected' if preset.id == default_preset_id else '' }}>{{ preset.option_label }}</option>{% endfor %}</select></label>
   <label>サンプルプロンプトテンプレート<select name="sample_prompt_template_id"><option value="">デフォルト生成プロンプト</option>{% for template in sample_prompt_templates %}<option value="{{ template.id }}">{{ template.name }}</option>{% endfor %}</select></label>
   <fieldset class="form-fieldset">
     <legend>使用モデル</legend>

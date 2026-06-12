@@ -52,6 +52,7 @@ app = FastAPI(title=settings.APP_NAME)
 app.mount("/static", StaticFiles(directory=settings.ROOT_DIR / "app" / "static"), name="static")
 
 RUBRIC_VERSION = "1.0"
+DEFAULT_JOB_PRESET_ID = "sdxl_2d_face_adamw8bit_standard"
 STRENGTH_LABELS = [
     ("", "未評価"),
     ("too_weak", "弱すぎ"),
@@ -278,6 +279,30 @@ def recommended_next_action(job: Any, selected_output: Any | None = None) -> str
     if status == "stopped":
         return "次にやること: 必要なら設定を見直し、ファイル準備後に実行してください。"
     return "次にやること: ジョブ詳細の操作パネルから次の操作を選んでください。"
+
+
+def preset_training_length_label(params: dict[str, Any]) -> str:
+    steps = params.get("max_train_steps")
+    if steps not in (None, ""):
+        return f"{steps} step"
+    epochs = params.get("max_train_epochs")
+    if epochs not in (None, ""):
+        return f"{epochs} epoch"
+    return "epoch/step未指定"
+
+
+def preset_option_rows(rows: list[Any]) -> list[dict[str, Any]]:
+    options = []
+    for row in rows:
+        item = dict(row)
+        try:
+            params = json.loads(item.get("params_json") or "{}")
+        except json.JSONDecodeError:
+            params = {}
+        item["training_length_label"] = preset_training_length_label(params)
+        item["option_label"] = f"{item['model_family']} / {item['name']} / {item['training_length_label']}"
+        options.append(item)
+    return options
 
 
 def job_latest_action(job: Any) -> str:
@@ -795,7 +820,7 @@ def jobs_list(request: Request) -> HTMLResponse:
 @app.get("/jobs/new", response_class=HTMLResponse)
 def job_new(request: Request) -> HTMLResponse:
     datasets = fetch_all("SELECT * FROM datasets ORDER BY id DESC")
-    presets = fetch_all("SELECT * FROM presets ORDER BY model_family DESC, name")
+    presets = preset_option_rows(fetch_all("SELECT * FROM presets ORDER BY model_family DESC, name"))
     sample_prompt_templates = fetch_all("SELECT * FROM sample_prompt_templates ORDER BY is_builtin DESC, name")
     trigger_infos = {row["dataset_id"]: row for row in fetch_all("SELECT * FROM dataset_analysis")}
     return render(
@@ -803,6 +828,7 @@ def job_new(request: Request) -> HTMLResponse:
         "job_create.html",
         datasets=datasets,
         presets=presets,
+        default_preset_id=DEFAULT_JOB_PRESET_ID,
         sample_prompt_templates=sample_prompt_templates,
         trigger_infos=trigger_infos,
         available_models=list_available_models(),
@@ -904,7 +930,7 @@ def job_edit(request: Request, job_id: int) -> HTMLResponse:
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     datasets = fetch_all("SELECT * FROM datasets ORDER BY id DESC")
-    presets = fetch_all("SELECT * FROM presets ORDER BY model_family DESC, name")
+    presets = preset_option_rows(fetch_all("SELECT * FROM presets ORDER BY model_family DESC, name"))
     sample_prompt_templates = fetch_all("SELECT * FROM sample_prompt_templates ORDER BY is_builtin DESC, name")
     dataset_versions = fetch_all("SELECT * FROM dataset_versions ORDER BY dataset_id, version_no DESC")
     editable = job["status"] in EDITABLE_JOB_STATUSES

@@ -37,7 +37,7 @@
   <label>プリセット
     <select name="preset_id" required>
       {% for preset in presets %}
-      <option value="{{ preset.id }}" {{ 'selected' if preset.id == job.preset_id else '' }}>{{ preset.model_family }} / {{ preset.name }}</option>
+      <option value="{{ preset.id }}" {{ 'selected' if preset.id == job.preset_id else '' }}>{{ preset.option_label }}</option>
       {% endfor %}
     </select>
   </label>
