@@ -126,6 +126,7 @@
         <dt>平滑Loss判定</dt><dd><span class="label {{ (metric_summary.smoothed_loss_label if metric_summary else 'unknown')|lower }}">{{ metric_summary.smoothed_loss_label if metric_summary else 'UNKNOWN' }}</span></dd>
         <dt>Epoch傾向</dt><dd><span class="label {{ (metric_summary.epoch_trend_label if metric_summary else 'unknown')|lower }}">{{ metric_summary.epoch_trend_label if metric_summary else 'UNKNOWN' }}</span></dd>
         <dt>補足</dt><dd>Loss healthは学習ログの健全性チェックであり、画像品質スコアではありません。WARNINGでもサンプル画像が良ければ採用候補になります。</dd>
+        {% if health_details.supplemental_note %}<dt>判定補足</dt><dd class="notice">{{ health_details.supplemental_note }}</dd>{% endif %}
       </dl>
     </div>
     <div>
@@ -136,8 +137,11 @@
         <dt>移動平均Final</dt><dd>{{ '%.6f'|format(metric_summary.moving_avg_final_loss) if metric_summary and metric_summary.moving_avg_final_loss is not none else '-' }}</dd>
         <dt>低下率</dt><dd>{{ '%.2f%%'|format(metric_summary.loss_drop_rate * 100) if metric_summary and metric_summary.loss_drop_rate is not none else '-' }}</dd>
         <dt>Volatility</dt><dd>{{ '%.6f'|format(metric_summary.loss_volatility) if metric_summary and metric_summary.loss_volatility is not none else '-' }}</dd>
-        <dt>Spikes</dt><dd>{{ metric_summary.spike_count if metric_summary else '-' }}</dd>
+        <dt>Adjusted Spikes</dt><dd>{{ health_details.adjusted_spike_count if health_details.adjusted_spike_count is not none else '-' }}</dd>
+        <dt>Raw Spikes</dt><dd>{{ health_details.raw_spike_count if health_details.raw_spike_count is not none else '-' }}</dd>
         <dt>Spikeしきい値</dt><dd>{{ health_details.spike_threshold or '-' }} ({{ health_details.spike_rule }})</dd>
+        <dt>Deltaしきい値</dt><dd>{{ health_details.spike_abs_delta_threshold }}</dd>
+        <dt>Medianしきい値</dt><dd>x{{ health_details.spike_median_ratio_threshold }} / +{{ health_details.spike_median_delta_threshold }}</dd>
         <dt>終盤Slope</dt><dd>{{ '%.6f'|format(health_details.late_stage_slope) if health_details.late_stage_slope is not none else '-' }}</dd>
         <dt>最終Loss</dt><dd>{{ '%.6f'|format(health_details.final_loss) if health_details.final_loss is not none else '-' }}</dd>
       </dl>
@@ -191,7 +195,7 @@
     <thead><tr><th>Epoch</th><th>平均Loss</th><th>移動平均</th><th>サンプル</th><th>顔</th><th>衣装</th><th>スタイル</th><th>安定性</th><th>総合</th><th>メモ数</th><th>出力</th><th>採用</th></tr></thead>
     <tbody>
       {% for epoch in epoch_visual_summaries %}
-      <tr>
+      <tr class="{{ 'epoch-selected' if epoch.output_selected else 'epoch-rated' if epoch.has_rating else '' }}">
         <td>{{ epoch.epoch }}</td>
         <td>{{ '%.6f'|format(epoch.avg_loss) if epoch.avg_loss is not none else '-' }}</td>
         <td>{{ '%.6f'|format(epoch.moving_avg_final_loss) if epoch.moving_avg_final_loss is not none else '-' }}</td>
@@ -201,7 +205,7 @@
         <td>{{ '%.2f'|format(epoch.avg_style) if epoch.avg_style is not none else '-' }}</td>
         <td>{{ '%.2f'|format(epoch.avg_stability) if epoch.avg_stability is not none else '-' }}</td>
         <td>{{ '%.2f'|format(epoch.avg_overall) if epoch.avg_overall is not none else '-' }}</td>
-        <td>{{ epoch.memo_count }}</td>
+        <td>{{ epoch.memo_count }}{% if epoch.has_rating %} <span class="label ok">評価済み</span>{% endif %}</td>
         <td>{{ epoch.output_file }}</td>
         <td>{{ '採用中' if epoch.output_selected else '' }}</td>
       </tr>

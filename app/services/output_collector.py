@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import shutil
 from pathlib import Path
@@ -107,16 +108,26 @@ def sync_sd_scripts_samples(run_dir: Path, output_dir: Path) -> None:
 def collect_models(job_id: int, models_dir: Path) -> int:
     if not models_dir.exists():
         return 0
+    job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
+    params = json.loads(job["params_json"]) if job else {}
+    max_epoch = int(params.get("max_train_epochs") or 0) or None
+    paths = sorted(models_dir.rglob("*.safetensors"))
+    inferred_epochs = {parse_epoch_step(path)[0] for path in paths}
+    missing_final_epoch = bool(max_epoch and max_epoch not in inferred_epochs)
+    final_epoch_assigned = False
     now = utc_now()
     inserted = 0
     with connect() as conn:
-        for path in sorted(models_dir.rglob("*.safetensors")):
+        for path in paths:
             file_path = str(path)
             existing = conn.execute(
                 "SELECT id, epoch, step FROM training_outputs WHERE job_id = ? AND file_path = ?",
                 (job_id, file_path),
             ).fetchone()
             epoch, step = parse_epoch_step(path)
+            if epoch is None and missing_final_epoch and not final_epoch_assigned:
+                epoch = max_epoch
+                final_epoch_assigned = True
             if existing:
                 sha256, metadata_error = safe_sha256_file(path)
                 conn.execute(

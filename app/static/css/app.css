@@ -97,6 +97,9 @@ textarea { min-height: 84px; }
 .compare-columns > div { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
 tr.changed td { background: #fff8e8; }
 tr.emphasis td:first-child { font-weight: 700; color: var(--accent-2); }
+tr.epoch-rated td { background: #f2f7ef; }
+tr.epoch-selected td { background: #e3f2ea; border-top: 2px solid var(--accent); border-bottom: 2px solid var(--accent); }
+tr.epoch-selected td:first-child { font-weight: 700; color: var(--accent); }
 .sample-compare-table figure { margin: 0; }
 .sample-compare-table img { width: min(100%, 260px); height: auto; display: block; border-radius: 6px; border: 1px solid var(--line); }
 .sample-compare-table figcaption { margin-top: 6px; color: var(--muted); font-size: 12px; word-break: break-word; }

@@ -1138,7 +1138,7 @@ def load_compare_job(job_id: int) -> dict[str, Any]:
 
 
 def decorate_epoch_summaries(epoch_rows: list[Any], outputs: list[Any], samples: list[Any]) -> list[dict[str, Any]]:
-    output_by_epoch = {row["epoch"]: row for row in outputs if row["epoch"] is not None}
+    output_by_epoch = outputs_by_epoch(outputs)
     sample_counts: dict[int, int] = {}
     for sample in samples:
         if sample["epoch"] is not None:
@@ -1152,6 +1152,20 @@ def decorate_epoch_summaries(epoch_rows: list[Any], outputs: list[Any], samples:
         item["output_selected"] = bool(output["selected"]) if output else False
         decorated.append(item)
     return decorated
+
+
+def outputs_by_epoch(outputs: list[Any]) -> dict[int, Any]:
+    output_by_epoch: dict[int, Any] = {}
+    for output in outputs:
+        if output["epoch"] is None:
+            continue
+        epoch = int(output["epoch"])
+        existing = output_by_epoch.get(epoch)
+        if existing is None or output["selected"] or (
+            not existing["selected"] and Path(output["file_path"]).stem.lower().endswith("final")
+        ):
+            output_by_epoch[epoch] = output
+    return output_by_epoch
 
 
 def clamp_rating(value: Any) -> int:
@@ -1240,6 +1254,7 @@ def build_epoch_visual_summaries(epoch_rows: list[dict[str, Any]], samples: list
     for epoch in sorted(set(samples_by_epoch) | {int(row["epoch"]) for row in epoch_rows if row.get("epoch") is not None}):
         loss_row = next((row for row in epoch_rows if int(row["epoch"]) == epoch), {})
         epoch_samples = samples_by_epoch.get(epoch, [])
+        has_rating = any(sample_has_rating(sample) for sample in epoch_samples)
         rows.append(
             {
                 "epoch": epoch,
@@ -1252,11 +1267,17 @@ def build_epoch_visual_summaries(epoch_rows: list[dict[str, Any]], samples: list
                 "avg_stability": average_rating(epoch_samples, "rating_stability"),
                 "avg_overall": average_rating(epoch_samples, "rating_overall"),
                 "memo_count": sum(1 for sample in epoch_samples if sample["memo"]),
+                "has_rating": has_rating,
                 "output_file": loss_row.get("output_file") or "-",
                 "output_selected": bool(loss_row.get("output_selected")),
             }
         )
     return rows
+
+
+def sample_has_rating(sample: Any) -> bool:
+    keys = ["rating", "rating_face", "rating_costume", "rating_style", "rating_stability", "rating_overall"]
+    return any((rating_value(sample, key) or 0) > 0 for key in keys)
 
 
 def compare_warnings(left: dict[str, Any], right: dict[str, Any]) -> list[str]:
@@ -1329,17 +1350,35 @@ def render_value(value: Any) -> str:
 
 def health_details(summary: Any, metric_count: int) -> dict[str, Any]:
     threshold = max(2, metric_count // 3) if metric_count else None
+    summary_data = {}
+    if summary and summary["summary_json"]:
+        try:
+            summary_data = json.loads(summary["summary_json"])
+        except json.JSONDecodeError:
+            summary_data = {}
+    raw_label = summary["raw_loss_label"] if summary else None
+    smoothed_label = summary["smoothed_loss_label"] if summary else None
+    epoch_label = summary["epoch_trend_label"] if summary else None
+    supplemental_note = ""
+    if (raw_label == "WARNING" or smoothed_label == "WARNING") and epoch_label == "OK":
+        supplemental_note = "step単位では揺れがありますが、epoch単位では破綻していません。画像評価が良ければ採用候補です。"
     return {
         "spike_threshold": threshold,
-        "spike_rule": "current loss > previous loss * 1.5",
+        "spike_rule": "raw: current > previous * 1.5 / adjusted: rawかつdelta > 0.02かつrolling medianから乖離",
         "quality_note": "Loss health is a training-log health check, not an image quality score.",
         "adoption_note": "WARNING can still be usable when sample images look better.",
         "spike_count": summary["spike_count"] if summary else None,
+        "raw_spike_count": summary_data.get("raw_spike_count", summary["spike_count"] if summary else None),
+        "adjusted_spike_count": summary_data.get("adjusted_spike_count", summary["spike_count"] if summary else None),
+        "spike_abs_delta_threshold": summary_data.get("spike_abs_delta_threshold", 0.02),
+        "spike_median_ratio_threshold": summary_data.get("spike_median_ratio_threshold", 1.35),
+        "spike_median_delta_threshold": summary_data.get("spike_median_delta_threshold", 0.02),
         "loss_volatility": summary["loss_volatility"] if summary else None,
         "late_stage_slope": summary["late_stage_slope"] if summary else None,
         "min_loss_step": summary["min_loss_step"] if summary else None,
         "final_loss": summary["final_loss"] if summary else None,
         "health_message": summary["health_message"] if summary else None,
+        "supplemental_note": supplemental_note,
     }
 
 

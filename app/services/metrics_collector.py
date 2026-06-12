@@ -144,6 +144,11 @@ def summarize_metrics(job_id: int) -> dict[str, Any]:
             "loss_drop_rate": None,
             "loss_volatility": None,
             "spike_count": 0,
+            "raw_spike_count": 0,
+            "adjusted_spike_count": 0,
+            "spike_abs_delta_threshold": 0.02,
+            "spike_median_ratio_threshold": 1.35,
+            "spike_median_delta_threshold": 0.02,
             "late_stage_slope": None,
             "raw_loss_label": "UNKNOWN",
             "smoothed_loss_label": "UNKNOWN",
@@ -158,7 +163,8 @@ def summarize_metrics(job_id: int) -> dict[str, Any]:
         final = losses[-1]
         min_index = min(range(len(losses)), key=lambda index: losses[index])
         deltas = [losses[index] - losses[index - 1] for index in range(1, len(losses))]
-        spike_count = sum(1 for index in range(1, len(losses)) if losses[index] > losses[index - 1] * 1.5)
+        spike_stats = count_loss_spikes(losses)
+        spike_count = spike_stats["adjusted_spike_count"]
         tail = max(2, len(losses) // 3)
         late_stage_slope = (losses[-1] - losses[-tail]) / max(1, steps[-1] - steps[-tail])
         loss_drop_rate = (initial - final) / initial if initial else None
@@ -188,6 +194,11 @@ def summarize_metrics(job_id: int) -> dict[str, Any]:
             "loss_drop_rate": loss_drop_rate,
             "loss_volatility": volatility,
             "spike_count": spike_count,
+            "raw_spike_count": spike_stats["raw_spike_count"],
+            "adjusted_spike_count": spike_stats["adjusted_spike_count"],
+            "spike_abs_delta_threshold": spike_stats["abs_delta_threshold"],
+            "spike_median_ratio_threshold": spike_stats["median_ratio_threshold"],
+            "spike_median_delta_threshold": spike_stats["median_delta_threshold"],
             "late_stage_slope": late_stage_slope,
             "raw_loss_label": raw_label,
             "smoothed_loss_label": smoothed_label,
@@ -271,7 +282,9 @@ def judge_health(
         return "DANGER", "Epoch average loss worsens late in training. " + "; ".join(parts)
     if smoothed_label == "DANGER":
         return "DANGER", "Smoothed loss rises sharply in the late stage. " + "; ".join(parts)
-    if raw_label == "WARNING" and smoothed_label == "OK" and epoch_label in {"OK", "UNKNOWN"}:
+    if (raw_label == "WARNING" or smoothed_label == "WARNING") and epoch_label == "OK":
+        return "WARNING", "Step loss has local fluctuation, but epoch trend is not broken. Sample images can still be adoption candidates. " + "; ".join(parts)
+    if raw_label == "WARNING" and smoothed_label == "OK" and epoch_label == "UNKNOWN":
         return "WARNING", "Raw loss has spikes, but smoothed trend is acceptable. " + "; ".join(parts)
     if smoothed_label == "WARNING" or epoch_label == "WARNING" or raw_label == "WARNING":
         return "WARNING", "Loss health has warnings; inspect smoothed loss and epoch summaries. " + "; ".join(parts)
@@ -287,6 +300,34 @@ def moving_average(values: list[float], window: int) -> list[float]:
         start = max(0, index - window + 1)
         result.append(sum(values[start:index + 1]) / (index - start + 1))
     return result
+
+
+def count_loss_spikes(losses: list[float]) -> dict[str, Any]:
+    raw_count = 0
+    adjusted_count = 0
+    abs_delta_threshold = 0.02
+    median_ratio_threshold = 1.35
+    median_delta_threshold = 0.02
+    for index in range(1, len(losses)):
+        previous = losses[index - 1]
+        current = losses[index]
+        ratio_spike = previous > 0 and current > previous * 1.5
+        if ratio_spike:
+            raw_count += 1
+        if not ratio_spike or current - previous <= abs_delta_threshold:
+            continue
+        history = losses[max(0, index - 5):index]
+        median = statistics.median(history) if history else previous
+        median_spike = median > 0 and current > median * median_ratio_threshold and current - median > median_delta_threshold
+        if median_spike:
+            adjusted_count += 1
+    return {
+        "raw_spike_count": raw_count,
+        "adjusted_spike_count": adjusted_count,
+        "abs_delta_threshold": abs_delta_threshold,
+        "median_ratio_threshold": median_ratio_threshold,
+        "median_delta_threshold": median_delta_threshold,
+    }
 
 
 def judge_raw_loss(losses: list[float], spike_count: int, loss_drop_rate: float | None) -> str:
@@ -358,7 +399,7 @@ def summarize_epochs(job_id: int) -> list[dict[str, Any]]:
         losses = [loss for _, loss in items]
         smoothed = moving_average(losses, 10)
         deltas = [losses[index] - losses[index - 1] for index in range(1, len(losses))]
-        spike_count = sum(1 for index in range(1, len(losses)) if losses[index] > losses[index - 1] * 1.5)
+        spike_count = count_loss_spikes(losses)["adjusted_spike_count"]
         summaries.append(
             {
                 "job_id": job_id,
