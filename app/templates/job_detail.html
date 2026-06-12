@@ -85,6 +85,10 @@
 <section>
   <h2>次回実験提案</h2>
   <p class="muted">ルールベースの次回実験提案です。自動実行はしません。必要な提案だけ下書きジョブ化して、人間が実行を押してください。</p>
+  <div class="actions">
+    <form method="post" action="/jobs/{{ job.id }}/recommendations/regenerate"><button type="submit">提案を再生成</button></form>
+    <form method="post" action="/jobs/{{ job.id }}/recommendations/export"><button type="submit">提案レポート出力</button></form>
+  </div>
   <table>
     <thead><tr><th>優先度</th><th>種別</th><th>タイトル</th><th>概要</th><th>理由</th><th>期待効果</th><th>リスク</th><th>状態</th><th>作成ジョブ</th><th>操作</th></tr></thead>
     <tbody>
@@ -108,7 +112,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="10" class="muted">提案はまだありません。`提案を再生成` を押してください。</td></tr>
+      <tr><td colspan="10" class="muted">提案はまだありません。上の「提案を再生成」を押してください。</td></tr>
       {% endfor %}
     </tbody>
   </table>
