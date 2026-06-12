@@ -291,9 +291,15 @@ def ensure_expected_conditions(run_id: int) -> list[Any]:
     preset = validation_preset_for_run(run)
     if preset is None:
         return []
-    count = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ?", (run_id,))
-    if count and int(count["count"]) == int(run["expected_image_count"] or 0) and int(count["count"]) > 0:
-        return fetch_all("SELECT * FROM validation_expected_conditions WHERE validation_run_id = ? ORDER BY expected_order", (run_id,))
+    existing_rows = fetch_all("SELECT * FROM validation_expected_conditions WHERE validation_run_id = ? ORDER BY expected_order", (run_id,))
+    condition_count = len(existing_rows)
+    expected_count = int(run["expected_image_count"] or 0) or preset_expected_count(preset)
+    if condition_count > 0 and condition_count == expected_count:
+        return existing_rows
+    image_count_row = fetch_one("SELECT COUNT(*) AS count FROM validation_images WHERE validation_run_id = ?", (run_id,))
+    image_count = int(image_count_row["count"] if image_count_row else 0)
+    if image_count > 0 and condition_count != expected_count:
+        return existing_rows
     conditions = expand_preset_conditions(preset, run["trigger_word"] or "", run["lora_filename"] or "", run["base_model"] or "")
     now = utc_now()
     with connect() as conn:
@@ -342,6 +348,25 @@ def ensure_expected_conditions(run_id: int) -> list[Any]:
         )
     relink_validation_images(run_id)
     return fetch_all("SELECT * FROM validation_expected_conditions WHERE validation_run_id = ? ORDER BY expected_order", (run_id,))
+
+
+def expected_condition_mismatch_warning(run_id: int) -> str:
+    run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (run_id,))
+    if run is None or not run["validation_preset_id"]:
+        return ""
+    preset = validation_preset_for_run(run)
+    expected_count = int(run["expected_image_count"] or 0) or (preset_expected_count(preset) if preset else 0)
+    condition_row = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ?", (run_id,))
+    image_row = fetch_one("SELECT COUNT(*) AS count FROM validation_images WHERE validation_run_id = ?", (run_id,))
+    condition_count = int(condition_row["count"] if condition_row else 0)
+    image_count = int(image_row["count"] if image_row else 0)
+    if image_count > 0 and expected_count and condition_count != expected_count:
+        return (
+            "Expected Condition count mismatch: "
+            f"expected {expected_count}, actual {condition_count}. "
+            "既存画像が登録済みのため、condition_hashを維持して自動再生成は行いません。"
+        )
+    return ""
 
 
 def write_validation_prompt_pack(run_id: int) -> dict[str, str]:
@@ -453,6 +478,7 @@ def load_validation_run_bundle(run_id: int) -> dict[str, Any]:
         "reference_set": reference_set,
         "reference_images": reference_images,
         "output_dir": str(validation_run_dir(run_id)),
+        "condition_warning": expected_condition_mismatch_warning(run_id),
     }
 
 

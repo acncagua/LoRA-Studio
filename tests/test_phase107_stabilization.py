@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from PIL import Image
 
 from app import settings
-from app.db import connect, fetch_one, init_db, utc_now
+from app.db import connect, fetch_all, fetch_one, init_db, utc_now
 
 
 class IsolatedDbTest(unittest.TestCase):
@@ -36,7 +36,7 @@ class IsolatedDbTest(unittest.TestCase):
         return path
 
 
-class Phase1071Tests(IsolatedDbTest):
+class Phase107StabilizationTests(IsolatedDbTest):
     def test_init_db_and_validation_presets(self) -> None:
         count = fetch_one("SELECT COUNT(*) AS count FROM validation_presets")["count"]
         standard = fetch_one("SELECT expected_image_count FROM validation_presets WHERE id = 'standard_validation_v1'")
@@ -192,6 +192,64 @@ class Phase1071Tests(IsolatedDbTest):
         response = validation_image_file(int(image["id"]))
         self.assertEqual(response.status_code, 200)
 
+    def test_quoted_legacy_external_validation_path_is_normalized(self) -> None:
+        source = self.make_png(self.root / "source" / "quoted legacy.png")
+        job_id = self.create_basic_job()
+        from app.main import job_add_validation_image
+
+        job_add_validation_image(
+            job_id,
+            f'  "{source}"  ',
+            validation_type="external",
+            prompt="",
+            negative_prompt="",
+            base_model="",
+            sampler="",
+            steps="",
+            cfg_scale="",
+            width="",
+            height="",
+            hires_enabled="",
+            hires_scale="",
+            lora_weights="0.6",
+            seeds="123",
+            rating_face=0,
+            rating_costume=0,
+            rating_style=0,
+            rating_stability=0,
+            rating_overall=0,
+            strength_label="",
+            overfit_level="",
+            adoption_label="",
+            failure_tags=[],
+            recommended_weight_min="",
+            recommended_weight_max="",
+            memo="",
+        )
+        image = fetch_one("SELECT * FROM validation_images WHERE job_id = ?", (job_id,))
+        self.assertTrue(Path(image["image_path"]).exists())
+
+    def test_validation_image_delivery_rejects_broken_managed_image(self) -> None:
+        managed_dir = settings.EXPORTS_DIR / "validation_runs" / "broken" / "images"
+        managed_dir.mkdir(parents=True, exist_ok=True)
+        broken = managed_dir / "broken.png"
+        broken.write_text("not an image", encoding="utf-8")
+        now = utc_now()
+        with connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO validation_images(job_id, image_path, validation_type, created_at, updated_at)
+                VALUES (1, ?, 'test', ?, ?)
+                """,
+                (str(broken), now, now),
+            )
+            image_id = int(cur.lastrowid)
+        from app.main import validation_image_file
+
+        with self.assertRaises(HTTPException) as raised:
+            validation_image_file(image_id)
+        self.assertEqual(raised.exception.status_code, 404)
+
     def test_validation_result_can_be_saved_without_image_path(self) -> None:
         job_id = self.create_basic_job()
         from app.main import job_add_validation_result
@@ -210,6 +268,26 @@ class Phase1071Tests(IsolatedDbTest):
         )
         row = fetch_one("SELECT * FROM validation_results WHERE job_id = ?", (job_id,))
         self.assertEqual(row["image_path"], "")
+
+    def test_quoted_validation_result_image_path_is_normalized(self) -> None:
+        source = self.make_png(self.root / "source" / "quoted result.png")
+        job_id = self.create_basic_job()
+        from app.main import job_add_validation_result
+
+        job_add_validation_result(
+            job_id,
+            "basic_face",
+            0.6,
+            face_score=0,
+            costume_score=0,
+            stability_score=0,
+            flexibility_score=0,
+            overall_score=3,
+            memo="quoted image",
+            image_path=f" '{source}' ",
+        )
+        row = fetch_one("SELECT * FROM validation_results WHERE job_id = ?", (job_id,))
+        self.assertTrue(Path(row["image_path"]).exists())
 
     def test_backfills_legacy_expected_condition_columns_without_hash_change(self) -> None:
         job_id = self.create_basic_job()
@@ -246,6 +324,73 @@ class Phase1071Tests(IsolatedDbTest):
         prompt_pack = Path(paths["prompts_md"]).read_text(encoding="utf-8")
         self.assertIn("testchar", prompt_pack)
         self.assertIn("Prompt:", prompt_pack)
+
+    def test_existing_validation_run_with_images_preserves_condition_mismatch(self) -> None:
+        source = self.make_png(self.root / "source" / "validation mismatch.png")
+        job_id = self.create_basic_job()
+        from app.main import register_validation_run_image
+        from app.services.validation_runs import create_validation_run, ensure_expected_conditions, load_validation_run_bundle
+
+        run_id = create_validation_run(job_id, "standard_validation_v1", "base", "testchar", "")
+        first = fetch_one("SELECT * FROM validation_expected_conditions WHERE validation_run_id = ? ORDER BY expected_order LIMIT 1", (run_id,))
+        register_validation_run_image(
+            run_id,
+            str(source),
+            "individual",
+            first["prompt_key"],
+            int(first["seed"]),
+            float(first["lora_weight"]),
+            bool(first["hires_enabled"]),
+            "",
+        )
+        with connect() as conn:
+            conn.execute(
+                """
+                DELETE FROM validation_expected_conditions
+                WHERE validation_run_id = ?
+                  AND id != ?
+                  AND expected_order = 45
+                """,
+                (run_id, first["id"]),
+            )
+
+        rows = ensure_expected_conditions(run_id)
+        self.assertEqual(len(rows), 44)
+        hashes = [row["condition_hash"] for row in fetch_all("SELECT condition_hash FROM validation_expected_conditions WHERE validation_run_id = ?", (run_id,))]
+        self.assertIn(first["condition_hash"], hashes)
+        image = fetch_one("SELECT * FROM validation_images WHERE validation_run_id = ?", (run_id,))
+        self.assertEqual(image["expected_condition_id"], first["id"])
+        bundle = load_validation_run_bundle(run_id)
+        self.assertIn("Expected Condition count mismatch", bundle["condition_warning"])
+
+    def test_reference_image_delivery_rejects_broken_managed_image(self) -> None:
+        managed_dir = settings.EXPORTS_DIR / "reference_sets" / "reference_set_000001" / "images"
+        managed_dir.mkdir(parents=True, exist_ok=True)
+        broken = managed_dir / "broken.png"
+        broken.write_text("not an image", encoding="utf-8")
+        now = utc_now()
+        with connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO reference_sets(name, created_at, updated_at)
+                VALUES ('test refs', ?, ?)
+                """,
+                (now, now),
+            )
+            set_id = int(cur.lastrowid)
+            cur = conn.execute(
+                """
+                INSERT INTO reference_images(reference_set_id, image_path, image_role, created_at)
+                VALUES (?, ?, 'face', ?)
+                """,
+                (set_id, str(broken), now),
+            )
+            image_id = int(cur.lastrowid)
+        from app.main import reference_image_file
+
+        with self.assertRaises(HTTPException) as raised:
+            reference_image_file(image_id)
+        self.assertEqual(raised.exception.status_code, 404)
 
 
 class StartHelperTests(unittest.TestCase):

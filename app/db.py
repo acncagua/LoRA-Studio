@@ -4,8 +4,10 @@ import json
 import sqlite3
 import subprocess
 import hashlib
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from collections.abc import Iterator
 from typing import Any
 
 from app.app_version import APP_VERSION, DB_SCHEMA_VERSION
@@ -17,12 +19,29 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+class ClosingConnection(sqlite3.Connection):
+    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> bool:
+        result = super().__exit__(exc_type, exc_value, traceback)
+        self.close()
+        return result
+
+
 def connect() -> sqlite3.Connection:
     settings.DATA_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(settings.DB_PATH)
+    conn = sqlite3.connect(settings.DB_PATH, factory=ClosingConnection)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+
+@contextmanager
+def db_session() -> Iterator[sqlite3.Connection]:
+    conn = connect()
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def init_db() -> None:
@@ -600,12 +619,12 @@ def seed_legacy_validation_run(conn: sqlite3.Connection) -> None:
 
 
 def fetch_all(query: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
-    with connect() as conn:
+    with db_session() as conn:
         return list(conn.execute(query, params).fetchall())
 
 
 def fetch_one(query: str, params: tuple[Any, ...] = ()) -> sqlite3.Row | None:
-    with connect() as conn:
+    with db_session() as conn:
         return conn.execute(query, params).fetchone()
 
 

@@ -171,6 +171,28 @@ def known_warnings(counts: dict[str, int]) -> list[str]:
     )
     if incomplete and int(incomplete["count"]) > 0:
         warnings.append("Validation Runでregistered数がexpected未満のものがあります。Recommendationの信頼度に注意してください。")
+    mismatch = fetch_one(
+        """
+        SELECT COUNT(*) AS count
+        FROM validation_runs r
+        LEFT JOIN (
+            SELECT validation_run_id, COUNT(*) AS condition_count
+            FROM validation_expected_conditions
+            GROUP BY validation_run_id
+        ) c ON c.validation_run_id = r.id
+        LEFT JOIN (
+            SELECT validation_run_id, COUNT(*) AS image_count
+            FROM validation_images
+            WHERE validation_run_id IS NOT NULL
+            GROUP BY validation_run_id
+        ) i ON i.validation_run_id = r.id
+        WHERE r.validation_preset_id IS NOT NULL
+          AND COALESCE(i.image_count, 0) > 0
+          AND COALESCE(c.condition_count, 0) != COALESCE(r.expected_image_count, 0)
+        """
+    )
+    if mismatch and int(mismatch["count"]) > 0:
+        warnings.append("Expected Condition count mismatch: 登録済み画像を保護するため、既存condition_hashを維持して自動再生成をスキップしています。")
     if counts["validation_runs"] == 0:
         warnings.append("Validation Runがまだありません。採用LoRAの外部Validationは未確認です。")
     return warnings

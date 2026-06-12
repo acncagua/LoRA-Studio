@@ -10,6 +10,7 @@
 </header>
 
 {% if report_path %}<p class="notice">Validation Reportを出力しました: {{ report_path }}</p>{% endif %}
+{% if condition_warning %}<p class="notice warning">{{ condition_warning }}</p>{% endif %}
 {% if apply_result %}
 <section class="notice">
   <h2>Profile反映結果</h2>

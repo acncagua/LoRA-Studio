@@ -1,10 +1,10 @@
 ﻿# LoRA-Studio
 
-Stable Diffusion系LoRA、特にSDXL/SD1.5の2Dキャラクター顔LoRA学習をローカルで管理するための支援ツールです。MVPでは自動最適化ではなく、学習実験の作成、実行準備、ログ、loss健全性、サンプル画像比較、採用epoch判断を一元管理することを目的にします。
+Stable Diffusion系LoRA、特にSDXL/SD1.5の2Dキャラクター顔LoRA学習をローカルで管理するための支援ツールです。Phase10.7系の運用ベータでは自動最適化ではなく、学習実験の作成、実行準備、ログ、loss健全性、サンプル画像比較、採用epoch判断、外部Validation、次回実験提案を一元管理することを目的にします。
 
 現在の運用ベータ記録は `CHANGELOG.md` の `v0.1-beta` を参照してください。
 
-## MVP範囲
+## 運用ベータ範囲
 
 - FastAPI + Jinja2 + SQLite のローカルWebアプリ
 - SQLite DB初期化
@@ -43,7 +43,7 @@ venv作成に使うPythonは、`data/python_cmd.txt`、`LORA_STUDIO_PYTHON_EXE` 
 
 ## sd-scripts環境構築
 
-MVPでは `kohya-ss/sd-scripts` の最新リリースとして確認した `v0.10.5` を使用します。
+運用ベータでは `kohya-ss/sd-scripts` の最新リリースとして確認した `v0.10.5` を使用します。
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\setup_sd_scripts.ps1 -ReleaseTag v0.10.5 -CudaProfile cu128 -MixedPrecision bf16
@@ -356,4 +356,4 @@ LoRA-Studio側のsha256計算はストリーミング処理で行い、ファイ
 - 同時実行できる学習ジョブは1件のみ。
 - loss解析はTensorBoardまたはtrain.logから取得できる範囲の簡易集計です。
 - epoch比較UIはJob詳細内のprompt別サンプル比較が中心です。
-- AIによる画像自動評価やパラメータ自動最適化はMVP対象外。
+- AIによる画像自動評価やパラメータ自動最適化は運用ベータ対象外。

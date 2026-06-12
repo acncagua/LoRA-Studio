@@ -37,3 +37,22 @@ LoRA-Studioを運用ベータ前の安定化状態として記録します。目
 - HiresありValidationは標準比較ではなく、最終見栄え確認用です。
 - Validation Runでregistered数がexpected未満の場合は、Recommendationの信頼度に注意してください。
 - Backup初期版は大型モデル、画像、動画、zipを除外し、DB、設定、exports内の軽量ファイル、reportsを中心に保存します。
+
+### Phase10.7.1 Stabilization
+
+- 起動時のポート解放をアプリ指定ポートに限定し、`7865` を既定でkillしないように整理しました。
+- Validation / Reference画像配信を管理ディレクトリ配下に制限し、Reference画像は管理rootへコピー保存する運用へ寄せました。
+- Validation Presetのsnapshot保存とExpected Condition固定化を追加し、旧Validation Pack系UIをLegacy扱いに整理しました。
+
+### Phase10.7.2 Emergency Stabilization
+
+- Validation Run画像登録時の `sqlite3.Row.get` 問題を修正し、Expected Condition一致時に `expected_condition_id` が入るようにしました。
+- Legacy External Validation画像とValidation Result画像の管理rootコピーを統一し、Validation Resultは画像なし登録を維持しました。
+- 既存Validation RunのExpected Condition backfillと、既存画像パスを管理rootへ移行するoneoff scriptを追加しました。
+
+### Phase10.7.3 Stabilization
+
+- SQLite接続のclose漏れを減らし、`fetch_all()` / `fetch_one()` を明示的にcloseする形へ整理しました。
+- 画像登録済みValidation RunではExpected Condition不一致があっても自動DELETE/再生成せず、既存condition_hashを保護するようにしました。
+- Validation / Reference画像配信時にPIL verifyを行い、壊れた画像や非画像を返さないようにしました。
+- ユーザー入力パスの前後空白・引用符を正規化し、Windowsダイアログ由来の引用符付きパスを受けられるようにしました。

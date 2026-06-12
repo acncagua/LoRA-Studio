@@ -10,6 +10,13 @@ from app import settings
 ALLOWED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
 
+def normalize_user_path(value: str | Path) -> str:
+    text = str(value or "").strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in {"'", '"'}:
+        text = text[1:-1].strip()
+    return text
+
+
 def verify_image_file(path: Path) -> None:
     if path.suffix.lower() not in ALLOWED_IMAGE_SUFFIXES:
         raise ValueError("Unsupported image extension. Use png, jpg, jpeg, or webp.")
@@ -23,6 +30,7 @@ def verify_image_file(path: Path) -> None:
 
 
 def unique_copy(source: Path, target_dir: Path) -> Path:
+    source = Path(normalize_user_path(source))
     verify_image_file(source)
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / source.name
@@ -52,7 +60,7 @@ def reference_images_root() -> Path:
 
 
 def ensure_allowed_file(path_text: str, root: Path, label: str) -> Path:
-    path = Path(path_text).resolve()
+    path = Path(normalize_user_path(path_text)).resolve()
     if not is_relative_to(path, root):
         raise PermissionError(f"{label} path is outside the allowed managed directory")
     if not path.exists() or not path.is_file():
@@ -65,5 +73,5 @@ def managed_reference_image_dir(reference_set_id: int) -> Path:
 
 
 def copy_managed_reference_image(reference_set_id: int, source_path: str) -> str:
-    target = unique_copy(Path(source_path), managed_reference_image_dir(reference_set_id))
+    target = unique_copy(Path(normalize_user_path(source_path)), managed_reference_image_dir(reference_set_id))
     return str(target)
