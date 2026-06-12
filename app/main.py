@@ -30,7 +30,7 @@ from app.services.image_store import (
 from app.services.maintenance import create_app_backup, export_diagnostics, maintenance_summary
 from app.services.output_collector import collect_job_results
 from app.services.recommendations import create_draft_job_from_recommendation, list_recommendations, regenerate_recommendations, set_recommendation_status, write_recommendation_report
-from app.services.training_runner import read_log_tail, start_job, stop_job
+from app.services.training_runner import read_log_tail, start_job, stop_job, validate_job_ready
 from app.services.validation_runs import (
     apply_suggestion_to_profile,
     calculate_suggested_weights,
@@ -225,6 +225,81 @@ def is_windows() -> bool:
     return sys.platform == "win32"
 
 
+STATUS_LABELS = {
+    "draft": "下書き",
+    "prepared": "準備済み",
+    "prepared_dirty": "設定変更あり",
+    "running": "実行中",
+    "completed": "完了",
+    "failed": "失敗",
+    "stopped": "停止",
+}
+
+EDITABLE_JOB_STATUSES = {"draft", "prepared", "prepared_dirty", "failed", "stopped"}
+
+
+def job_action_state(job: Any, selected_output: Any | None = None) -> dict[str, Any]:
+    status = job["status"]
+    dirty = bool(job["config_dirty"] if "config_dirty" in job.keys() else 0)
+    return {
+        "edit": status in EDITABLE_JOB_STATUSES,
+        "prepare": status in {"draft", "prepared", "prepared_dirty", "failed", "stopped"},
+        "preflight": status == "prepared" and not dirty,
+        "run": status in {"prepared", "failed", "stopped"} and not dirty,
+        "stop": status == "running",
+        "reimport": status in {"completed", "failed", "stopped"},
+        "select": status == "completed",
+        "clone": status != "running",
+        "revised": status in {"running", "completed"},
+        "compare": status == "completed",
+        "export": status == "completed" and selected_output is not None,
+        "contact_sheet": status == "completed",
+        "dirty": dirty,
+    }
+
+
+def recommended_next_action(job: Any, selected_output: Any | None = None) -> str:
+    status = job["status"]
+    dirty = bool(job["config_dirty"] if "config_dirty" in job.keys() else 0)
+    if dirty or status == "prepared_dirty":
+        return "次にやること: 設定が変更されています。実行前にファイル準備を再実行してください。"
+    if status == "draft":
+        return "次にやること: 編集内容を確認し、ファイル準備を実行してください。"
+    if status == "prepared":
+        return "次にやること: 事前確認後、実行できます。"
+    if status == "running":
+        return "次にやること: 学習中です。train.logを確認できます。必要なら停止してください。"
+    if status == "completed" and selected_output is not None:
+        return "次にやること: 採用LoRA出力またはValidation Runを作成してください。"
+    if status == "completed":
+        return "次にやること: sample画像を評価し、採用LoRAを選択してください。"
+    if status == "failed":
+        return "次にやること: train.log末尾を確認し、設定を修正して再度ファイル準備を実行してください。"
+    if status == "stopped":
+        return "次にやること: 必要なら設定を見直し、ファイル準備後に実行してください。"
+    return "次にやること: ジョブ詳細の操作パネルから次の操作を選んでください。"
+
+
+def job_latest_action(job: Any) -> str:
+    status = job["status"]
+    dirty = bool(job["config_dirty"] if "config_dirty" in job.keys() else 0)
+    if dirty or status == "prepared_dirty":
+        return "再準備が必要"
+    if status == "draft":
+        return "ファイル準備"
+    if status == "prepared":
+        return "事前確認 / 実行"
+    if status == "running":
+        return "ログ確認 / 停止"
+    if status == "completed":
+        return "評価 / Export / 比較"
+    if status == "failed":
+        return "ログ確認 / 修正"
+    if status == "stopped":
+        return "再準備 / 実行"
+    return "詳細確認"
+
+
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request) -> HTMLResponse:
     stats = {
@@ -237,8 +312,34 @@ def dashboard(request: Request) -> HTMLResponse:
         "stopped": fetch_one("SELECT COUNT(*) AS count FROM training_jobs WHERE status = 'stopped'")["count"],
     }
     jobs = fetch_all("SELECT * FROM training_jobs ORDER BY id DESC LIMIT 8")
+    attention_jobs = fetch_all(
+        """
+        SELECT * FROM training_jobs
+        WHERE status IN ('draft', 'prepared', 'prepared_dirty', 'failed', 'running')
+           OR COALESCE(config_dirty, 0) = 1
+        ORDER BY
+            CASE status
+                WHEN 'running' THEN 1
+                WHEN 'failed' THEN 2
+                WHEN 'prepared_dirty' THEN 3
+                WHEN 'prepared' THEN 4
+                WHEN 'draft' THEN 5
+                ELSE 9
+            END,
+            id DESC
+        LIMIT 10
+        """
+    )
     validation_profiles = lora_library_profiles(limit=6)
-    return render(request, "dashboard.html", stats=stats, jobs=jobs, validation_profiles=validation_profiles)
+    return render(
+        request,
+        "dashboard.html",
+        stats=stats,
+        jobs=jobs,
+        attention_jobs=attention_jobs,
+        validation_profiles=validation_profiles,
+        status_labels=STATUS_LABELS,
+    )
 
 
 @app.get("/maintenance", response_class=HTMLResponse)
@@ -665,6 +766,32 @@ def decode_analysis(row: Any) -> dict[str, Any]:
     return decoded
 
 
+@app.get("/jobs", response_class=HTMLResponse)
+def jobs_list(request: Request) -> HTMLResponse:
+    rows = fetch_all(
+        """
+        SELECT
+            j.*,
+            d.name AS dataset_name,
+            p.name AS preset_name,
+            p.model_family AS preset_family,
+            s.health_label AS summary_health_label
+        FROM training_jobs j
+        LEFT JOIN datasets d ON d.id = j.dataset_id
+        LEFT JOIN presets p ON p.id = j.preset_id
+        LEFT JOIN training_metric_summaries s ON s.job_id = j.id
+        ORDER BY j.id DESC
+        """
+    )
+    jobs = []
+    for row in rows:
+        item = dict(row)
+        item["latest_action"] = job_latest_action(row)
+        item["actions"] = job_action_state(row, None)
+        jobs.append(item)
+    return render(request, "jobs.html", jobs=jobs, status_labels=STATUS_LABELS)
+
+
 @app.get("/jobs/new", response_class=HTMLResponse)
 def job_new(request: Request) -> HTMLResponse:
     datasets = fetch_all("SELECT * FROM datasets ORDER BY id DESC")
@@ -687,7 +814,7 @@ def job_new(request: Request) -> HTMLResponse:
 @app.post("/jobs")
 def job_create(name: str = Form(...), dataset_id: int = Form(...), preset_id: str = Form(...), base_model_path: str = Form(...), vae_path: str = Form(""), output_name: str = Form(""), memo: str = Form(""), sample_prompt_template_id: str = Form("")) -> RedirectResponse:
     job_id = create_job({"name": name, "dataset_id": dataset_id, "preset_id": preset_id, "base_model_path": base_model_path, "vae_path": vae_path, "output_name": output_name, "memo": memo, "sample_prompt_template_id": sample_prompt_template_id})
-    return RedirectResponse(f"/jobs/{job_id}", status_code=303)
+    return RedirectResponse(f"/jobs/{job_id}?created=1", status_code=303)
 
 
 def list_available_models() -> list[dict[str, str]]:
@@ -702,7 +829,13 @@ def list_available_models() -> list[dict[str, str]]:
 
 
 @app.get("/jobs/{job_id}", response_class=HTMLResponse)
-def job_detail(request: Request, job_id: int, exported: str | None = None) -> HTMLResponse:
+def job_detail(
+    request: Request,
+    job_id: int,
+    exported: str | None = None,
+    created: str | None = None,
+    preflight: str | None = None,
+) -> HTMLResponse:
     job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -756,8 +889,167 @@ def job_detail(request: Request, job_id: int, exported: str | None = None) -> HT
         default_project_path=str(settings.ROOT_DIR),
         dataset_version=dataset_version,
         no_metadata_enabled=bool(params.get("no_metadata")),
+        action_state=job_action_state(job, selected_output),
+        next_action=recommended_next_action(job, selected_output),
+        status_labels=STATUS_LABELS,
+        created=created,
+        preflight=preflight,
         exported=exported,
     )
+
+
+@app.get("/jobs/{job_id}/edit", response_class=HTMLResponse)
+def job_edit(request: Request, job_id: int) -> HTMLResponse:
+    job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    datasets = fetch_all("SELECT * FROM datasets ORDER BY id DESC")
+    presets = fetch_all("SELECT * FROM presets ORDER BY model_family DESC, name")
+    sample_prompt_templates = fetch_all("SELECT * FROM sample_prompt_templates ORDER BY is_builtin DESC, name")
+    dataset_versions = fetch_all("SELECT * FROM dataset_versions ORDER BY dataset_id, version_no DESC")
+    editable = job["status"] in EDITABLE_JOB_STATUSES
+    return render(
+        request,
+        "job_edit.html",
+        job=job,
+        params=json.loads(job["params_json"]),
+        params_json_pretty=json.dumps(json.loads(job["params_json"]), ensure_ascii=False, indent=2),
+        datasets=datasets,
+        presets=presets,
+        sample_prompt_templates=sample_prompt_templates,
+        dataset_versions=dataset_versions,
+        available_models=list_available_models(),
+        default_model_path=str(settings.ROOT_DIR / "models"),
+        editable=editable,
+        status_labels=STATUS_LABELS,
+    )
+
+
+@app.post("/jobs/{job_id}/edit")
+def job_edit_save(
+    job_id: int,
+    name: str = Form(...),
+    dataset_id: int = Form(...),
+    dataset_version_id: str = Form(""),
+    preset_id: str = Form(...),
+    base_model_path: str = Form(...),
+    vae_path: str = Form(""),
+    output_name: str = Form(...),
+    sample_prompt_template_id: str = Form(""),
+    memo: str = Form(""),
+    max_train_epochs: str = Form(""),
+    repeats: str = Form(""),
+    train_batch_size: str = Form(""),
+    learning_rate: str = Form(""),
+    unet_lr: str = Form(""),
+    text_encoder_lr: str = Form(""),
+    network_dim: str = Form(""),
+    network_alpha: str = Form(""),
+    resolution: str = Form(""),
+    save_every_n_epochs: str = Form(""),
+    sample_every_n_epochs: str = Form(""),
+    optimizer_type: str = Form(""),
+    lr_scheduler: str = Form(""),
+    no_metadata: str = Form(""),
+    params_json: str = Form("{}"),
+) -> RedirectResponse:
+    job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job["status"] not in EDITABLE_JOB_STATUSES:
+        raise HTTPException(status_code=400, detail="このジョブは実行済みまたは実行中のため、直接編集できません。派生ドラフトを作成してください。")
+    preset = fetch_one("SELECT * FROM presets WHERE id = ?", (preset_id,))
+    dataset = fetch_one("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
+    if preset is None or dataset is None:
+        raise HTTPException(status_code=400, detail="プリセットまたはデータセットが見つかりません。")
+    try:
+        params = json.loads(params_json or "{}")
+        if not isinstance(params, dict):
+            raise ValueError("params_json must be an object")
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"Advanced JSONを読み込めません: {exc}") from exc
+    try:
+        update_params_from_form(
+            params,
+            {
+                "max_train_epochs": max_train_epochs,
+                "repeats": repeats,
+                "train_batch_size": train_batch_size,
+                "learning_rate": learning_rate,
+                "unet_lr": unet_lr,
+                "text_encoder_lr": text_encoder_lr,
+                "network_dim": network_dim,
+                "network_alpha": network_alpha,
+                "resolution": resolution,
+                "save_every_n_epochs": save_every_n_epochs,
+                "sample_every_n_epochs": sample_every_n_epochs,
+                "optimizer_type": optimizer_type,
+                "lr_scheduler": lr_scheduler,
+            },
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"主要パラメータの値が不正です: {exc}") from exc
+    params["no_metadata"] = bool(no_metadata)
+    selected_version_id = optional_int(dataset_version_id)
+    if selected_version_id is None:
+        version = fetch_one("SELECT id FROM dataset_versions WHERE dataset_id = ? ORDER BY version_no DESC LIMIT 1", (dataset_id,))
+        selected_version_id = version["id"] if version else None
+    analysis = fetch_one("SELECT * FROM dataset_analysis WHERE dataset_id = ?", (dataset_id,))
+    next_status = "prepared_dirty" if job["status"] in {"prepared", "prepared_dirty"} else "draft"
+    dirty = 1 if job["status"] != "draft" else 0
+    now = settings_now()
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE training_jobs
+            SET name = ?, dataset_id = ?, dataset_version_id = ?, preset_id = ?,
+                model_family = ?, training_script = ?, base_model_path = ?, vae_path = ?,
+                output_name = ?, sample_prompt_template_id = ?, memo = ?,
+                params_json = ?, status = ?, config_dirty = ?, command_line = NULL,
+                trigger_word_at_creation = ?, trigger_occurrence_count_at_creation = ?,
+                trigger_occurrence_rate_at_creation = ?, trigger_consistency_label_at_creation = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                name.strip(),
+                dataset_id,
+                selected_version_id,
+                preset_id,
+                preset["model_family"],
+                preset["training_script"],
+                base_model_path.strip(),
+                vae_path.strip() or None,
+                output_name.strip() or name.strip().replace(" ", "_"),
+                sample_prompt_template_id.strip() or None,
+                memo.strip(),
+                json.dumps(params, ensure_ascii=False, indent=2),
+                next_status,
+                dirty,
+                dataset["trigger_word"] or "",
+                analysis["trigger_word_count"] if analysis else None,
+                analysis["trigger_word_rate"] if analysis else None,
+                analysis["trigger_consistency_label"] if analysis else None,
+                now,
+                job_id,
+            ),
+        )
+    return RedirectResponse(f"/jobs/{job_id}?preflight=edited", status_code=303)
+
+
+@app.post("/jobs/{job_id}/preflight")
+def job_preflight(job_id: int, acknowledge_trigger_mismatch: str = Form("")) -> RedirectResponse:
+    try:
+        validate_job_ready(job_id, acknowledge_trigger_mismatch=acknowledge_trigger_mismatch == "yes")
+    except Exception as exc:
+        return RedirectResponse(f"/jobs/{job_id}?preflight={quote('NG: ' + str(exc))}", status_code=303)
+    return RedirectResponse(f"/jobs/{job_id}?preflight={quote('OK: 実行できます。')}", status_code=303)
+
+
+@app.post("/jobs/{job_id}/revised-draft")
+def job_create_revised_draft(job_id: int) -> RedirectResponse:
+    new_id = create_revised_draft(job_id)
+    return RedirectResponse(f"/jobs/{new_id}/edit", status_code=303)
 
 
 @app.post("/jobs/{job_id}/prepare")
@@ -765,12 +1057,14 @@ def job_prepare(job_id: int) -> RedirectResponse:
     job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
+    if job["status"] not in {"draft", "prepared", "prepared_dirty", "failed", "stopped"}:
+        raise HTTPException(status_code=400, detail="この状態のジョブではファイル準備を実行できません。")
     dataset = fetch_one("SELECT * FROM datasets WHERE id = ?", (job["dataset_id"],))
     if dataset is None:
         raise HTTPException(status_code=400, detail="Dataset not found")
     files = prepare_job_files(dict(job), dict(dataset))
     with connect() as conn:
-        conn.execute("UPDATE training_jobs SET command_line = ?, status = 'prepared', updated_at = datetime('now') WHERE id = ?", (files["command"], job_id))
+        conn.execute("UPDATE training_jobs SET command_line = ?, status = 'prepared', config_dirty = 0, updated_at = datetime('now') WHERE id = ?", (files["command"], job_id))
     return RedirectResponse(f"/jobs/{job_id}", status_code=303)
 
 
@@ -1878,6 +2172,60 @@ def copy_sample_prompts(source_job_id: int, target_job_id: int) -> None:
         )
 
 
+def create_revised_draft(source_job_id: int) -> int:
+    source = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (source_job_id,))
+    if source is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    new_id = create_job(
+        {
+            "name": f"{source['name']} revised",
+            "dataset_id": source["dataset_id"],
+            "preset_id": source["preset_id"],
+            "base_model_path": source["base_model_path"],
+            "vae_path": source["vae_path"] or "",
+            "output_name": f"{source['output_name']}_revised",
+            "memo": f"派生ドラフト from ジョブ #{source_job_id}",
+            "params": json.loads(source["params_json"]),
+            "parent_job_id": source_job_id,
+            "sample_prompt_template_id": source["sample_prompt_template_id"] or "",
+        }
+    )
+    copy_sample_prompts(source_job_id, new_id)
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE training_jobs
+            SET dataset_version_id = ?, config_dirty = 0, updated_at = ?
+            WHERE id = ?
+            """,
+            (source["dataset_version_id"], settings_now(), new_id),
+        )
+    return new_id
+
+
+def update_params_from_form(params: dict[str, Any], values: dict[str, str]) -> None:
+    integer_keys = {
+        "max_train_epochs",
+        "repeats",
+        "train_batch_size",
+        "network_dim",
+        "network_alpha",
+        "save_every_n_epochs",
+        "sample_every_n_epochs",
+    }
+    float_keys = {"learning_rate", "unet_lr"}
+    for key, raw_value in values.items():
+        value = raw_value.strip() if isinstance(raw_value, str) else raw_value
+        if value in ("", None):
+            continue
+        if key in integer_keys:
+            params[key] = int(value)
+        elif key in float_keys:
+            params[key] = float(value)
+        else:
+            params[key] = value
+
+
 def job_trigger_status(job: Any, dataset: Any, sample_prompts: list[Any]) -> dict[str, Any]:
     if dataset is None:
         return {
@@ -2008,11 +2356,13 @@ def compare_epochs(
 ) -> HTMLResponse:
     if job_ids and len(job_ids) >= 2:
         job_a, job_b = job_ids[0], job_ids[1]
+    elif job_a and job_ids:
+        job_b = next((candidate for candidate in job_ids if candidate != job_a), None)
     jobs = fetch_all("SELECT id, name, status, adopted_epoch FROM training_jobs ORDER BY id DESC")
     if not job_a or not job_b:
-        return render(request, "compare_epochs.html", jobs=jobs, comparison=None, exported=exported)
+        return render(request, "compare_epochs.html", jobs=jobs, comparison=None, exported=exported, selected_job_a=job_a)
     comparison = build_job_comparison(job_a, job_b)
-    return render(request, "compare_epochs.html", jobs=jobs, comparison=comparison, exported=exported)
+    return render(request, "compare_epochs.html", jobs=jobs, comparison=comparison, exported=exported, selected_job_a=job_a)
 
 
 @app.post("/compare/export")

@@ -1,7 +1,13 @@
 {% extends "base.html" %}{% block content %}
+{% if comparison %}
+<nav class="breadcrumbs"><a href="/">ダッシュボード</a><a href="/compare">比較</a><span>ジョブ #{{ comparison.left.job.id }} vs ジョブ #{{ comparison.right.job.id }}</span></nav>
+{% else %}
+<nav class="breadcrumbs"><a href="/">ダッシュボード</a><span>比較</span></nav>
+{% endif %}
 {% set status_labels = {
   "draft": "下書き",
   "prepared": "準備済み",
+  "prepared_dirty": "設定変更あり",
   "running": "実行中",
   "completed": "完了",
   "failed": "失敗",
@@ -26,13 +32,15 @@
 {% if exported %}<p class="notice">出力しました: {{ exported }}</p>{% endif %}
 
 {% if not comparison %}
+{% if selected_job_a %}<p class="notice">ジョブ #{{ selected_job_a }} と比較するジョブをもう1件選んでください。</p>{% endif %}
 <form method="get" action="/compare">
+  {% if selected_job_a %}<input type="hidden" name="job_a" value="{{ selected_job_a }}">{% endif %}
   <table>
     <thead><tr><th>選択</th><th>ジョブ</th><th>状態</th><th>採用epoch</th></tr></thead>
     <tbody>
       {% for job in jobs %}
       <tr>
-        <td><input type="checkbox" name="job_ids" value="{{ job.id }}"></td>
+        <td><input type="checkbox" name="job_ids" value="{{ job.id }}" {{ 'checked' if selected_job_a and job.id == selected_job_a else '' }}></td>
         <td><a href="/jobs/{{ job.id }}">#{{ job.id }} {{ job.name }}</a></td>
         <td>{{ status_labels.get(job.status, job.status) }}</td>
         <td>{{ job.adopted_epoch or '-' }}</td>
@@ -47,6 +55,14 @@
 {% else %}
 {% set left = comparison.left %}
 {% set right = comparison.right %}
+<section class="notice">
+  <h2>比較対象ジョブ</h2>
+  <div class="actions">
+    <a class="button" href="/jobs/{{ left.job.id }}">ジョブ #{{ left.job.id }} を開く</a>
+    <a class="button" href="/jobs/{{ right.job.id }}">ジョブ #{{ right.job.id }} を開く</a>
+  </div>
+  <p class="muted">実行、編集、ファイル準備などの操作はジョブ詳細画面で行います。この画面は比較とレポート出力に集中します。</p>
+</section>
 {% if comparison.warnings %}
 <section>
   <h2>データセットバージョンの警告</h2>

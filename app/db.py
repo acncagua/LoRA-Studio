@@ -101,6 +101,7 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "step_consistency_message": "TEXT",
             "parent_job_id": "INTEGER",
             "sample_prompt_template_id": "TEXT",
+            "config_dirty": "INTEGER NOT NULL DEFAULT 0",
             "trigger_word_at_creation": "TEXT",
             "trigger_occurrence_count_at_creation": "INTEGER",
             "trigger_occurrence_rate_at_creation": "REAL",
@@ -1059,7 +1060,7 @@ CREATE TABLE IF NOT EXISTS training_jobs (
     parent_job_id INTEGER, sample_prompt_template_id TEXT,
     trigger_word_at_creation TEXT, trigger_occurrence_count_at_creation INTEGER,
     trigger_occurrence_rate_at_creation REAL, trigger_consistency_label_at_creation TEXT,
-    dataset_version_id INTEGER,
+    dataset_version_id INTEGER, config_dirty INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS training_metrics (

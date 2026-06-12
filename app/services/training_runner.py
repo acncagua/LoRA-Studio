@@ -27,6 +27,8 @@ def start_job(job_id: int, acknowledge_trigger_mismatch: bool = False) -> int:
             raise ValueError(f"Job not found: {job_id}")
         if job["status"] not in RUNNABLE_STATUSES:
             raise RuntimeError(f"Job status is not runnable: {job['status']}")
+        if "config_dirty" in job.keys() and int(job["config_dirty"] or 0):
+            raise RuntimeError("Job settings were changed after Prepare. Run Prepare Files again before starting.")
 
     ensure_job_prepared(job_id)
     validate_job_ready(job_id, acknowledge_trigger_mismatch=acknowledge_trigger_mismatch)
@@ -92,7 +94,7 @@ def ensure_job_prepared(job_id: int) -> None:
         files = prepare_job_files(dict(job), dict(dataset))
         with connect() as conn:
             conn.execute(
-                "UPDATE training_jobs SET command_line = ?, status = 'prepared', updated_at = ? WHERE id = ?",
+                "UPDATE training_jobs SET command_line = ?, status = 'prepared', config_dirty = 0, updated_at = ? WHERE id = ?",
                 (files["command"], utc_now(), job_id),
             )
 
@@ -101,6 +103,8 @@ def validate_job_ready(job_id: int, acknowledge_trigger_mismatch: bool = False) 
     job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
     if job is None:
         raise ValueError(f"Job not found: {job_id}")
+    if "config_dirty" in job.keys() and int(job["config_dirty"] or 0):
+        raise RuntimeError("Job settings were changed after Prepare. Run Prepare Files again before starting.")
     dataset = fetch_one("SELECT * FROM datasets WHERE id = ?", (job["dataset_id"],))
     if dataset is None:
         raise RuntimeError("Dataset not found.")

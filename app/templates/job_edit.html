@@ -1,0 +1,99 @@
+{% extends "base.html" %}{% block content %}
+<nav class="breadcrumbs"><a href="/">ダッシュボード</a><a href="/jobs">ジョブ一覧</a><a href="/jobs/{{ job.id }}">ジョブ #{{ job.id }}</a><span>編集</span></nav>
+<header class="page-head">
+  <h1>ジョブ編集 #{{ job.id }}</h1>
+  <div class="actions"><a class="button" href="/jobs/{{ job.id }}">ジョブ詳細へ戻る</a></div>
+</header>
+
+{% if not editable %}
+<section class="notice warning">
+  <h2>直接編集できません</h2>
+  <p>このジョブは実行済みまたは実行中のため、再現性保護のため直接編集できません。</p>
+  <p>変更したい場合は <strong>派生ドラフトを作成</strong> を使って派生ジョブを作成してください。</p>
+  <form method="post" action="/jobs/{{ job.id }}/revised-draft"><button type="submit">派生ドラフトを作成</button></form>
+</section>
+{% else %}
+{% if job.status in ['prepared', 'prepared_dirty'] or job.config_dirty %}
+<p class="notice warning">このジョブを編集すると生成済みconfigが古くなります。保存後、実行前にファイル準備を再実行してください。</p>
+{% endif %}
+<form method="post" action="/jobs/{{ job.id }}/edit" class="form-grid wide">
+  <label>ジョブ名<input name="name" required value="{{ job.name }}"></label>
+  <label>出力名<input name="output_name" required value="{{ job.output_name }}"></label>
+  <label>データセット
+    <select name="dataset_id" required>
+      {% for dataset in datasets %}
+      <option value="{{ dataset.id }}" {{ 'selected' if dataset.id == job.dataset_id else '' }}>#{{ dataset.id }} {{ dataset.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>データセットバージョン
+    <select name="dataset_version_id">
+      <option value="">選択データセットの最新</option>
+      {% for version in dataset_versions %}
+      <option value="{{ version.id }}" {{ 'selected' if version.id == job.dataset_version_id else '' }}>dataset #{{ version.dataset_id }} / v{{ version.version_no }} (#{{ version.id }})</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>プリセット
+    <select name="preset_id" required>
+      {% for preset in presets %}
+      <option value="{{ preset.id }}" {{ 'selected' if preset.id == job.preset_id else '' }}>{{ preset.model_family }} / {{ preset.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>サンプルプロンプトテンプレート
+    <select name="sample_prompt_template_id">
+      <option value="">デフォルト生成プロンプト</option>
+      {% for template in sample_prompt_templates %}
+      <option value="{{ template.id }}" {{ 'selected' if template.id == job.sample_prompt_template_id else '' }}>{{ template.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <fieldset class="form-fieldset">
+    <legend>使用モデル</legend>
+    <label>modelsフォルダ内のモデル
+      <select data-fill-target="#base-model-path">
+        <option value="">候補から選択</option>
+        {% for model in available_models %}
+        <option value="{{ model.path }}" {{ 'selected' if model.path == job.base_model_path else '' }}>{{ model.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>ベースモデルパス
+      <span class="path-picker">
+        <input id="base-model-path" name="base_model_path" required value="{{ job.base_model_path }}">
+        <button type="button" data-browse-target="#base-model-path" data-browse-kind="model" data-browse-title="ベースモデルを選択" data-browse-initial="{{ job.base_model_path or default_model_path }}">参照</button>
+      </span>
+    </label>
+    <label>VAEパス
+      <span class="path-picker">
+        <input id="vae-path" name="vae_path" value="{{ job.vae_path or '' }}">
+        <button type="button" data-browse-target="#vae-path" data-browse-kind="model" data-browse-title="VAEを選択" data-browse-initial="{{ job.vae_path or default_model_path }}">参照</button>
+      </span>
+    </label>
+  </fieldset>
+
+  <fieldset class="form-fieldset">
+    <legend>主要パラメータ</legend>
+    <label>max_train_epochs<input name="max_train_epochs" value="{{ params.max_train_epochs or '' }}"></label>
+    <label>repeats<input name="repeats" value="{{ params.repeats or '' }}"></label>
+    <label>train_batch_size<input name="train_batch_size" value="{{ params.train_batch_size or '' }}"></label>
+    <label>learning_rate<input name="learning_rate" value="{{ params.learning_rate or '' }}"></label>
+    <label>unet_lr<input name="unet_lr" value="{{ params.unet_lr or '' }}"></label>
+    <label>text_encoder_lr<input name="text_encoder_lr" value="{{ params.text_encoder_lr if params.text_encoder_lr is defined else '' }}"></label>
+    <label>network_dim<input name="network_dim" value="{{ params.network_dim or '' }}"></label>
+    <label>network_alpha<input name="network_alpha" value="{{ params.network_alpha or '' }}"></label>
+    <label>resolution<input name="resolution" value="{{ params.resolution or '' }}"></label>
+    <label>save_every_n_epochs<input name="save_every_n_epochs" value="{{ params.save_every_n_epochs or '' }}"></label>
+    <label>sample_every_n_epochs<input name="sample_every_n_epochs" value="{{ params.sample_every_n_epochs or '' }}"></label>
+    <label>optimizer_type<input name="optimizer_type" value="{{ params.optimizer_type or '' }}"></label>
+    <label>lr_scheduler<input name="lr_scheduler" value="{{ params.lr_scheduler or '' }}"></label>
+    <label class="checkbox-line"><input type="checkbox" name="no_metadata" value="1" {{ 'checked' if params.no_metadata else '' }}> no_metadata</label>
+  </fieldset>
+
+  <label class="wide-field">メモ<textarea name="memo">{{ job.memo or '' }}</textarea></label>
+  <label class="wide-field">Advanced JSON<textarea name="params_json" class="mono-textarea">{{ params_json_pretty }}</textarea></label>
+  <button type="submit">編集内容を保存</button>
+</form>
+{% endif %}
+{% endblock %}

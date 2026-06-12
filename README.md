@@ -82,6 +82,28 @@ Set-Content -Encoding UTF8 .\data\python_cmd.txt "C:\path\to\python.exe"
 
 `Prepare Files` では表示用の `command.txt` に加えて、実行用の `command_argv.json` を生成します。実行時はshell文字列ではなくargv配列を `subprocess.Popen` に渡すため、Windowsのスペース入りパスでも壊れにくくしています。`dataset_config.toml` の `batch_size` はプリセットの `train_batch_size` から生成し、コマンドライン側では `--train_batch_size` を重複指定しません。学習時のbatch sizeは `dataset_config.toml` を正とします。
 
+## 基本操作導線
+
+ジョブ作成後は `/jobs/{job_id}` のジョブ詳細画面が操作の中心です。ファイル準備、事前確認、実行、停止、結果の再取り込み、採用LoRA出力、Contact Sheet出力はジョブ詳細画面の操作パネルから実行します。比較画面は比較とレポート出力に集中し、実行や編集は各ジョブ詳細へ戻って行います。
+
+Epoch設定や学習パラメータを間違えた場合は、ジョブ状態に応じて次のように扱います。
+
+- `draft` / `prepared` / `failed` / `stopped`: ジョブ詳細の `ジョブを編集` から直接修正できます。
+- `prepared` を編集した場合: 生成済みconfigが古くなるため `prepared_dirty` になり、実行前にファイル準備の再実行が必要です。
+- `completed` / `running`: 再現性保護のため直接編集できません。`派生ドラフトを作成` で元ジョブから設定だけをコピーした下書きジョブを作り、そこで修正します。
+
+状態別の主な操作は以下です。
+
+| 状態 | 編集 | ファイル準備 | 事前確認 | 実行 | 停止 | 再取り込み / 出力 | 派生ドラフト |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| draft | 可 | 可 | 不可 | 原則不可 | 不可 | 不可 | 複製可 |
+| prepared | 可 | 可 | 可 | 可 | 不可 | 不可 | 複製可 |
+| prepared_dirty | 可 | 可 | 不可 | 不可 | 不可 | 不可 | 複製可 |
+| running | 不可 | 不可 | 不可 | 不可 | 可 | 不可 | 可 |
+| completed | 不可 | 不可 | 不可 | 不可 | 不可 | 可 | 可 |
+| failed | 可 | 可 | 状況次第 | 可 | 不可 | Reimport可 | 複製可 |
+| stopped | 可 | 可 | 状況次第 | 可 | 不可 | Reimport可 | 複製可 |
+
 ## Dataset Inspector
 
 Datasets画面のIDリンクからDataset詳細を開くと、登録済みデータセットを再検査できます。`Rescan` は既存データを消さずに、画像数、caption数、欠損caption、壊れた画像、未対応ファイル、caption文字コード、画像サイズ、タグ集計、trigger word出現率を更新します。

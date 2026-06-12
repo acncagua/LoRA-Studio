@@ -1,33 +1,47 @@
 {% extends "base.html" %}{% block content %}
 {% if job.status == 'running' %}<meta http-equiv="refresh" content="8">{% endif %}
-{% set status_labels = {
-  "draft": "下書き",
-  "prepared": "準備済み",
-  "running": "実行中",
-  "completed": "完了",
-  "failed": "失敗",
-  "stopped": "停止"
-} %}
+<nav class="breadcrumbs"><a href="/">ダッシュボード</a><a href="/jobs">ジョブ一覧</a><span>ジョブ #{{ job.id }}</span></nav>
 <header class="page-head">
   <h1>#{{ job.id }} {{ job.name }}</h1>
+</header>
+{% if created %}<p class="notice">ジョブを作成しました。次はファイル準備を実行してください。</p>{% endif %}
+{% if exported %}<p class="notice">出力しました: {{ exported }}</p>{% endif %}
+{% if preflight == 'edited' %}<p class="notice warning">編集内容を保存しました。実行前にファイル準備を再実行してください。</p>{% elif preflight %}<p class="notice {{ 'warning' if preflight.startswith('NG:') else '' }}">{{ preflight }}</p>{% endif %}
+{% if action_state.dirty %}<p class="notice warning">設定が変更されました。実行前にファイル準備を再実行してください。</p>{% endif %}
+<section class="action-panel">
+  <div>
+    <h2>次にやること</h2>
+    <p>{{ next_action }}</p>
+  </div>
   <div class="actions">
-    <form method="post" action="/jobs/{{ job.id }}/prepare"><button type="submit">ファイル準備</button></form>
+    {% if action_state.edit %}<a class="button" href="/jobs/{{ job.id }}/edit">ジョブを編集</a>{% else %}<span class="button disabled">ジョブを編集</span>{% endif %}
+    {% if action_state.prepare %}<form method="post" action="/jobs/{{ job.id }}/prepare"><button type="submit">ファイル準備</button></form>{% else %}<span class="button disabled">ファイル準備</span>{% endif %}
+    {% if action_state.preflight %}
+    <form method="post" action="/jobs/{{ job.id }}/preflight">
+      {% if trigger_status.current_label == 'ERROR' %}
+      <label class="inline-check"><input type="checkbox" name="acknowledge_trigger_mismatch" value="yes"> トリガー不一致を確認済み</label>
+      {% endif %}
+      <button type="submit">事前確認</button>
+    </form>
+    {% else %}<span class="button disabled">事前確認</span>{% endif %}
+    {% if action_state.run %}
     <form method="post" action="/jobs/{{ job.id }}/run">
       {% if trigger_status.current_label == 'ERROR' %}
-      <label><input type="checkbox" name="acknowledge_trigger_mismatch" value="yes"> トリガー不一致を確認済み</label>
+      <label class="inline-check"><input type="checkbox" name="acknowledge_trigger_mismatch" value="yes"> トリガー不一致を確認済み</label>
       {% endif %}
       <button type="submit">実行</button>
     </form>
-    <form method="post" action="/jobs/{{ job.id }}/stop"><button type="submit" class="danger">停止</button></form>
-    <form method="post" action="/jobs/{{ job.id }}/reimport"><button type="submit">結果を再取り込み</button></form>
-    <form method="post" action="/jobs/{{ job.id }}/export-contact-sheet"><button type="submit">Contact Sheet出力</button></form>
-    <form method="post" action="/jobs/{{ job.id }}/export-selected-lora"><button type="submit">採用LoRA出力</button></form>
-    <form method="post" action="/jobs/{{ job.id }}/export-validation-pack"><button type="submit" {% if not selected_output %}disabled{% endif %}>Legacy Validation Pack出力</button></form>
-    <form method="post" action="/jobs/{{ job.id }}/recommendations/regenerate"><button type="submit">提案を再生成</button></form>
-    <form method="post" action="/jobs/{{ job.id }}/recommendations/export"><button type="submit">提案レポート出力</button></form>
+    {% else %}<span class="button disabled">実行</span>{% endif %}
+    {% if action_state.stop %}<form method="post" action="/jobs/{{ job.id }}/stop"><button type="submit" class="danger">停止</button></form>{% else %}<span class="button disabled">停止</span>{% endif %}
+    {% if action_state.reimport %}<form method="post" action="/jobs/{{ job.id }}/reimport"><button type="submit">結果を再取り込み</button></form>{% else %}<span class="button disabled">結果を再取り込み</span>{% endif %}
+    {% if action_state.select %}<a class="button" href="#outputs">LoRAを選択</a>{% else %}<span class="button disabled">LoRAを選択</span>{% endif %}
+    {% if action_state.clone %}<form method="post" action="/jobs/{{ job.id }}/clone"><button type="submit">ジョブを複製</button></form>{% else %}<span class="button disabled">ジョブを複製</span>{% endif %}
+    {% if action_state.revised %}<form method="post" action="/jobs/{{ job.id }}/revised-draft"><button type="submit">派生ドラフトを作成</button></form>{% else %}<span class="button disabled">派生ドラフトを作成</span>{% endif %}
+    {% if action_state.compare %}<a class="button" href="/compare?job_a={{ job.id }}">比較</a>{% else %}<span class="button disabled">比較</span>{% endif %}
+    {% if action_state.export %}<form method="post" action="/jobs/{{ job.id }}/export-selected-lora"><button type="submit">採用LoRA出力</button></form>{% else %}<span class="button disabled">採用LoRA出力</span>{% endif %}
+    {% if action_state.contact_sheet %}<form method="post" action="/jobs/{{ job.id }}/export-contact-sheet"><button type="submit">Contact Sheet出力</button></form>{% else %}<span class="button disabled">Contact Sheet出力</span>{% endif %}
   </div>
-</header>
-{% if exported %}<p class="notice">出力しました: {{ exported }}</p>{% endif %}
+</section>
 <section class="panel-grid">
   <div>
     <h2>ジョブ</h2>
@@ -70,7 +84,7 @@
 </section>
 <section>
   <h2>Recommendations</h2>
-  <p class="muted">ルールベースの次回実験提案です。自動実行はしません。必要な提案だけdraft Job化して、人間がRunを押してください。</p>
+  <p class="muted">ルールベースの次回実験提案です。自動実行はしません。必要な提案だけ下書きジョブ化して、人間が実行を押してください。</p>
   <table>
     <thead><tr><th>優先度</th><th>Type</th><th>Title</th><th>Summary</th><th>Reason</th><th>Expected</th><th>Risk</th><th>Status</th><th>Created Job</th><th>操作</th></tr></thead>
     <tbody>
@@ -249,7 +263,7 @@
   </table>
 </section>
 <section><h2>train.log末尾</h2><pre>{{ log_tail or 'train.logはまだありません。' }}</pre></section>
-<section>
+<section id="outputs">
   <h2>出力LoRA</h2>
   <table>
     <thead><tr><th>ID</th><th>Epoch</th><th>Step</th><th>サイズ</th><th>SHA256</th><th>採用</th><th>Metadataエラー</th><th>パス</th><th></th></tr></thead>
@@ -311,7 +325,7 @@
   <p class="muted">外部生成の条件をValidation Presetで固定し、WebUI / reForge用のprompt packを出力します。画像生成自体は自動実行しません。</p>
   <div class="panel-grid">
     <div>
-      <h3>Create Validation Run</h3>
+      <h3>Validation Run作成</h3>
       <form method="post" action="/jobs/{{ job.id }}/validation-runs" class="form-grid">
         <label>Preset<select name="validation_preset_id">
           {% for preset in validation_presets %}
@@ -325,7 +339,7 @@
       </form>
     </div>
     <div>
-      <h3>Validation Runs</h3>
+      <h3>Validation Run一覧</h3>
       <table>
         <thead><tr><th>ID</th><th>Preset</th><th>Status</th><th>画像数</th><th></th></tr></thead>
         <tbody>
