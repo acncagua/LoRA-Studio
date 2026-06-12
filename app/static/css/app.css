@@ -50,6 +50,24 @@ section { min-width: 0; overflow-x: auto; }
 table { width: 100%; min-width: min(720px, 100%); border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 th, td { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
 th { color: var(--muted); font-size: 13px; font-weight: 600; background: #eef2eb; }
+.wide-table { min-width: 1720px; table-layout: fixed; }
+.wide-table th, .wide-table td { overflow-wrap: normal; word-break: normal; }
+.wrap-text { overflow-wrap: anywhere; word-break: normal; }
+.nowrap { white-space: nowrap; }
+.small-button { display: inline-block; padding: 7px 11px; white-space: nowrap; line-height: 1.2; }
+.lora-library-table th:nth-child(1), .lora-library-table td:nth-child(1) { width: 40px; }
+.lora-library-table th:nth-child(2), .lora-library-table td:nth-child(2) { width: 310px; }
+.lora-library-table th:nth-child(3), .lora-library-table td:nth-child(3) { width: 290px; }
+.lora-library-table th:nth-child(4), .lora-library-table td:nth-child(4) { width: 80px; }
+.lora-library-table th:nth-child(5), .lora-library-table td:nth-child(5) { width: 60px; }
+.lora-library-table th:nth-child(6), .lora-library-table td:nth-child(6) { width: 90px; }
+.lora-library-table th:nth-child(7), .lora-library-table td:nth-child(7) { width: 150px; }
+.lora-library-table th:nth-child(8), .lora-library-table td:nth-child(8) { width: 120px; }
+.lora-library-table th:nth-child(9), .lora-library-table td:nth-child(9) { width: 150px; }
+.lora-library-table th:nth-child(10), .lora-library-table td:nth-child(10) { width: 90px; }
+.lora-library-table th:nth-child(11), .lora-library-table td:nth-child(11) { width: 150px; }
+.lora-library-table th:nth-child(12), .lora-library-table td:nth-child(12) { width: 120px; }
+.lora-library-table th:nth-child(13), .lora-library-table td:nth-child(13) { width: 72px; }
 dl { display: grid; grid-template-columns: 140px 1fr; gap: 8px 14px; }
 dt { color: var(--muted); }
 dd { margin: 0; word-break: break-word; }
