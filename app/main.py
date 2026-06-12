@@ -1034,10 +1034,12 @@ def job_add_validation_result(
     selected_output = fetch_one("SELECT * FROM training_outputs WHERE job_id = ? AND selected = 1", (job_id,))
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    try:
-        managed_image_path = unique_copy(Path(image_path), validation_images_root() / f"legacy_job_{job_id:06d}" / "images")
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    managed_image_path = ""
+    if image_path.strip():
+        try:
+            managed_image_path = str(unique_copy(Path(image_path), validation_images_root() / f"legacy_job_{job_id:06d}" / "images"))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     now = settings_now()
     with connect() as conn:
         conn.execute(
@@ -1060,7 +1062,7 @@ def job_add_validation_result(
                 clamp_rating(flexibility_score),
                 clamp_rating(overall_score),
                 memo.strip(),
-                str(managed_image_path),
+                managed_image_path,
                 now,
                 now,
             ),
@@ -1102,6 +1104,10 @@ def job_add_validation_image(
     selected_output = fetch_one("SELECT * FROM training_outputs WHERE job_id = ? AND selected = 1", (job_id,))
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
+    try:
+        managed_image_path = unique_copy(Path(image_path), validation_images_root() / f"legacy_job_{job_id:06d}" / "images")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     now = settings_now()
     with connect() as conn:
         conn.execute(
@@ -1119,7 +1125,7 @@ def job_add_validation_image(
             (
                 job_id,
                 selected_output["id"] if selected_output else None,
-                image_path.strip(),
+                str(managed_image_path),
                 validation_type.strip() or "external",
                 prompt.strip(),
                 negative_prompt.strip(),
@@ -1459,7 +1465,7 @@ def register_validation_run_image(
                 and float(row["lora_weight"]) == float(lora_weight or 0)
                 and bool(row["hires_enabled"]) == hires_enabled
             ):
-                condition = row
+                condition = dict(row)
                 break
     if condition is None:
         condition = {

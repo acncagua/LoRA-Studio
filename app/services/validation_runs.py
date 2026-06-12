@@ -212,6 +212,78 @@ def validation_preset_for_run(run: Any) -> dict[str, Any] | Any | None:
     return fetch_one("SELECT * FROM validation_presets WHERE id = ?", (run["validation_preset_id"],))
 
 
+def snapshot_validation_preset(preset: Any) -> str:
+    return json.dumps(dict(preset), ensure_ascii=False, sort_keys=True)
+
+
+def backfill_validation_runs() -> None:
+    runs = fetch_all("SELECT * FROM validation_runs WHERE validation_preset_id IS NOT NULL ORDER BY id")
+    for run in runs:
+        backfill_validation_run(run)
+
+
+def backfill_validation_run(run: Any) -> None:
+    preset = validation_preset_for_run(run)
+    if preset is None:
+        return
+    current_preset = fetch_one("SELECT * FROM validation_presets WHERE id = ?", (run["validation_preset_id"],))
+    now = utc_now()
+    if not (run["preset_snapshot_json"] if "preset_snapshot_json" in run.keys() else None) and current_preset is not None:
+        with connect() as conn:
+            conn.execute(
+                "UPDATE validation_runs SET preset_snapshot_json = ?, updated_at = ? WHERE id = ?",
+                (snapshot_validation_preset(current_preset), now, run["id"]),
+            )
+        run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (run["id"],))
+        preset = validation_preset_for_run(run)
+        if preset is None:
+            return
+    image_count = fetch_one("SELECT COUNT(*) AS count FROM validation_images WHERE validation_run_id = ?", (run["id"],))["count"]
+    condition_count = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ?", (run["id"],))["count"]
+    expected = preset_expected_count(preset)
+    if int(image_count) == 0 and int(condition_count) not in {0, expected}:
+        with connect() as conn:
+            conn.execute("DELETE FROM validation_expected_conditions WHERE validation_run_id = ?", (run["id"],))
+        ensure_expected_conditions(int(run["id"]))
+        return
+    if int(condition_count) == 0:
+        ensure_expected_conditions(int(run["id"]))
+        return
+    expanded = {
+        int(row["expected_order"]): row
+        for row in expand_preset_conditions(preset, run["trigger_word"] or "", run["lora_filename"] or "", run["base_model"] or "")
+    }
+    rows = fetch_all("SELECT * FROM validation_expected_conditions WHERE validation_run_id = ? ORDER BY expected_order", (run["id"],))
+    with connect() as conn:
+        for row in rows:
+            source = expanded.get(int(row["expected_order"]))
+            if not source:
+                continue
+            conn.execute(
+                """
+                UPDATE validation_expected_conditions
+                SET preset_version = COALESCE(preset_version, ?),
+                    prompt = COALESCE(NULLIF(prompt, ''), ?),
+                    webui_prompt = COALESCE(NULLIF(webui_prompt, ''), ?),
+                    negative_prompt = COALESCE(negative_prompt, ?),
+                    trigger_word = COALESCE(trigger_word, ?),
+                    lora_filename = COALESCE(lora_filename, ?),
+                    base_model = COALESCE(base_model, ?)
+                WHERE id = ?
+                """,
+                (
+                    source.get("preset_version"),
+                    source.get("prompt"),
+                    source.get("webui_prompt"),
+                    source.get("negative_prompt"),
+                    source.get("trigger_word"),
+                    source.get("lora_filename"),
+                    source.get("base_model"),
+                    row["id"],
+                ),
+            )
+
+
 def ensure_expected_conditions(run_id: int) -> list[Any]:
     run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (run_id,))
     if run is None or not run["validation_preset_id"]:

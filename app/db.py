@@ -35,6 +35,9 @@ def init_db() -> None:
         seed_evaluation_rubrics(conn)
         seed_validation_presets(conn)
         import_latest_environment(conn)
+    from app.services.validation_runs import backfill_validation_runs
+
+    backfill_validation_runs()
 
 
 def run_migrations(conn: sqlite3.Connection) -> None:

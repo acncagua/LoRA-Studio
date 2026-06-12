@@ -111,6 +111,142 @@ class Phase1071Tests(IsolatedDbTest):
         self.assertTrue(managed.exists())
         self.assertTrue(managed.is_relative_to((settings.EXPORTS_DIR / "reference_sets").resolve()))
 
+    def create_basic_job(self) -> int:
+        now = utc_now()
+        with connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO training_jobs(
+                    name, status, model_family, training_script, base_model_path,
+                    output_name, output_dir, run_dir, params_json,
+                    trigger_word_at_creation, created_at, updated_at
+                )
+                VALUES ('test job', 'completed', 'SDXL', 'sdxl_train_network.py',
+                    'D:/models/base.safetensors', 'test', 'out', 'run', '{}',
+                    'testchar', ?, ?)
+                """,
+                (now, now),
+            )
+            return int(cur.lastrowid)
+
+    def test_matching_validation_run_image_links_expected_condition_and_serves(self) -> None:
+        source = self.make_png(self.root / "source" / "validation.png")
+        job_id = self.create_basic_job()
+        from app.main import register_validation_run_image, validation_image_file
+        from app.services.validation_runs import create_validation_run
+
+        run_id = create_validation_run(job_id, "standard_validation_v1", "base", "testchar", "")
+        first = fetch_one("SELECT * FROM validation_expected_conditions WHERE validation_run_id = ? ORDER BY expected_order LIMIT 1", (run_id,))
+        register_validation_run_image(
+            run_id,
+            str(source),
+            "individual",
+            first["prompt_key"],
+            int(first["seed"]),
+            float(first["lora_weight"]),
+            bool(first["hires_enabled"]),
+            "",
+        )
+        image = fetch_one("SELECT * FROM validation_images WHERE validation_run_id = ?", (run_id,))
+        self.assertEqual(image["expected_condition_id"], first["id"])
+        self.assertTrue(Path(image["image_path"]).is_relative_to((settings.EXPORTS_DIR / "validation_runs").resolve()))
+        response = validation_image_file(int(image["id"]))
+        self.assertEqual(response.status_code, 200)
+
+    def test_legacy_external_validation_image_is_copied_and_served(self) -> None:
+        source = self.make_png(self.root / "source" / "legacy.png")
+        job_id = self.create_basic_job()
+        from app.main import job_add_validation_image, validation_image_file
+
+        job_add_validation_image(
+            job_id,
+            str(source),
+            validation_type="external",
+            prompt="",
+            negative_prompt="",
+            base_model="",
+            sampler="",
+            steps="",
+            cfg_scale="",
+            width="",
+            height="",
+            hires_enabled="",
+            hires_scale="",
+            lora_weights="0.6",
+            seeds="123",
+            rating_face=0,
+            rating_costume=0,
+            rating_style=0,
+            rating_stability=0,
+            rating_overall=0,
+            strength_label="",
+            overfit_level="",
+            adoption_label="",
+            failure_tags=[],
+            recommended_weight_min="",
+            recommended_weight_max="",
+            memo="",
+        )
+        image = fetch_one("SELECT * FROM validation_images WHERE job_id = ?", (job_id,))
+        self.assertTrue(Path(image["image_path"]).is_relative_to((settings.EXPORTS_DIR / "validation_runs").resolve()))
+        response = validation_image_file(int(image["id"]))
+        self.assertEqual(response.status_code, 200)
+
+    def test_validation_result_can_be_saved_without_image_path(self) -> None:
+        job_id = self.create_basic_job()
+        from app.main import job_add_validation_result
+
+        job_add_validation_result(
+            job_id,
+            "basic_face",
+            0.6,
+            face_score=0,
+            costume_score=0,
+            stability_score=0,
+            flexibility_score=0,
+            overall_score=3,
+            memo="no image",
+            image_path="",
+        )
+        row = fetch_one("SELECT * FROM validation_results WHERE job_id = ?", (job_id,))
+        self.assertEqual(row["image_path"], "")
+
+    def test_backfills_legacy_expected_condition_columns_without_hash_change(self) -> None:
+        job_id = self.create_basic_job()
+        from app.services.validation_runs import backfill_validation_runs, create_validation_run, write_validation_prompt_pack
+
+        run_id = create_validation_run(job_id, "standard_validation_v1", "base", "testchar", "")
+        first = fetch_one("SELECT * FROM validation_expected_conditions WHERE validation_run_id = ? ORDER BY expected_order LIMIT 1", (run_id,))
+        original_hash = first["condition_hash"]
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE validation_runs SET preset_snapshot_json = NULL WHERE id = ?
+                """,
+                (run_id,),
+            )
+            conn.execute(
+                """
+                UPDATE validation_expected_conditions
+                SET prompt = NULL, webui_prompt = NULL, preset_version = NULL,
+                    negative_prompt = NULL, trigger_word = NULL, lora_filename = NULL, base_model = NULL
+                WHERE id = ?
+                """,
+                (first["id"],),
+            )
+        backfill_validation_runs()
+        after = fetch_one("SELECT * FROM validation_expected_conditions WHERE id = ?", (first["id"],))
+        run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (run_id,))
+        self.assertEqual(after["condition_hash"], original_hash)
+        self.assertTrue(after["prompt"])
+        self.assertTrue(after["webui_prompt"])
+        self.assertTrue(after["preset_version"])
+        self.assertTrue(run["preset_snapshot_json"])
+        paths = write_validation_prompt_pack(run_id)
+        prompt_pack = Path(paths["prompts_md"]).read_text(encoding="utf-8")
+        self.assertIn("testchar", prompt_pack)
+        self.assertIn("Prompt:", prompt_pack)
+
 
 class StartHelperTests(unittest.TestCase):
     def test_start_helper_does_not_release_7865_by_default(self) -> None:
@@ -134,6 +270,21 @@ class StartHelperTests(unittest.TestCase):
             mock.patch.object(start_lora_helper, "release_port") as release_port:
             start_lora_helper.main()
         release_port.assert_called_once_with(8768)
+
+
+class OneoffScriptTests(unittest.TestCase):
+    def test_oneoff_scripts_import_as_direct_scripts(self) -> None:
+        import importlib.util
+
+        for script in [
+            "scripts/oneoff_job12_validation_defaults.py",
+            "scripts/oneoff_seed_legacy_validation_runs.py",
+            "scripts/oneoff_migrate_managed_images.py",
+        ]:
+            spec = importlib.util.spec_from_file_location(Path(script).stem, script)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            self.assertTrue(hasattr(module, "main"))
 
 
 if __name__ == "__main__":
