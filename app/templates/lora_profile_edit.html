@@ -1,0 +1,48 @@
+{% extends "base.html" %}{% block content %}
+<header class="page-head"><h1>LoRA Profile編集</h1><a class="button" href="/lora-library">ライブラリへ戻る</a></header>
+<section>
+  <dl>
+    <dt>Job</dt><dd><a href="/jobs/{{ profile.job_id }}">#{{ profile.job_id }} {{ profile.job_name or '' }}</a></dd>
+    <dt>Selected LoRA</dt><dd>{{ profile.selected_model_path or '-' }}</dd>
+    <dt>Exported</dt><dd>{{ profile.exported_model_path or '-' }}</dd>
+  </dl>
+  <form method="post" action="/lora-library/{{ profile.id }}/edit" class="form-grid wide">
+    <label>Profile名<input name="profile_name" value="{{ profile.profile_name }}" required></label>
+    <label>Trigger<input name="trigger_word" value="{{ profile.trigger_word or '' }}"></label>
+    <label>Base model<input name="base_model" value="{{ profile.base_model or '' }}"></label>
+    <label>推奨weight min<input type="number" name="recommended_weight_min" value="{{ profile.recommended_weight_min if profile.recommended_weight_min is not none else '' }}" min="0" max="2" step="0.1"></label>
+    <label>推奨weight max<input type="number" name="recommended_weight_max" value="{{ profile.recommended_weight_max if profile.recommended_weight_max is not none else '' }}" min="0" max="2" step="0.1"></label>
+    <label>light weight<input type="number" name="light_weight" value="{{ profile.light_weight if profile.light_weight is not none else '' }}" min="0" max="2" step="0.1"></label>
+    <label>strong weight<input type="number" name="strong_weight" value="{{ profile.strong_weight if profile.strong_weight is not none else '' }}" min="0" max="2" step="0.1"></label>
+    <label class="wide-field">Validation memo<textarea name="validation_memo">{{ profile.validation_memo or '' }}</textarea></label>
+    <label class="wide-field">Library memo<textarea name="library_memo">{{ profile.library_memo or '' }}</textarea></label>
+    <button type="submit">Profileを保存</button>
+  </form>
+</section>
+<section>
+  <h2>weight評価</h2>
+  <table>
+    <thead><tr><th>weight</th><th>顔</th><th>衣装</th><th>スタイル</th><th>安定性</th><th>総合</th><th>推奨</th><th>メモ</th></tr></thead>
+    <tbody>
+      {% for row in weight_reviews %}
+      <tr><td>{{ row.lora_weight }}</td><td>{{ row.rating_face or '-' }}</td><td>{{ row.rating_costume or '-' }}</td><td>{{ row.rating_style or '-' }}</td><td>{{ row.rating_stability or '-' }}</td><td>{{ row.rating_overall or '-' }}</td><td>{{ row.recommended_weight_min if row.recommended_weight_min is not none else '-' }} - {{ row.recommended_weight_max if row.recommended_weight_max is not none else '-' }}</td><td>{{ row.memo or '-' }}</td></tr>
+      {% else %}
+      <tr><td colspan="8" class="muted">weight評価はまだありません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+<section>
+  <h2>外部Validation画像</h2>
+  <div class="sample-grid">
+    {% for image in validation_images %}
+    <figure>
+      <img src="/validation-images/{{ image.id }}" alt="validation image {{ image.id }}">
+      <figcaption>#{{ image.id }} {{ image.validation_type or '-' }} / weight {{ image.lora_weights or '-' }}<br>{{ image.memo or '' }}</figcaption>
+    </figure>
+    {% else %}
+    <p class="muted">外部Validation画像はまだありません。</p>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

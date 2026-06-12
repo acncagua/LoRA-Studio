@@ -618,7 +618,10 @@ def job_detail(request: Request, job_id: int, exported: str | None = None) -> HT
     log_tail = read_log_tail(dict(job))
     selected_output = fetch_one("SELECT * FROM training_outputs WHERE job_id = ? AND selected = 1", (job_id,))
     validation_results = fetch_all("SELECT * FROM validation_results WHERE job_id = ? ORDER BY created_at DESC, id DESC", (job_id,))
+    validation_images = fetch_all("SELECT * FROM validation_images WHERE job_id = ? ORDER BY created_at DESC, id DESC", (job_id,))
+    validation_weight_reviews = fetch_all("SELECT * FROM validation_weight_reviews WHERE job_id = ? ORDER BY lora_weight, id", (job_id,))
     validation_summary = build_validation_summary(validation_results)
+    selected_lora_profile = ensure_selected_lora_profile(job_id) if selected_output else None
     dataset_version = fetch_one("SELECT * FROM dataset_versions WHERE id = ?", (job["dataset_version_id"],)) if job["dataset_version_id"] else None
     params = json.loads(job["params_json"])
     return render(
@@ -640,7 +643,10 @@ def job_detail(request: Request, job_id: int, exported: str | None = None) -> HT
         log_tail=log_tail,
         selected_output=selected_output,
         validation_results=validation_results,
+        validation_images=validation_images,
+        validation_weight_reviews=validation_weight_reviews,
         validation_summary=validation_summary,
+        selected_lora_profile=selected_lora_profile,
         validation_pack_path=validation_pack_path(job_id),
         default_project_path=str(settings.ROOT_DIR),
         dataset_version=dataset_version,
@@ -758,6 +764,7 @@ def job_select_output(job_id: int, output_id: int) -> RedirectResponse:
             """,
             (output["epoch"], output["file_path"], job_id),
         )
+    ensure_selected_lora_profile(job_id)
     return RedirectResponse(f"/jobs/{job_id}", status_code=303)
 
 
@@ -785,6 +792,7 @@ def job_select_epoch(job_id: int, epoch: int = Form(...)) -> RedirectResponse:
             """,
             (output["epoch"], output["file_path"], job_id),
         )
+    ensure_selected_lora_profile(job_id)
     return RedirectResponse(f"/jobs/{job_id}", status_code=303)
 
 
@@ -829,16 +837,20 @@ def job_export_contact_sheet(job_id: int) -> RedirectResponse:
 
 @app.post("/jobs/{job_id}/export-selected-lora")
 def job_export_selected_lora(job_id: int) -> RedirectResponse:
+    ensure_selected_lora_profile(job_id)
     result = export_selected_lora(job_id)
+    ensure_selected_lora_profile(job_id)
     return RedirectResponse(f"/jobs/{job_id}?exported={result['directory']}", status_code=303)
 
 
 @app.post("/jobs/{job_id}/export-validation-pack")
 def job_export_validation_pack(job_id: int) -> RedirectResponse:
     try:
+        ensure_selected_lora_profile(job_id)
         result = write_validation_pack(job_id)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    ensure_selected_lora_profile(job_id)
     return RedirectResponse(f"/jobs/{job_id}?exported={result['directory']}", status_code=303)
 
 
@@ -887,6 +899,220 @@ def job_add_validation_result(
             ),
         )
     return RedirectResponse(f"/jobs/{job_id}", status_code=303)
+
+
+@app.post("/jobs/{job_id}/external-validation/images")
+def job_add_validation_image(
+    job_id: int,
+    image_path: str = Form(...),
+    validation_type: str = Form("external"),
+    prompt: str = Form(""),
+    negative_prompt: str = Form(""),
+    base_model: str = Form(""),
+    sampler: str = Form(""),
+    steps: str = Form(""),
+    cfg_scale: str = Form(""),
+    width: str = Form(""),
+    height: str = Form(""),
+    hires_enabled: str = Form(""),
+    hires_scale: str = Form(""),
+    lora_weights: str = Form(""),
+    seeds: str = Form(""),
+    rating_face: int = Form(0),
+    rating_costume: int = Form(0),
+    rating_style: int = Form(0),
+    rating_stability: int = Form(0),
+    rating_overall: int = Form(0),
+    recommended_weight_min: str = Form(""),
+    recommended_weight_max: str = Form(""),
+    memo: str = Form(""),
+) -> RedirectResponse:
+    job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
+    selected_output = fetch_one("SELECT * FROM training_outputs WHERE job_id = ? AND selected = 1", (job_id,))
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    now = settings_now()
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO validation_images(
+                job_id, selected_output_id, image_path, validation_type, prompt,
+                negative_prompt, base_model, sampler, steps, cfg_scale, width, height,
+                hires_enabled, hires_scale, lora_weights, seeds,
+                rating_face, rating_costume, rating_style, rating_stability, rating_overall,
+                recommended_weight_min, recommended_weight_max, memo, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                job_id,
+                selected_output["id"] if selected_output else None,
+                image_path.strip(),
+                validation_type.strip() or "external",
+                prompt.strip(),
+                negative_prompt.strip(),
+                base_model.strip(),
+                sampler.strip(),
+                optional_int(steps),
+                optional_float(cfg_scale),
+                optional_int(width),
+                optional_int(height),
+                1 if hires_enabled else 0,
+                optional_float(hires_scale),
+                lora_weights.strip(),
+                seeds.strip(),
+                clamp_rating(rating_face),
+                clamp_rating(rating_costume),
+                clamp_rating(rating_style),
+                clamp_rating(rating_stability),
+                clamp_rating(rating_overall),
+                optional_float(recommended_weight_min),
+                optional_float(recommended_weight_max),
+                memo.strip(),
+                now,
+                now,
+            ),
+        )
+    if selected_output:
+        sync_profile_from_validation(job_id)
+    return RedirectResponse(f"/jobs/{job_id}", status_code=303)
+
+
+@app.post("/jobs/{job_id}/external-validation/weight-review")
+def job_add_validation_weight_review(
+    job_id: int,
+    lora_weight: float = Form(...),
+    validation_type: str = Form("external"),
+    rating_face: int = Form(0),
+    rating_costume: int = Form(0),
+    rating_style: int = Form(0),
+    rating_stability: int = Form(0),
+    rating_overall: int = Form(0),
+    recommended_weight_min: str = Form(""),
+    recommended_weight_max: str = Form(""),
+    memo: str = Form(""),
+) -> RedirectResponse:
+    job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
+    selected_output = fetch_one("SELECT * FROM training_outputs WHERE job_id = ? AND selected = 1", (job_id,))
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    now = settings_now()
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO validation_weight_reviews(
+                job_id, selected_output_id, lora_weight, validation_type,
+                rating_face, rating_costume, rating_style, rating_stability, rating_overall,
+                recommended_weight_min, recommended_weight_max, memo, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                job_id,
+                selected_output["id"] if selected_output else None,
+                lora_weight,
+                validation_type.strip() or "external",
+                clamp_rating(rating_face),
+                clamp_rating(rating_costume),
+                clamp_rating(rating_style),
+                clamp_rating(rating_stability),
+                clamp_rating(rating_overall),
+                optional_float(recommended_weight_min),
+                optional_float(recommended_weight_max),
+                memo.strip(),
+                now,
+                now,
+            ),
+        )
+    if selected_output:
+        sync_profile_from_validation(job_id)
+    return RedirectResponse(f"/jobs/{job_id}", status_code=303)
+
+
+@app.get("/validation-images/{image_id}")
+def validation_image_file(image_id: int) -> FileResponse:
+    image = fetch_one("SELECT * FROM validation_images WHERE id = ?", (image_id,))
+    if image is None:
+        raise HTTPException(status_code=404, detail="Validation image not found")
+    path = Path(image["image_path"]).resolve()
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Validation image file not found")
+    return FileResponse(path)
+
+
+@app.get("/lora-library", response_class=HTMLResponse)
+def lora_library(request: Request) -> HTMLResponse:
+    rows = fetch_all(
+        """
+        SELECT p.*, j.name AS job_name, j.status AS job_status, o.file_size, o.sha256
+        FROM selected_lora_profiles p
+        LEFT JOIN training_jobs j ON j.id = p.job_id
+        LEFT JOIN training_outputs o ON o.id = p.selected_output_id
+        ORDER BY p.updated_at DESC, p.id DESC
+        """
+    )
+    return render(request, "lora_library.html", profiles=rows)
+
+
+@app.get("/lora-library/{profile_id}/edit", response_class=HTMLResponse)
+def lora_profile_edit(request: Request, profile_id: int) -> HTMLResponse:
+    profile = fetch_one(
+        """
+        SELECT p.*, j.name AS job_name, j.status AS job_status
+        FROM selected_lora_profiles p
+        LEFT JOIN training_jobs j ON j.id = p.job_id
+        WHERE p.id = ?
+        """,
+        (profile_id,),
+    )
+    if profile is None:
+        raise HTTPException(status_code=404, detail="LoRA profile not found")
+    weight_reviews = fetch_all("SELECT * FROM validation_weight_reviews WHERE job_id = ? ORDER BY lora_weight, id", (profile["job_id"],))
+    validation_images = fetch_all("SELECT * FROM validation_images WHERE job_id = ? ORDER BY created_at DESC, id DESC", (profile["job_id"],))
+    return render(request, "lora_profile_edit.html", profile=profile, weight_reviews=weight_reviews, validation_images=validation_images)
+
+
+@app.post("/lora-library/{profile_id}/edit")
+def lora_profile_update(
+    profile_id: int,
+    profile_name: str = Form(...),
+    trigger_word: str = Form(""),
+    base_model: str = Form(""),
+    recommended_weight_min: str = Form(""),
+    recommended_weight_max: str = Form(""),
+    light_weight: str = Form(""),
+    strong_weight: str = Form(""),
+    validation_memo: str = Form(""),
+    library_memo: str = Form(""),
+) -> RedirectResponse:
+    now = settings_now()
+    with connect() as conn:
+        cur = conn.execute(
+            """
+            UPDATE selected_lora_profiles
+            SET profile_name = ?, trigger_word = ?, base_model = ?,
+                recommended_weight_min = ?, recommended_weight_max = ?,
+                light_weight = ?, strong_weight = ?,
+                validation_memo = ?, library_memo = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                profile_name.strip(),
+                trigger_word.strip(),
+                base_model.strip(),
+                optional_float(recommended_weight_min),
+                optional_float(recommended_weight_max),
+                optional_float(light_weight),
+                optional_float(strong_weight),
+                validation_memo.strip(),
+                library_memo.strip(),
+                now,
+                profile_id,
+            ),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="LoRA profile not found")
+    return RedirectResponse(f"/lora-library/{profile_id}/edit", status_code=303)
 
 
 @app.get("/jobs/{job_id}/samples/{image_id}")
@@ -1175,6 +1401,18 @@ def clamp_rating(value: Any) -> int:
         return 0
 
 
+def optional_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    return float(value)
+
+
+def optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    return int(value)
+
+
 def rating_value(sample: Any, key: str) -> int | None:
     value = sample[key] if key in sample.keys() else None
     if value is None and key == "rating_overall":
@@ -1243,6 +1481,160 @@ def average_int_field(rows: list[dict[str, Any]], key: str) -> float | None:
     if not values:
         return None
     return sum(values) / len(values)
+
+
+def ensure_selected_lora_profile(job_id: int) -> Any:
+    job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
+    output = fetch_one("SELECT * FROM training_outputs WHERE job_id = ? AND selected = 1", (job_id,))
+    if job is None or output is None:
+        return None
+    existing = fetch_one(
+        "SELECT * FROM selected_lora_profiles WHERE job_id = ? AND selected_output_id = ?",
+        (job_id, output["id"]),
+    )
+    if existing:
+        sync_profile_selected_fields(job, output, int(existing["id"]))
+        return fetch_one("SELECT * FROM selected_lora_profiles WHERE id = ?", (existing["id"],))
+    now = settings_now()
+    profile_name = f"Job #{job_id} {job['name']} epoch {output['epoch'] or job['adopted_epoch'] or '-'}"
+    with connect() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO selected_lora_profiles(
+                job_id, selected_output_id, profile_name, trigger_word, selected_epoch,
+                selected_model_path, exported_model_path, base_model,
+                recommended_weight_min, recommended_weight_max, light_weight, strong_weight,
+                validation_memo, library_memo, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, '', '', ?, ?)
+            """,
+            (
+                job_id,
+                output["id"],
+                profile_name,
+                job["trigger_word_at_creation"] or "",
+                output["epoch"] if output["epoch"] is not None else job["adopted_epoch"],
+                output["file_path"],
+                exported_model_path(job_id),
+                base_model_label(job["base_model_path"]),
+                now,
+                now,
+            ),
+        )
+        profile_id = int(cur.lastrowid)
+    sync_profile_from_validation(job_id)
+    return fetch_one("SELECT * FROM selected_lora_profiles WHERE id = ?", (profile_id,))
+
+
+def sync_profile_selected_fields(job: Any, output: Any, profile_id: int) -> None:
+    now = settings_now()
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE selected_lora_profiles
+            SET selected_epoch = ?, selected_model_path = ?, exported_model_path = ?,
+                trigger_word = COALESCE(NULLIF(trigger_word, ''), ?),
+                base_model = COALESCE(NULLIF(base_model, ''), ?),
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                output["epoch"] if output["epoch"] is not None else job["adopted_epoch"],
+                output["file_path"],
+                exported_model_path(int(job["id"])),
+                job["trigger_word_at_creation"] or "",
+                base_model_label(job["base_model_path"]),
+                now,
+                profile_id,
+            ),
+        )
+
+
+def sync_profile_from_validation(job_id: int) -> None:
+    profile = ensure_selected_lora_profile_without_sync(job_id)
+    if profile is None:
+        return
+    range_row = fetch_one(
+        """
+        SELECT recommended_weight_min, recommended_weight_max
+        FROM validation_weight_reviews
+        WHERE job_id = ? AND recommended_weight_min IS NOT NULL AND recommended_weight_max IS NOT NULL
+        ORDER BY updated_at DESC, id DESC LIMIT 1
+        """,
+        (job_id,),
+    ) or fetch_one(
+        """
+        SELECT recommended_weight_min, recommended_weight_max
+        FROM validation_images
+        WHERE job_id = ? AND recommended_weight_min IS NOT NULL AND recommended_weight_max IS NOT NULL
+        ORDER BY updated_at DESC, id DESC LIMIT 1
+        """,
+        (job_id,),
+    )
+    low_review = fetch_one("SELECT lora_weight FROM validation_weight_reviews WHERE job_id = ? ORDER BY lora_weight ASC LIMIT 1", (job_id,))
+    high_review = fetch_one("SELECT lora_weight FROM validation_weight_reviews WHERE job_id = ? ORDER BY lora_weight DESC LIMIT 1", (job_id,))
+    memo_row = fetch_one(
+        """
+        SELECT memo FROM validation_weight_reviews
+        WHERE job_id = ? AND memo IS NOT NULL AND memo != ''
+        ORDER BY updated_at DESC, id DESC LIMIT 1
+        """,
+        (job_id,),
+    ) or fetch_one(
+        """
+        SELECT memo FROM validation_images
+        WHERE job_id = ? AND memo IS NOT NULL AND memo != ''
+        ORDER BY updated_at DESC, id DESC LIMIT 1
+        """,
+        (job_id,),
+    )
+    now = settings_now()
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE selected_lora_profiles
+            SET recommended_weight_min = COALESCE(?, recommended_weight_min),
+                recommended_weight_max = COALESCE(?, recommended_weight_max),
+                light_weight = COALESCE(light_weight, ?),
+                strong_weight = COALESCE(strong_weight, ?),
+                validation_memo = COALESCE(NULLIF(validation_memo, ''), ?),
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                range_row["recommended_weight_min"] if range_row else None,
+                range_row["recommended_weight_max"] if range_row else None,
+                low_review["lora_weight"] if low_review else None,
+                high_review["lora_weight"] if high_review else None,
+                memo_row["memo"] if memo_row else "",
+                now,
+                profile["id"],
+            ),
+        )
+
+
+def ensure_selected_lora_profile_without_sync(job_id: int) -> Any:
+    output = fetch_one("SELECT * FROM training_outputs WHERE job_id = ? AND selected = 1", (job_id,))
+    if output is None:
+        return None
+    profile = fetch_one("SELECT * FROM selected_lora_profiles WHERE job_id = ? AND selected_output_id = ?", (job_id, output["id"]))
+    if profile:
+        return profile
+    return ensure_selected_lora_profile(job_id)
+
+
+def exported_model_path(job_id: int) -> str:
+    export_dir = settings.EXPORTS_DIR / "selected_loras" / f"job_{job_id:06d}"
+    if not export_dir.exists():
+        return ""
+    files = sorted(export_dir.glob("*.safetensors"))
+    return str(files[0]) if files else ""
+
+
+def base_model_label(path_value: str) -> str:
+    if not path_value:
+        return ""
+    return Path(path_value).stem
 
 
 def build_epoch_visual_summaries(epoch_rows: list[dict[str, Any]], samples: list[Any]) -> list[dict[str, Any]]:

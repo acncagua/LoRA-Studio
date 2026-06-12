@@ -266,6 +266,93 @@
   {% endfor %}
 </section>
 <section>
+  <h2>External Validation</h2>
+  <p class="muted">reForge / WebUIなど外部生成環境で作成した画像とweight評価を、採用LoRAに紐づけて保存します。</p>
+  {% if selected_lora_profile %}
+  <dl>
+    <dt>ライブラリProfile</dt><dd><a href="/lora-library/{{ selected_lora_profile.id }}/edit">#{{ selected_lora_profile.id }} {{ selected_lora_profile.profile_name }}</a></dd>
+    <dt>推奨weight</dt><dd>{{ selected_lora_profile.recommended_weight_min if selected_lora_profile.recommended_weight_min is not none else '-' }} - {{ selected_lora_profile.recommended_weight_max if selected_lora_profile.recommended_weight_max is not none else '-' }}</dd>
+    <dt>light / strong</dt><dd>{{ selected_lora_profile.light_weight if selected_lora_profile.light_weight is not none else '-' }} / {{ selected_lora_profile.strong_weight if selected_lora_profile.strong_weight is not none else '-' }}</dd>
+    <dt>Validation memo</dt><dd>{{ selected_lora_profile.validation_memo or '-' }}</dd>
+  </dl>
+  {% else %}
+  <p class="notice">採用LoRAを選択すると、LoRAライブラリProfileとExternal Validationを保存できます。</p>
+  {% endif %}
+  <div class="panel-grid">
+    <div>
+      <h3>Validation画像を登録</h3>
+      <form method="post" action="/jobs/{{ job.id }}/external-validation/images" class="form-grid">
+        <label>画像パス
+          <span class="path-picker">
+            <input id="external-validation-image-path" name="image_path" required>
+            <button type="button" data-browse-target="#external-validation-image-path" data-browse-kind="image" data-browse-title="外部Validation画像を選択" data-browse-initial="{{ default_project_path }}">参照</button>
+          </span>
+        </label>
+        <label>validation_type<input name="validation_type" value="external"></label>
+        <label>base_model<input name="base_model" value="{{ selected_lora_profile.base_model if selected_lora_profile else '' }}"></label>
+        <label>sampler<input name="sampler" placeholder="DPM++ 2M Karras"></label>
+        <label>steps<input type="number" name="steps" value="28" min="1"></label>
+        <label>cfg_scale<input type="number" name="cfg_scale" value="7" min="0" step="0.5"></label>
+        <label>width<input type="number" name="width" value="1024" min="1"></label>
+        <label>height<input type="number" name="height" value="1024" min="1"></label>
+        <label>Hires<input type="checkbox" name="hires_enabled" value="1"></label>
+        <label>hires_scale<input type="number" name="hires_scale" min="0" step="0.1"></label>
+        <label>lora_weights<input name="lora_weights" placeholder="0.6"></label>
+        <label>seeds<input name="seeds"></label>
+        <label class="wide-field">prompt<textarea name="prompt"></textarea></label>
+        <label class="wide-field">negative_prompt<textarea name="negative_prompt"></textarea></label>
+        <label>顔<input type="number" name="rating_face" value="0" min="0" max="5"></label>
+        <label>衣装<input type="number" name="rating_costume" value="0" min="0" max="5"></label>
+        <label>スタイル<input type="number" name="rating_style" value="0" min="0" max="5"></label>
+        <label>安定性<input type="number" name="rating_stability" value="0" min="0" max="5"></label>
+        <label>総合<input type="number" name="rating_overall" value="0" min="0" max="5"></label>
+        <label>推奨min<input type="number" name="recommended_weight_min" min="0" max="2" step="0.1"></label>
+        <label>推奨max<input type="number" name="recommended_weight_max" min="0" max="2" step="0.1"></label>
+        <label class="wide-field">メモ<textarea name="memo"></textarea></label>
+        <button type="submit">画像Validationを保存</button>
+      </form>
+    </div>
+    <div>
+      <h3>weight別評価を追加</h3>
+      <form method="post" action="/jobs/{{ job.id }}/external-validation/weight-review" class="form-grid">
+        <label>weight<input type="number" name="lora_weight" value="0.8" min="0" max="2" step="0.1"></label>
+        <label>validation_type<input name="validation_type" value="external"></label>
+        <label>顔<input type="number" name="rating_face" value="0" min="0" max="5"></label>
+        <label>衣装<input type="number" name="rating_costume" value="0" min="0" max="5"></label>
+        <label>スタイル<input type="number" name="rating_style" value="0" min="0" max="5"></label>
+        <label>安定性<input type="number" name="rating_stability" value="0" min="0" max="5"></label>
+        <label>総合<input type="number" name="rating_overall" value="0" min="0" max="5"></label>
+        <label>推奨min<input type="number" name="recommended_weight_min" min="0" max="2" step="0.1"></label>
+        <label>推奨max<input type="number" name="recommended_weight_max" min="0" max="2" step="0.1"></label>
+        <label class="wide-field">メモ<textarea name="memo"></textarea></label>
+        <button type="submit">weight評価を保存</button>
+      </form>
+      <h4>weight評価</h4>
+      <table>
+        <thead><tr><th>weight</th><th>顔</th><th>衣装</th><th>スタイル</th><th>安定性</th><th>総合</th><th>推奨</th><th>メモ</th></tr></thead>
+        <tbody>
+          {% for row in validation_weight_reviews %}
+          <tr><td>{{ row.lora_weight }}</td><td>{{ row.rating_face or '-' }}</td><td>{{ row.rating_costume or '-' }}</td><td>{{ row.rating_style or '-' }}</td><td>{{ row.rating_stability or '-' }}</td><td>{{ row.rating_overall or '-' }}</td><td>{{ row.recommended_weight_min if row.recommended_weight_min is not none else '-' }} - {{ row.recommended_weight_max if row.recommended_weight_max is not none else '-' }}</td><td>{{ row.memo or '-' }}</td></tr>
+          {% else %}
+          <tr><td colspan="8" class="muted">weight評価はまだありません。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <h3>登録済みValidation画像</h3>
+  <div class="sample-grid">
+    {% for image in validation_images %}
+    <figure>
+      <img src="/validation-images/{{ image.id }}" alt="validation image {{ image.id }}">
+      <figcaption>#{{ image.id }} {{ image.validation_type or '-' }} / weight {{ image.lora_weights or '-' }}<br>{{ image.base_model or '-' }} / {{ image.sampler or '-' }}<br>顔 {{ image.rating_face or '-' }} 衣装 {{ image.rating_costume or '-' }} スタイル {{ image.rating_style or '-' }} 安定性 {{ image.rating_stability or '-' }} 総合 {{ image.rating_overall or '-' }}<br>{{ image.memo or '' }}</figcaption>
+    </figure>
+    {% else %}
+    <p class="muted">外部Validation画像はまだありません。</p>
+    {% endfor %}
+  </div>
+</section>
+<section>
   <h2>Validation Results</h2>
   <p class="muted">reForge / WebUIで手動生成した結果を記録します。scoreは1〜5、image_pathは任意です。</p>
   <div class="panel-grid">

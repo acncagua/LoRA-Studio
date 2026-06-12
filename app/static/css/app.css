@@ -57,6 +57,7 @@ pre { background: #18211e; color: #e9f2ed; padding: 14px; border-radius: 8px; ov
 button, .button { border: 0; border-radius: 6px; background: var(--accent); color: white; padding: 9px 14px; font-weight: 600; cursor: pointer; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(240px, 1fr)); gap: 14px; }
 .form-grid.wide { max-width: 980px; }
+.wide-field { grid-column: 1 / -1; }
 label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; }
 input, select, textarea { border: 1px solid var(--line); border-radius: 6px; padding: 9px 10px; font: inherit; color: var(--ink); background: white; min-width: 0; max-width: 100%; }
 textarea { min-height: 84px; }

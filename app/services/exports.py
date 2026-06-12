@@ -60,6 +60,7 @@ def export_selected_lora(job_id: int) -> dict[str, str]:
 
     preset = fetch_one("SELECT * FROM presets WHERE id = ?", (job["preset_id"],))
     summary = fetch_one("SELECT * FROM training_metric_summaries WHERE job_id = ?", (job_id,))
+    profile = fetch_one("SELECT * FROM selected_lora_profiles WHERE job_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1", (job_id,))
     samples = fetch_all("SELECT * FROM sample_images WHERE job_id = ? ORDER BY epoch, prompt_id, id", (job_id,))
     source = Path(output["file_path"])
     if not source.exists():
@@ -91,7 +92,7 @@ def export_selected_lora(job_id: int) -> dict[str, str]:
         "memo": human_memo(samples),
     }
     (export_dir / "selected_lora_info.json").write_text(json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8")
-    (export_dir / "selected_lora_notes.md").write_text(selected_lora_notes(job, preset, summary, info), encoding="utf-8")
+    (export_dir / "selected_lora_notes.md").write_text(selected_lora_notes(job, preset, summary, info, profile), encoding="utf-8")
     return {"directory": str(export_dir), "model": str(exported_model), "info": str(export_dir / "selected_lora_info.json")}
 
 
@@ -265,6 +266,9 @@ def write_job_contact_sheet(job_id: int) -> str:
     outputs = fetch_all("SELECT * FROM training_outputs WHERE job_id = ? ORDER BY epoch, step, id", (job_id,))
     prompts = fetch_all("SELECT * FROM sample_prompts WHERE job_id = ? ORDER BY sort_order, id", (job_id,))
     samples = fetch_all("SELECT * FROM sample_images WHERE job_id = ? ORDER BY prompt_id, epoch, id", (job_id,))
+    validation_images = fetch_all("SELECT * FROM validation_images WHERE job_id = ? ORDER BY created_at DESC, id DESC", (job_id,))
+    weight_reviews = fetch_all("SELECT * FROM validation_weight_reviews WHERE job_id = ? ORDER BY lora_weight, id", (job_id,))
+    profile = fetch_one("SELECT * FROM selected_lora_profiles WHERE job_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1", (job_id,))
 
     reports_dir = Path(job["run_dir"]) / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -294,6 +298,7 @@ def write_job_contact_sheet(job_id: int) -> str:
             "</tr>"
         )
     lines.append("</tbody></table></section>")
+    lines.extend(external_validation_section(profile, weight_reviews, validation_images, path.parent))
     lines.extend(sample_sections(samples, prompts, path.parent))
     lines.extend(html_document_end())
     path.write_text("\n".join(lines), encoding="utf-8")
@@ -398,7 +403,8 @@ def job_card(bundle: dict[str, Any]) -> str:
     )
 
 
-def selected_lora_notes(job: Any, preset: Any, summary: Any, info: dict[str, Any]) -> str:
+def selected_lora_notes(job: Any, preset: Any, summary: Any, info: dict[str, Any], profile: Any = None) -> str:
+    validation_lines = external_validation_markdown(profile, int(job["id"]))
     return "\n".join(
         [
             f"# Selected LoRA Job #{info['job_id']}",
@@ -426,12 +432,84 @@ def selected_lora_notes(job: Any, preset: Any, summary: Any, info: dict[str, Any
             "## 人間評価メモ",
             info["memo"] or "-",
             "",
+            *validation_lines,
+            "",
             "## 注意点",
             "- no_metadataを使ったLoRAはLoRA本体として利用可能です。",
             "- 学習条件の確認にはLoRA-StudioのDBとselected_lora_info.jsonを併用してください。",
             "",
         ]
     )
+
+
+def external_validation_section(profile: Any, weight_reviews: list[Any], validation_images: list[Any], base_dir: Path) -> list[str]:
+    lines = ["<section><h2>External Validation</h2>"]
+    if profile:
+        lines.extend(
+            [
+                "<dl>",
+                f"<dt>Profile</dt><dd>{e(profile['profile_name'])}</dd>",
+                f"<dt>Recommended weight</dt><dd>{e(profile['recommended_weight_min'] if profile['recommended_weight_min'] is not None else '-')} - {e(profile['recommended_weight_max'] if profile['recommended_weight_max'] is not None else '-')}</dd>",
+                f"<dt>Light / Strong</dt><dd>{e(profile['light_weight'] if profile['light_weight'] is not None else '-')} / {e(profile['strong_weight'] if profile['strong_weight'] is not None else '-')}</dd>",
+                f"<dt>Validation memo</dt><dd>{e(profile['validation_memo'] or '-')}</dd>",
+                "</dl>",
+            ]
+        )
+    lines.append("<h3>Weight Reviews</h3><table><thead><tr><th>Weight</th><th>Face</th><th>Costume</th><th>Style</th><th>Stability</th><th>Overall</th><th>Recommended</th><th>Memo</th></tr></thead><tbody>")
+    for row in weight_reviews:
+        lines.append(
+            "<tr>"
+            f"<td>{row['lora_weight']}</td><td>{row['rating_face'] or '-'}</td><td>{row['rating_costume'] or '-'}</td>"
+            f"<td>{row['rating_style'] or '-'}</td><td>{row['rating_stability'] or '-'}</td><td>{row['rating_overall'] or '-'}</td>"
+            f"<td>{e(row['recommended_weight_min'] if row['recommended_weight_min'] is not None else '-')} - {e(row['recommended_weight_max'] if row['recommended_weight_max'] is not None else '-')}</td>"
+            f"<td>{e(row['memo'] or '')}</td></tr>"
+        )
+    if not weight_reviews:
+        lines.append("<tr><td colspan=\"8\">No weight reviews</td></tr>")
+    lines.append("</tbody></table>")
+    lines.append("<h3>Validation Images</h3><div class=\"grid\">")
+    for image in validation_images:
+        image_path = Path(image["image_path"])
+        src = os.path.relpath(image_path, base_dir).replace("\\", "/")
+        lines.append(
+            "<figure>"
+            f"<img src=\"{e(src)}\" alt=\"validation image {image['id']}\">"
+            f"<figcaption>{e(image_path.name)}<br>weight {e(image['lora_weights'] or '-')} / {e(image['validation_type'] or '-')}"
+            f"<br>face {image['rating_face'] or '-'} costume {image['rating_costume'] or '-'} style {image['rating_style'] or '-'} stability {image['rating_stability'] or '-'} overall {image['rating_overall'] or '-'}"
+            f"<br>{e(image['memo'] or '')}</figcaption></figure>"
+        )
+    if not validation_images:
+        lines.append("<p>No validation images</p>")
+    lines.append("</div></section>")
+    return lines
+
+
+def external_validation_markdown(profile: Any, job_id: int) -> list[str]:
+    weight_reviews = fetch_all("SELECT * FROM validation_weight_reviews WHERE job_id = ? ORDER BY lora_weight, id", (job_id,))
+    validation_images = fetch_all("SELECT * FROM validation_images WHERE job_id = ? ORDER BY created_at DESC, id DESC", (job_id,))
+    lines = ["## External Validation"]
+    if profile:
+        lines.extend(
+            [
+                f"- profile: {profile['profile_name']}",
+                f"- recommended weight: {profile['recommended_weight_min'] if profile['recommended_weight_min'] is not None else '-'} - {profile['recommended_weight_max'] if profile['recommended_weight_max'] is not None else '-'}",
+                f"- light / strong: {profile['light_weight'] if profile['light_weight'] is not None else '-'} / {profile['strong_weight'] if profile['strong_weight'] is not None else '-'}",
+                f"- validation memo: {profile['validation_memo'] or '-'}",
+            ]
+        )
+    lines.extend(["", "### Weight Reviews"])
+    if weight_reviews:
+        for row in weight_reviews:
+            lines.append(f"- weight {row['lora_weight']}: overall={row['rating_overall'] or '-'}, recommended={row['recommended_weight_min'] if row['recommended_weight_min'] is not None else '-'}-{row['recommended_weight_max'] if row['recommended_weight_max'] is not None else '-'}, memo={row['memo'] or ''}")
+    else:
+        lines.append("- none")
+    lines.extend(["", "### Validation Images"])
+    if validation_images:
+        for image in validation_images:
+            lines.append(f"- {Path(image['image_path']).name}: weight={image['lora_weights'] or '-'}, overall={image['rating_overall'] or '-'}, memo={image['memo'] or ''}")
+    else:
+        lines.append("- none")
+    return lines
 
 
 def human_memo(samples: list[Any]) -> str:

@@ -1,0 +1,27 @@
+{% extends "base.html" %}{% block content %}
+<header class="page-head"><h1>LoRAライブラリ</h1></header>
+<section>
+  <p class="muted">採用済みLoRAをJob横断で管理します。推奨weight、trigger、外部Validationメモをここで確認できます。</p>
+  <table>
+    <thead><tr><th>ID</th><th>Profile</th><th>Job</th><th>Trigger</th><th>Epoch</th><th>推奨weight</th><th>light / strong</th><th>Base model</th><th>Memo</th><th></th></tr></thead>
+    <tbody>
+      {% for profile in profiles %}
+      <tr>
+        <td>#{{ profile.id }}</td>
+        <td>{{ profile.profile_name }}</td>
+        <td><a href="/jobs/{{ profile.job_id }}">#{{ profile.job_id }} {{ profile.job_name or '' }}</a></td>
+        <td>{{ profile.trigger_word or '-' }}</td>
+        <td>{{ profile.selected_epoch or '-' }}</td>
+        <td>{{ profile.recommended_weight_min if profile.recommended_weight_min is not none else '-' }} - {{ profile.recommended_weight_max if profile.recommended_weight_max is not none else '-' }}</td>
+        <td>{{ profile.light_weight if profile.light_weight is not none else '-' }} / {{ profile.strong_weight if profile.strong_weight is not none else '-' }}</td>
+        <td>{{ profile.base_model or '-' }}</td>
+        <td>{{ profile.validation_memo or profile.library_memo or '-' }}</td>
+        <td><a class="button" href="/lora-library/{{ profile.id }}/edit">編集</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="10" class="muted">LoRA Profileはまだありません。Job詳細で採用LoRAを選択すると作成されます。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

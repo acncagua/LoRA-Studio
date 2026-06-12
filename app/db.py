@@ -143,6 +143,12 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             ON training_jobs(status);
         CREATE INDEX IF NOT EXISTS idx_validation_results_job
             ON validation_results(job_id);
+        CREATE INDEX IF NOT EXISTS idx_validation_images_job
+            ON validation_images(job_id);
+        CREATE INDEX IF NOT EXISTS idx_validation_weight_reviews_job
+            ON validation_weight_reviews(job_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_selected_lora_profiles_job_output
+            ON selected_lora_profiles(job_id, selected_output_id);
         """
     )
 
@@ -739,6 +745,30 @@ CREATE TABLE IF NOT EXISTS validation_results (
     face_score INTEGER, costume_score INTEGER, stability_score INTEGER,
     flexibility_score INTEGER, overall_score INTEGER,
     memo TEXT, image_path TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS validation_images (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, selected_output_id INTEGER,
+    image_path TEXT NOT NULL, validation_type TEXT, prompt TEXT, negative_prompt TEXT,
+    base_model TEXT, sampler TEXT, steps INTEGER, cfg_scale REAL, width INTEGER, height INTEGER,
+    hires_enabled INTEGER NOT NULL DEFAULT 0, hires_scale REAL, lora_weights TEXT, seeds TEXT,
+    rating_face INTEGER, rating_costume INTEGER, rating_style INTEGER,
+    rating_stability INTEGER, rating_overall INTEGER,
+    recommended_weight_min REAL, recommended_weight_max REAL,
+    memo TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS validation_weight_reviews (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, selected_output_id INTEGER,
+    lora_weight REAL NOT NULL, validation_type TEXT, rating_face INTEGER, rating_costume INTEGER,
+    rating_style INTEGER, rating_stability INTEGER, rating_overall INTEGER,
+    recommended_weight_min REAL, recommended_weight_max REAL, memo TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS selected_lora_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, selected_output_id INTEGER,
+    profile_name TEXT NOT NULL, trigger_word TEXT, selected_epoch INTEGER, selected_model_path TEXT,
+    exported_model_path TEXT, base_model TEXT, recommended_weight_min REAL,
+    recommended_weight_max REAL, light_weight REAL, strong_weight REAL,
+    validation_memo TEXT, library_memo TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS caption_edit_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT, dataset_id INTEGER NOT NULL, action TEXT NOT NULL,
