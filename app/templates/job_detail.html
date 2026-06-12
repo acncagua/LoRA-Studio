@@ -12,8 +12,11 @@
     </form>
     <form method="post" action="/jobs/{{ job.id }}/stop"><button type="submit" class="danger">Stop</button></form>
     <form method="post" action="/jobs/{{ job.id }}/reimport"><button type="submit">Reimport Results</button></form>
+    <form method="post" action="/jobs/{{ job.id }}/export-contact-sheet"><button type="submit">Export Contact Sheet</button></form>
+    <form method="post" action="/jobs/{{ job.id }}/export-selected-lora"><button type="submit">Export Selected LoRA</button></form>
   </div>
 </header>
+{% if exported %}<p class="notice">Exported: {{ exported }}</p>{% endif %}
 <section class="panel-grid">
   <div>
     <h2>Job</h2>
@@ -32,6 +35,7 @@
       <dt>Expected Steps</dt><dd>{{ job.expected_total_steps if job.expected_total_steps is not none else '-' }}</dd>
       <dt>Actual Step</dt><dd>{{ job.actual_max_step if job.actual_max_step is not none else '-' }}</dd>
       <dt>Step Check</dt><dd><span class="label {{ (job.step_consistency_label or 'unknown')|lower }}">{{ job.step_consistency_label or '-' }}</span> {{ job.step_consistency_message or '' }}</dd>
+      <dt>no_metadata</dt><dd>{{ 'enabled' if no_metadata_enabled else 'disabled' }}</dd>
       <dt>Run Dir</dt><dd>{{ job.run_dir }}</dd>
     </dl>
   </div>
@@ -40,6 +44,16 @@
     {% if dataset %}<dl><dt>Name</dt><dd>{{ dataset.name }}</dd><dt>Images</dt><dd>{{ dataset.image_count }}</dd><dt>Path</dt><dd>{{ dataset.path }}</dd></dl>{% endif %}
     <h2>Selected LoRA</h2>
     <p>{{ job.adopted_model_path or 'Not selected yet.' }}</p>
+    <form method="post" action="/jobs/{{ job.id }}/select-epoch" class="inline-form">
+      <label>Set selected by epoch
+        <select name="epoch">
+          {% for output in outputs if output.epoch is not none %}
+          <option value="{{ output.epoch }}" {{ 'selected' if output.selected else '' }}>epoch {{ output.epoch }} / {{ output.file_path }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button type="submit">Select Epoch</button>
+    </form>
   </div>
 </section>
 <section>
@@ -162,20 +176,44 @@
       {% endfor %}
     </tbody>
   </table>
+  <h3>Epoch Visual Summary</h3>
+  <table>
+    <thead><tr><th>Epoch</th><th>Avg Loss</th><th>Moving Avg</th><th>Samples</th><th>Face</th><th>Costume</th><th>Style</th><th>Stability</th><th>Overall</th><th>Memos</th><th>Output</th><th>Selected</th></tr></thead>
+    <tbody>
+      {% for epoch in epoch_visual_summaries %}
+      <tr>
+        <td>{{ epoch.epoch }}</td>
+        <td>{{ '%.6f'|format(epoch.avg_loss) if epoch.avg_loss is not none else '-' }}</td>
+        <td>{{ '%.6f'|format(epoch.moving_avg_final_loss) if epoch.moving_avg_final_loss is not none else '-' }}</td>
+        <td>{{ epoch.sample_count }}</td>
+        <td>{{ '%.2f'|format(epoch.avg_face) if epoch.avg_face is not none else '-' }}</td>
+        <td>{{ '%.2f'|format(epoch.avg_costume) if epoch.avg_costume is not none else '-' }}</td>
+        <td>{{ '%.2f'|format(epoch.avg_style) if epoch.avg_style is not none else '-' }}</td>
+        <td>{{ '%.2f'|format(epoch.avg_stability) if epoch.avg_stability is not none else '-' }}</td>
+        <td>{{ '%.2f'|format(epoch.avg_overall) if epoch.avg_overall is not none else '-' }}</td>
+        <td>{{ epoch.memo_count }}</td>
+        <td>{{ epoch.output_file }}</td>
+        <td>{{ 'selected' if epoch.output_selected else '' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="12" class="muted">No visual ratings yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </section>
 <section><h2>Train Log Tail</h2><pre>{{ log_tail or 'No train.log yet.' }}</pre></section>
 <section>
   <h2>Outputs</h2>
   <table>
-    <thead><tr><th>ID</th><th>Epoch</th><th>Step</th><th>Size</th><th>SHA256</th><th>Selected</th><th>Path</th><th></th></tr></thead>
+    <thead><tr><th>ID</th><th>Epoch</th><th>Step</th><th>Size</th><th>SHA256</th><th>Selected</th><th>Metadata Error</th><th>Path</th><th></th></tr></thead>
     <tbody>
       {% for output in outputs %}
       <tr>
-        <td>#{{ output.id }}</td><td>{{ output.epoch or '-' }}</td><td>{{ output.step or '-' }}</td><td>{{ output.file_size or '-' }}</td><td>{{ output.sha256[:8] if output.sha256 else '-' }}</td><td>{{ 'selected' if output.selected else '' }}</td><td>{{ output.file_path }}</td>
+        <td>#{{ output.id }}</td><td>{{ output.epoch or '-' }}</td><td>{{ output.step or '-' }}</td><td>{{ output.file_size or '-' }}</td><td>{{ output.sha256[:8] if output.sha256 else '-' }}</td><td>{{ 'selected' if output.selected else '' }}</td><td>{{ output.metadata_error or '-' }}</td><td>{{ output.file_path }}</td>
         <td><form method="post" action="/jobs/{{ job.id }}/outputs/{{ output.id }}/select"><button type="submit">Select</button></form></td>
       </tr>
       {% else %}
-      <tr><td colspan="8" class="muted">No LoRA outputs imported yet.</td></tr>
+      <tr><td colspan="9" class="muted">No LoRA outputs imported yet.</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -194,7 +232,13 @@
           {{ sample.filename }}
         </figcaption>
         <form method="post" action="/jobs/{{ job.id }}/samples/{{ sample.id }}/review" class="review-form">
-          <label>Rating <input type="number" min="0" max="5" name="rating" value="{{ sample.rating or 0 }}"></label>
+          <div class="rating-grid">
+            <label>Face <input type="number" min="0" max="5" name="rating_face" value="{{ sample.rating_face or 0 }}"></label>
+            <label>Costume <input type="number" min="0" max="5" name="rating_costume" value="{{ sample.rating_costume or 0 }}"></label>
+            <label>Style <input type="number" min="0" max="5" name="rating_style" value="{{ sample.rating_style or 0 }}"></label>
+            <label>Stability <input type="number" min="0" max="5" name="rating_stability" value="{{ sample.rating_stability or 0 }}"></label>
+            <label>Overall <input type="number" min="0" max="5" name="rating_overall" value="{{ sample.rating_overall or sample.rating or 0 }}"></label>
+          </div>
           <label>Memo <textarea name="memo">{{ sample.memo or '' }}</textarea></label>
           <button type="submit">Save</button>
         </form>

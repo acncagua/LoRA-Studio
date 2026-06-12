@@ -49,9 +49,20 @@ def parse_number(text: str, pattern: str) -> int | None:
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+        for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def safe_sha256_file(path: Path) -> tuple[str | None, str | None]:
+    try:
+        return sha256_file(path), None
+    except MemoryError as exc:
+        return None, f"sha256 MemoryError: {exc}"
+    except OSError as exc:
+        return None, f"sha256 OSError: {exc}"
+    except Exception as exc:
+        return None, f"sha256 error: {exc}"
 
 
 def image_size(path: Path) -> tuple[int | None, int | None]:
@@ -107,24 +118,27 @@ def collect_models(job_id: int, models_dir: Path) -> int:
             ).fetchone()
             epoch, step = parse_epoch_step(path)
             if existing:
+                sha256, metadata_error = safe_sha256_file(path)
                 conn.execute(
                     """
                     UPDATE training_outputs
-                    SET epoch = ?, step = ?
+                    SET epoch = ?, step = ?, file_size = ?, sha256 = COALESCE(?, sha256),
+                        metadata_error = ?
                     WHERE id = ?
                     """,
-                    (epoch, step, existing["id"]),
+                    (epoch, step, path.stat().st_size, sha256, metadata_error, existing["id"]),
                 )
                 continue
+            sha256, metadata_error = safe_sha256_file(path)
             conn.execute(
                 """
                 INSERT INTO training_outputs(
                     job_id, epoch, step, file_path, file_type, file_size,
-                    sha256, selected, created_at
+                    sha256, selected, metadata_error, created_at
                 )
-                VALUES (?, ?, ?, ?, 'model', ?, ?, 0, ?)
+                VALUES (?, ?, ?, ?, 'model', ?, ?, 0, ?, ?)
                 """,
-                (job_id, epoch, step, file_path, path.stat().st_size, sha256_file(path), now),
+                (job_id, epoch, step, file_path, path.stat().st_size, sha256, metadata_error, now),
             )
             inserted += 1
     return inserted

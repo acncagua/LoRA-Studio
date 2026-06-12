@@ -181,6 +181,57 @@ DashboardのRecent Jobsで2件にチェックを入れて `Compare Selected` を
 
 比較結果は `Export Markdown` で `runs/comparisons/compare_job_000004_job_000005.md` のようなMarkdownへ出力できます。MarkdownにはJob ID、プリセット名、パラメータ差分、metrics差分、selected LoRA、人間メモ、health注意、sampleファイル名を記録します。
 
+## 視覚評価ワークフロー
+
+Job詳細の `Samples By Prompt` では、各sample画像に以下の人間評価を保存できます。
+
+- `Face`: 顔・髪型・表情などキャラクター性の入り具合。
+- `Costume`: 衣装や装飾の再現。
+- `Style`: 絵柄や塗りの安定。
+- `Stability`: 崩れ、破綻、固定化の少なさ。
+- `Overall`: 採用判断用の総合評価。既存の `rating` は `rating_overall` と互換扱いです。
+- `Memo`: 目視メモ。良い点、崩れ、採用理由などを書きます。
+
+`Epoch Visual Summary` は、sample ratingをepoch単位で集計し、`training_epoch_summaries` のloss情報と並べて表示します。`avg_loss`、10点moving average、sample数、各rating平均、memo数、対応するLoRA出力、selected状態を同じ表で確認できます。lossが `WARNING` でも、epoch別sampleとratingが良ければ採用候補になり得ます。
+
+採用LoRAは、Outputs一覧の `Select` でも選べますが、`Set selected by epoch` からepoch単位でも選択できます。選択すると `training_outputs.selected`、`training_jobs.adopted_epoch`、`training_jobs.adopted_model_path` が更新されます。
+
+推奨運用は以下です。
+
+1. Job完了後に `Reimport Results` を実行する。
+2. `Samples By Prompt` でepoch 3/4/5付近を目視する。
+3. sample ratingとmemoを入力する。
+4. `Epoch Visual Summary` で候補epochを確認する。
+5. `Set selected by epoch` またはOutputs一覧でselected LoRAを決定する。
+6. `Export Contact Sheet` で静的HTMLレポートを出力する。
+7. `Export Selected LoRA` で採用LoRAを `exports/selected_loras/` に保存する。
+
+## Contact Sheetと採用LoRA export
+
+Job詳細の `Export Contact Sheet` は、`runs/job_xxxxxx/reports/contact_sheet_job_xxxxxx.html` に静的HTMLを出力します。Job基本情報、preset、Dataset version、trigger、selected LoRA、health、epoch別loss summary、prompt別・epoch別sample画像、rating/memo、画像ファイル名を含みます。画像は相対パスで参照するため、ローカルでHTMLを開いて確認できます。
+
+Compare画面の `Export Compare Contact Sheet` は、`runs/comparisons/contact_sheet_compare_job_000010_job_000012.html` のようなHTMLを出力します。比較対象Jobの基本情報、パラメータ差分、Dataset version警告、epoch別loss比較、同prompt・同epochのsample画像、rating/memo、selected LoRAを記録します。
+
+Job詳細の `Export Selected LoRA` は、選択済みLoRAを以下のように保存します。
+
+```text
+exports/selected_loras/
+  job_000012/
+    selected_model.safetensors
+    selected_lora_info.json
+    selected_lora_notes.md
+```
+
+`selected_lora_info.json` にはJob ID、Job名、Dataset ID/version、trigger、preset、params、selected epoch、元ファイルパス、export先、file size、sha256、health、export時刻、人間評価メモを保存します。`selected_lora_notes.md` は人間が読むための概要、trigger、Dataset version、選択epoch、loss summary、メモ、注意点です。
+
+## no_metadataとsafetensors取り込み
+
+`no_metadata` は、sd-scriptsが `.safetensors` 保存時にmetadata関連処理で大きなメモリを使う場合の回避策です。Job #11ではsafetensors metadata/hash関連で `MemoryError` が発生しましたが、Standard 6 Epoch presetに `no_metadata: true` を追加したJob #12は完走しました。
+
+メタデータなしでもLoRA本体としては利用できます。ただし、後から学習条件を確認するため、LoRA-Studio側のDB、`job_config.json`、`selected_lora_info.json` を一緒に保存することが重要です。
+
+LoRA-Studio側のsha256計算はストリーミング処理で行い、ファイル全体を一度に読み込みません。metadata読み取りは必須にせず、metadata/hash周辺でエラーがあっても、可能な限り成果物取り込み全体を失敗させない方針です。エラーがある場合はOutputs一覧の `Metadata Error` に表示します。
+
 ## 実用前チェックの推奨ワークフロー
 
 1. Datasetsでデータセットを登録する。

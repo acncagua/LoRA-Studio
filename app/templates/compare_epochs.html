@@ -7,6 +7,11 @@
     <input type="hidden" name="job_b" value="{{ comparison.right.job.id }}">
     <button type="submit">Export Markdown</button>
   </form>
+  <form method="post" action="/compare/export-contact-sheet">
+    <input type="hidden" name="job_a" value="{{ comparison.left.job.id }}">
+    <input type="hidden" name="job_b" value="{{ comparison.right.job.id }}">
+    <button type="submit">Export Compare Contact Sheet</button>
+  </form>
   {% endif %}
 </header>
 
@@ -151,7 +156,11 @@
           {% if sample %}
           <figure>
             <img src="/jobs/{{ bundle.job.id }}/samples/{{ sample.id }}" alt="sample {{ sample.id }}">
-            <figcaption>{{ sample.filename }}<br>rating {{ sample.rating or 0 }} / memo {{ sample.memo or '-' }}</figcaption>
+            <figcaption>
+              {{ sample.filename }}<br>
+              face {{ sample.rating_face or 0 }} / costume {{ sample.rating_costume or 0 }} / style {{ sample.rating_style or 0 }} / stability {{ sample.rating_stability or 0 }} / overall {{ sample.rating_overall or sample.rating or 0 }}<br>
+              memo {{ sample.memo or '-' }}
+            </figcaption>
           </figure>
           {% else %}
           <span class="muted">No image</span>

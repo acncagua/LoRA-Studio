@@ -17,26 +17,28 @@ body {
   display: grid;
   grid-template-columns: 220px 1fr;
   min-height: 100vh;
+  overflow-x: hidden;
 }
 a { color: var(--accent); text-decoration: none; }
-.sidebar { background: #1f2926; color: white; padding: 22px 16px; display: flex; flex-direction: column; gap: 24px; }
+.sidebar { background: #1f2926; color: white; padding: 22px 16px; display: flex; flex-direction: column; gap: 24px; min-width: 0; }
 .brand { color: white; font-size: 22px; font-weight: 700; }
 nav { display: grid; gap: 6px; }
-nav a { color: #dbe7e1; padding: 9px 10px; border-radius: 6px; }
+nav a { color: #dbe7e1; padding: 9px 10px; border-radius: 6px; line-height: 1.35; overflow-wrap: anywhere; }
 nav a:hover { background: #30403b; }
 .release { margin-top: auto; color: #b8c6bf; font-size: 12px; line-height: 1.5; }
-.content { padding: 28px 34px 48px; }
-.page-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
+.content { padding: 28px 34px 48px; min-width: 0; }
+.page-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
 h1 { font-size: 30px; margin: 0; }
 h2 { font-size: 18px; margin: 28px 0 12px; }
 h3 { font-size: 15px; margin: 22px 0 6px; }
-.metric-grid, .panel-grid { display: grid; grid-template-columns: repeat(4, minmax(140px, 1fr)); gap: 12px; }
+.metric-grid, .panel-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 12px; }
 .panel-grid { grid-template-columns: repeat(2, minmax(260px, 1fr)); }
 .metric-grid div, .panel-grid > div, section > form { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; }
 .metric-grid span { display: block; font-size: 32px; font-weight: 700; }
 .metric-grid small, .muted { color: var(--muted); }
-table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-th, td { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+section { min-width: 0; overflow-x: auto; }
+table { width: 100%; min-width: 720px; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+th, td { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
 th { color: var(--muted); font-size: 13px; font-weight: 600; background: #eef2eb; }
 dl { display: grid; grid-template-columns: 140px 1fr; gap: 8px 14px; }
 dt { color: var(--muted); }
@@ -59,6 +61,9 @@ textarea { min-height: 84px; }
 .sample-grid.compare { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); align-items: start; }
 .review-form { display: grid; gap: 8px; margin-top: 10px; }
 .review-form textarea { min-height: 58px; }
+.inline-form { display: grid; gap: 8px; margin-top: 10px; }
+.rating-grid { display: grid; grid-template-columns: repeat(5, minmax(68px, 1fr)); gap: 6px; }
+.rating-grid input { width: 100%; min-width: 0; }
 .label { display: inline-block; min-width: 76px; text-align: center; padding: 3px 7px; border-radius: 6px; font-size: 12px; font-weight: 700; background: #dce4df; color: var(--ink); }
 .label.ok { background: #cfe9dd; color: #18543e; }
 .label.warning { background: #f5e4c3; color: #73521a; }
@@ -79,7 +84,11 @@ tr.emphasis td:first-child { font-weight: 700; color: var(--accent-2); }
 .sample-compare-table figcaption { margin-top: 6px; color: var(--muted); font-size: 12px; word-break: break-word; }
 @media (max-width: 900px) {
   body { grid-template-columns: 1fr; }
-  .sidebar { position: static; }
+  .sidebar { position: static; gap: 14px; }
+  nav { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+  .content { padding: 22px 16px 36px; }
   .metric-grid, .panel-grid, .form-grid, .compare-columns { grid-template-columns: 1fr; }
+  .rating-grid { grid-template-columns: repeat(2, minmax(80px, 1fr)); }
   .actions { justify-content: flex-start; }
+  table { min-width: 640px; }
 }

@@ -107,8 +107,21 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "created_at": "TEXT",
         },
     )
-    ensure_columns(conn, "training_outputs", {"selected": "INTEGER NOT NULL DEFAULT 0", "memo": "TEXT"})
-    ensure_columns(conn, "sample_images", {"rating": "INTEGER", "memo": "TEXT"})
+    ensure_columns(conn, "training_outputs", {"selected": "INTEGER NOT NULL DEFAULT 0", "memo": "TEXT", "metadata_error": "TEXT"})
+    ensure_columns(
+        conn,
+        "sample_images",
+        {
+            "rating": "INTEGER",
+            "rating_face": "INTEGER",
+            "rating_costume": "INTEGER",
+            "rating_style": "INTEGER",
+            "rating_stability": "INTEGER",
+            "rating_overall": "INTEGER",
+            "memo": "TEXT",
+        },
+    )
+    conn.execute("UPDATE sample_images SET rating_overall = rating WHERE rating_overall IS NULL AND rating IS NOT NULL")
     ensure_columns(
         conn,
         "dataset_analysis",
@@ -706,13 +719,15 @@ CREATE TABLE IF NOT EXISTS sample_prompts (
 CREATE TABLE IF NOT EXISTS sample_images (
     id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, prompt_id INTEGER, epoch INTEGER,
     step INTEGER, image_path TEXT NOT NULL, prompt TEXT, negative_prompt TEXT, seed INTEGER,
-    width INTEGER, height INTEGER, cfg_scale REAL, steps INTEGER, rating INTEGER, memo TEXT,
+    width INTEGER, height INTEGER, cfg_scale REAL, steps INTEGER, rating INTEGER,
+    rating_face INTEGER, rating_costume INTEGER, rating_style INTEGER,
+    rating_stability INTEGER, rating_overall INTEGER, memo TEXT,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS training_outputs (
     id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, epoch INTEGER, step INTEGER,
     file_path TEXT NOT NULL, file_type TEXT NOT NULL, file_size INTEGER, sha256 TEXT,
-    selected INTEGER NOT NULL DEFAULT 0, memo TEXT, created_at TEXT NOT NULL
+    selected INTEGER NOT NULL DEFAULT 0, memo TEXT, metadata_error TEXT, created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS caption_edit_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT, dataset_id INTEGER NOT NULL, action TEXT NOT NULL,

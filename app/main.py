@@ -14,6 +14,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from app import settings
 from app.db import connect, create_dataset_version, create_job, fetch_all, fetch_one, import_latest_environment, init_db, insert_dataset, upsert_dataset_analysis
 from app.services.command_builder import prepare_job_files
+from app.services.exports import export_selected_lora, write_compare_contact_sheet, write_job_contact_sheet
 from app.services.output_collector import collect_job_results
 from app.services.training_runner import read_log_tail, start_job, stop_job
 
@@ -474,7 +475,7 @@ def job_create(name: str = Form(...), dataset_id: int = Form(...), preset_id: st
 
 
 @app.get("/jobs/{job_id}", response_class=HTMLResponse)
-def job_detail(request: Request, job_id: int) -> HTMLResponse:
+def job_detail(request: Request, job_id: int, exported: str | None = None) -> HTMLResponse:
     job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -485,9 +486,11 @@ def job_detail(request: Request, job_id: int) -> HTMLResponse:
     metrics = fetch_all("SELECT * FROM training_metrics WHERE job_id = ? ORDER BY step, id", (job_id,))
     metric_summary = fetch_one("SELECT * FROM training_metric_summaries WHERE job_id = ?", (job_id,))
     epoch_summaries = fetch_all("SELECT * FROM training_epoch_summaries WHERE job_id = ? ORDER BY epoch", (job_id,))
+    decorated_epochs = decorate_epoch_summaries(epoch_summaries, outputs, samples)
     log_tail = read_log_tail(dict(job))
     selected_output = fetch_one("SELECT * FROM training_outputs WHERE job_id = ? AND selected = 1", (job_id,))
     dataset_version = fetch_one("SELECT * FROM dataset_versions WHERE id = ?", (job["dataset_version_id"],)) if job["dataset_version_id"] else None
+    params = json.loads(job["params_json"])
     return render(
         request,
         "job_detail.html",
@@ -499,13 +502,16 @@ def job_detail(request: Request, job_id: int) -> HTMLResponse:
         sample_groups=group_samples(sample_prompts, samples),
         metrics=metrics,
         metric_summary=metric_summary,
-        epoch_summaries=decorate_epoch_summaries(epoch_summaries, outputs, samples),
+        epoch_summaries=decorated_epochs,
+        epoch_visual_summaries=build_epoch_visual_summaries(decorated_epochs, samples),
         health_details=health_details(metric_summary, len(metrics)),
         trigger_status=job_trigger_status(job, dataset, sample_prompts),
         loss_chart=build_loss_chart(metrics),
         log_tail=log_tail,
         selected_output=selected_output,
         dataset_version=dataset_version,
+        no_metadata_enabled=bool(params.get("no_metadata")),
+        exported=exported,
     )
 
 
@@ -621,18 +627,76 @@ def job_select_output(job_id: int, output_id: int) -> RedirectResponse:
     return RedirectResponse(f"/jobs/{job_id}", status_code=303)
 
 
+@app.post("/jobs/{job_id}/select-epoch")
+def job_select_epoch(job_id: int, epoch: int = Form(...)) -> RedirectResponse:
+    output = fetch_one(
+        """
+        SELECT * FROM training_outputs
+        WHERE job_id = ? AND file_type = 'model' AND epoch = ?
+        ORDER BY step DESC, id DESC
+        LIMIT 1
+        """,
+        (job_id, epoch),
+    )
+    if output is None:
+        raise HTTPException(status_code=404, detail=f"Output not found for epoch {epoch}")
+    with connect() as conn:
+        conn.execute("UPDATE training_outputs SET selected = 0 WHERE job_id = ?", (job_id,))
+        conn.execute("UPDATE training_outputs SET selected = 1 WHERE id = ?", (output["id"],))
+        conn.execute(
+            """
+            UPDATE training_jobs
+            SET adopted_epoch = ?, adopted_model_path = ?, updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (output["epoch"], output["file_path"], job_id),
+        )
+    return RedirectResponse(f"/jobs/{job_id}", status_code=303)
+
+
 @app.post("/jobs/{job_id}/samples/{image_id}/review")
-def job_review_sample(job_id: int, image_id: int, rating: int = Form(0), memo: str = Form("")) -> RedirectResponse:
+def job_review_sample(
+    job_id: int,
+    image_id: int,
+    rating_face: int = Form(0),
+    rating_costume: int = Form(0),
+    rating_style: int = Form(0),
+    rating_stability: int = Form(0),
+    rating_overall: int = Form(0),
+    rating: int = Form(0),
+    memo: str = Form(""),
+) -> RedirectResponse:
     sample = fetch_one("SELECT * FROM sample_images WHERE id = ? AND job_id = ?", (image_id, job_id))
     if sample is None:
         raise HTTPException(status_code=404, detail="Sample image not found")
-    rating = max(0, min(5, int(rating)))
+    rating_face = clamp_rating(rating_face)
+    rating_costume = clamp_rating(rating_costume)
+    rating_style = clamp_rating(rating_style)
+    rating_stability = clamp_rating(rating_stability)
+    rating_overall = clamp_rating(rating_overall if rating_overall is not None else rating)
     with connect() as conn:
         conn.execute(
-            "UPDATE sample_images SET rating = ?, memo = ? WHERE id = ? AND job_id = ?",
-            (rating, memo, image_id, job_id),
+            """
+            UPDATE sample_images
+            SET rating = ?, rating_face = ?, rating_costume = ?, rating_style = ?,
+                rating_stability = ?, rating_overall = ?, memo = ?
+            WHERE id = ? AND job_id = ?
+            """,
+            (rating_overall, rating_face, rating_costume, rating_style, rating_stability, rating_overall, memo, image_id, job_id),
         )
     return RedirectResponse(f"/jobs/{job_id}", status_code=303)
+
+
+@app.post("/jobs/{job_id}/export-contact-sheet")
+def job_export_contact_sheet(job_id: int) -> RedirectResponse:
+    path = write_job_contact_sheet(job_id)
+    return RedirectResponse(f"/jobs/{job_id}?exported={path}", status_code=303)
+
+
+@app.post("/jobs/{job_id}/export-selected-lora")
+def job_export_selected_lora(job_id: int) -> RedirectResponse:
+    result = export_selected_lora(job_id)
+    return RedirectResponse(f"/jobs/{job_id}?exported={result['directory']}", status_code=303)
 
 
 @app.get("/jobs/{job_id}/samples/{image_id}")
@@ -827,6 +891,13 @@ def export_comparison(job_a: int = Form(...), job_b: int = Form(...)) -> Redirec
     return RedirectResponse(f"/compare?job_a={job_a}&job_b={job_b}&exported={path}", status_code=303)
 
 
+@app.post("/compare/export-contact-sheet")
+def export_compare_contact_sheet(job_a: int = Form(...), job_b: int = Form(...)) -> RedirectResponse:
+    comparison = build_job_comparison(job_a, job_b)
+    path = write_compare_contact_sheet(comparison)
+    return RedirectResponse(f"/compare?job_a={job_a}&job_b={job_b}&exported={path}", status_code=303)
+
+
 def build_job_comparison(job_a: int, job_b: int) -> dict[str, Any]:
     left = load_compare_job(job_a)
     right = load_compare_job(job_b)
@@ -856,13 +927,15 @@ def load_compare_job(job_id: int) -> dict[str, Any]:
     sample_prompts = fetch_all("SELECT * FROM sample_prompts WHERE job_id = ? ORDER BY sort_order, id", (job_id,))
     selected_output = fetch_one("SELECT * FROM training_outputs WHERE job_id = ? AND selected = 1", (job_id,))
     params = json.loads(job["params_json"])
+    decorated_epochs = decorate_epoch_summaries(epoch_summaries, outputs, samples)
     return {
         "job": job,
         "dataset": dataset,
         "dataset_version": dataset_version,
         "preset": preset,
         "summary": summary,
-        "epoch_summaries": decorate_epoch_summaries(epoch_summaries, outputs, samples),
+        "epoch_summaries": decorated_epochs,
+        "epoch_visual_summaries": build_epoch_visual_summaries(decorated_epochs, samples),
         "metrics": metrics,
         "outputs": outputs,
         "samples": samples,
@@ -889,6 +962,56 @@ def decorate_epoch_summaries(epoch_rows: list[Any], outputs: list[Any], samples:
         item["output_selected"] = bool(output["selected"]) if output else False
         decorated.append(item)
     return decorated
+
+
+def clamp_rating(value: Any) -> int:
+    try:
+        return max(0, min(5, int(value or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def rating_value(sample: Any, key: str) -> int | None:
+    value = sample[key] if key in sample.keys() else None
+    if value is None and key == "rating_overall":
+        value = sample["rating"] if "rating" in sample.keys() else None
+    return int(value) if value is not None else None
+
+
+def average_rating(samples: list[Any], key: str) -> float | None:
+    values = [rating_value(sample, key) for sample in samples]
+    values = [value for value in values if value is not None and value > 0]
+    if not values:
+        return None
+    return sum(values) / len(values)
+
+
+def build_epoch_visual_summaries(epoch_rows: list[dict[str, Any]], samples: list[Any]) -> list[dict[str, Any]]:
+    samples_by_epoch: dict[int, list[Any]] = {}
+    for sample in samples:
+        if sample["epoch"] is not None:
+            samples_by_epoch.setdefault(int(sample["epoch"]), []).append(sample)
+    rows = []
+    for epoch in sorted(set(samples_by_epoch) | {int(row["epoch"]) for row in epoch_rows if row.get("epoch") is not None}):
+        loss_row = next((row for row in epoch_rows if int(row["epoch"]) == epoch), {})
+        epoch_samples = samples_by_epoch.get(epoch, [])
+        rows.append(
+            {
+                "epoch": epoch,
+                "avg_loss": loss_row.get("avg_loss"),
+                "moving_avg_final_loss": loss_row.get("moving_avg_final_loss"),
+                "sample_count": len(epoch_samples),
+                "avg_face": average_rating(epoch_samples, "rating_face"),
+                "avg_costume": average_rating(epoch_samples, "rating_costume"),
+                "avg_style": average_rating(epoch_samples, "rating_style"),
+                "avg_stability": average_rating(epoch_samples, "rating_stability"),
+                "avg_overall": average_rating(epoch_samples, "rating_overall"),
+                "memo_count": sum(1 for sample in epoch_samples if sample["memo"]),
+                "output_file": loss_row.get("output_file") or "-",
+                "output_selected": bool(loss_row.get("output_selected")),
+            }
+        )
+    return rows
 
 
 def compare_warnings(left: dict[str, Any], right: dict[str, Any]) -> list[str]:
