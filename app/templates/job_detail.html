@@ -286,6 +286,14 @@
             <label>安定性 <input type="number" min="0" max="5" name="rating_stability" value="{{ sample.rating_stability or 0 }}"></label>
             <label>総合 <input type="number" min="0" max="5" name="rating_overall" value="{{ sample.rating_overall or sample.rating or 0 }}"></label>
           </div>
+          <label>強さ<select name="strength_label">{% for value, label in rubric_options.strength_labels %}<option value="{{ value }}" {{ 'selected' if sample.strength_label == value else '' }}>{{ label }}</option>{% endfor %}</select></label>
+          <label>過学習<select name="overfit_level">{% for value, label in rubric_options.overfit_levels %}<option value="{{ value }}" {{ 'selected' if sample.overfit_level == value else '' }}>{{ label }}</option>{% endfor %}</select></label>
+          <label>採用判断<select name="adoption_label">{% for value, label in rubric_options.adoption_labels %}<option value="{{ value }}" {{ 'selected' if sample.adoption_label == value else '' }}>{{ label }}</option>{% endfor %}</select></label>
+          <div class="checkbox-grid">
+            {% for tag in rubric_options.failure_tags %}
+            <label><input type="checkbox" name="failure_tags" value="{{ tag }}" {{ 'checked' if tag in sample.failure_tags else '' }}> {{ tag }}</label>
+            {% endfor %}
+          </div>
           <label>メモ <textarea name="memo">{{ sample.memo or '' }}</textarea></label>
           <button type="submit">保存</button>
         </form>
@@ -339,6 +347,14 @@
         <label>スタイル<input type="number" name="rating_style" value="0" min="0" max="5"></label>
         <label>安定性<input type="number" name="rating_stability" value="0" min="0" max="5"></label>
         <label>総合<input type="number" name="rating_overall" value="0" min="0" max="5"></label>
+        <label>強さ<select name="strength_label">{% for value, label in rubric_options.strength_labels %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></label>
+        <label>過学習<select name="overfit_level">{% for value, label in rubric_options.overfit_levels %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></label>
+        <label>採用判断<select name="adoption_label">{% for value, label in rubric_options.adoption_labels %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></label>
+        <div class="wide-field checkbox-grid">
+          {% for tag in rubric_options.failure_tags %}
+          <label><input type="checkbox" name="failure_tags" value="{{ tag }}"> {{ tag }}</label>
+          {% endfor %}
+        </div>
         <label>推奨min<input type="number" name="recommended_weight_min" min="0" max="2" step="0.1"></label>
         <label>推奨max<input type="number" name="recommended_weight_max" min="0" max="2" step="0.1"></label>
         <label class="wide-field">メモ<textarea name="memo"></textarea></label>
@@ -355,6 +371,14 @@
         <label>スタイル<input type="number" name="rating_style" value="0" min="0" max="5"></label>
         <label>安定性<input type="number" name="rating_stability" value="0" min="0" max="5"></label>
         <label>総合<input type="number" name="rating_overall" value="0" min="0" max="5"></label>
+        <label>強さ<select name="strength_label">{% for value, label in rubric_options.strength_labels %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></label>
+        <label>過学習<select name="overfit_level">{% for value, label in rubric_options.overfit_levels %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></label>
+        <label>採用判断<select name="adoption_label">{% for value, label in rubric_options.adoption_labels %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></label>
+        <div class="wide-field checkbox-grid">
+          {% for tag in rubric_options.failure_tags %}
+          <label><input type="checkbox" name="failure_tags" value="{{ tag }}"> {{ tag }}</label>
+          {% endfor %}
+        </div>
         <label>推奨min<input type="number" name="recommended_weight_min" min="0" max="2" step="0.1"></label>
         <label>推奨max<input type="number" name="recommended_weight_max" min="0" max="2" step="0.1"></label>
         <label class="wide-field">メモ<textarea name="memo"></textarea></label>
@@ -362,12 +386,12 @@
       </form>
       <h4>weight評価</h4>
       <table>
-        <thead><tr><th>weight</th><th>顔</th><th>衣装</th><th>スタイル</th><th>安定性</th><th>総合</th><th>推奨</th><th>メモ</th></tr></thead>
+        <thead><tr><th>weight</th><th>顔</th><th>衣装</th><th>スタイル</th><th>安定性</th><th>総合</th><th>強さ</th><th>過学習</th><th>採用</th><th>推奨</th><th>メモ</th></tr></thead>
         <tbody>
           {% for row in validation_weight_reviews %}
-          <tr><td>{{ row.lora_weight }}</td><td>{{ row.rating_face or '-' }}</td><td>{{ row.rating_costume or '-' }}</td><td>{{ row.rating_style or '-' }}</td><td>{{ row.rating_stability or '-' }}</td><td>{{ row.rating_overall or '-' }}</td><td>{{ row.recommended_weight_min if row.recommended_weight_min is not none else '-' }} - {{ row.recommended_weight_max if row.recommended_weight_max is not none else '-' }}</td><td>{{ row.memo or '-' }}</td></tr>
+          <tr><td>{{ row.lora_weight }}</td><td>{{ row.rating_face or '-' }}</td><td>{{ row.rating_costume or '-' }}</td><td>{{ row.rating_style or '-' }}</td><td>{{ row.rating_stability or '-' }}</td><td>{{ row.rating_overall or '-' }}</td><td>{{ row.strength_label or '-' }}</td><td>{{ row.overfit_level or '-' }}</td><td>{{ row.adoption_label or '-' }}</td><td>{{ row.recommended_weight_min if row.recommended_weight_min is not none else '-' }} - {{ row.recommended_weight_max if row.recommended_weight_max is not none else '-' }}</td><td>{{ row.memo or '-' }}</td></tr>
           {% else %}
-          <tr><td colspan="8" class="muted">weight評価はまだありません。</td></tr>
+          <tr><td colspan="11" class="muted">weight評価はまだありません。</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -378,7 +402,7 @@
     {% for image in validation_images %}
     <figure>
       <img src="/validation-images/{{ image.id }}" alt="validation image {{ image.id }}">
-      <figcaption>#{{ image.id }} {{ image.validation_type or '-' }} / weight {{ image.lora_weights or '-' }}<br>{{ image.base_model or '-' }} / {{ image.sampler or '-' }}<br>顔 {{ image.rating_face or '-' }} 衣装 {{ image.rating_costume or '-' }} スタイル {{ image.rating_style or '-' }} 安定性 {{ image.rating_stability or '-' }} 総合 {{ image.rating_overall or '-' }}<br>{{ image.memo or '' }}</figcaption>
+      <figcaption>#{{ image.id }} {{ image.validation_type or '-' }} / weight {{ image.lora_weights or '-' }}<br>{{ image.base_model or '-' }} / {{ image.sampler or '-' }}<br>顔 {{ image.rating_face or '-' }} 衣装 {{ image.rating_costume or '-' }} スタイル {{ image.rating_style or '-' }} 安定性 {{ image.rating_stability or '-' }} 総合 {{ image.rating_overall or '-' }}<br>強さ {{ image.strength_label or '-' }} / 過学習 {{ image.overfit_level or '-' }} / 採用 {{ image.adoption_label or '-' }}<br>{{ image.memo or '' }}</figcaption>
     </figure>
     {% else %}
     <p class="muted">外部Validation画像はまだありません。</p>

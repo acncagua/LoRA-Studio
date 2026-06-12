@@ -23,6 +23,34 @@ from app.services.training_runner import read_log_tail, start_job, stop_job
 app = FastAPI(title=settings.APP_NAME)
 app.mount("/static", StaticFiles(directory=settings.ROOT_DIR / "app" / "static"), name="static")
 
+RUBRIC_VERSION = "1.0"
+STRENGTH_LABELS = [
+    ("", "未評価"),
+    ("too_weak", "弱すぎ"),
+    ("weak_but_usable", "弱いが使用可"),
+    ("recommended", "推奨"),
+    ("strong_but_usable", "強いが使用可"),
+    ("too_strong", "強すぎ"),
+    ("broken", "破綻"),
+]
+OVERFIT_LEVELS = [("", "未評価"), ("none", "なし"), ("slight", "軽微"), ("moderate", "中程度"), ("severe", "重度")]
+ADOPTION_LABELS = [("", "未評価"), ("reject", "不採用"), ("candidate", "候補"), ("adopt", "採用")]
+FAILURE_TAGS = [
+    "顔が弱い",
+    "顔が変わる",
+    "衣装が弱い",
+    "衣装固定",
+    "背景汚染",
+    "構図固定",
+    "表情固定",
+    "手足破綻",
+    "画風過多",
+    "LoRA効果弱い",
+    "LoRA効果強すぎ",
+    "trigger反応弱い",
+    "triggerなし暴発",
+]
+
 templates = Environment(
     loader=FileSystemLoader(settings.ROOT_DIR / "app" / "templates"),
     autoescape=select_autoescape(["html", "xml"]),
@@ -650,6 +678,7 @@ def job_detail(request: Request, job_id: int, exported: str | None = None) -> HT
         validation_summary=validation_summary,
         selected_lora_profile=selected_lora_profile,
         recommendations=recommendations,
+        rubric_options=rubric_options(),
         validation_pack_path=validation_pack_path(job_id),
         default_project_path=str(settings.ROOT_DIR),
         dataset_version=dataset_version,
@@ -809,6 +838,10 @@ def job_review_sample(
     rating_stability: int = Form(0),
     rating_overall: int = Form(0),
     rating: int = Form(0),
+    strength_label: str = Form(""),
+    overfit_level: str = Form(""),
+    adoption_label: str = Form(""),
+    failure_tags: list[str] = Form([]),
     memo: str = Form(""),
 ) -> RedirectResponse:
     sample = fetch_one("SELECT * FROM sample_images WHERE id = ? AND job_id = ?", (image_id, job_id))
@@ -824,10 +857,27 @@ def job_review_sample(
             """
             UPDATE sample_images
             SET rating = ?, rating_face = ?, rating_costume = ?, rating_style = ?,
-                rating_stability = ?, rating_overall = ?, memo = ?
+                rating_stability = ?, rating_overall = ?, strength_label = ?,
+                overfit_level = ?, adoption_label = ?, failure_tags_json = ?,
+                rubric_version = ?, memo = ?
             WHERE id = ? AND job_id = ?
             """,
-            (rating_overall, rating_face, rating_costume, rating_style, rating_stability, rating_overall, memo, image_id, job_id),
+            (
+                rating_overall,
+                rating_face,
+                rating_costume,
+                rating_style,
+                rating_stability,
+                rating_overall,
+                clean_choice(strength_label, {key for key, _ in STRENGTH_LABELS}),
+                clean_choice(overfit_level, {key for key, _ in OVERFIT_LEVELS}),
+                clean_choice(adoption_label, {key for key, _ in ADOPTION_LABELS}),
+                json.dumps(clean_failure_tags(failure_tags), ensure_ascii=False),
+                RUBRIC_VERSION,
+                memo,
+                image_id,
+                job_id,
+            ),
         )
     return RedirectResponse(f"/jobs/{job_id}", status_code=303)
 
@@ -971,6 +1021,10 @@ def job_add_validation_image(
     rating_style: int = Form(0),
     rating_stability: int = Form(0),
     rating_overall: int = Form(0),
+    strength_label: str = Form(""),
+    overfit_level: str = Form(""),
+    adoption_label: str = Form(""),
+    failure_tags: list[str] = Form([]),
     recommended_weight_min: str = Form(""),
     recommended_weight_max: str = Form(""),
     memo: str = Form(""),
@@ -988,9 +1042,10 @@ def job_add_validation_image(
                 negative_prompt, base_model, sampler, steps, cfg_scale, width, height,
                 hires_enabled, hires_scale, lora_weights, seeds,
                 rating_face, rating_costume, rating_style, rating_stability, rating_overall,
+                strength_label, overfit_level, adoption_label, failure_tags_json, rubric_version,
                 recommended_weight_min, recommended_weight_max, memo, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job_id,
@@ -1014,6 +1069,11 @@ def job_add_validation_image(
                 clamp_rating(rating_style),
                 clamp_rating(rating_stability),
                 clamp_rating(rating_overall),
+                clean_choice(strength_label, {key for key, _ in STRENGTH_LABELS}),
+                clean_choice(overfit_level, {key for key, _ in OVERFIT_LEVELS}),
+                clean_choice(adoption_label, {key for key, _ in ADOPTION_LABELS}),
+                json.dumps(clean_failure_tags(failure_tags), ensure_ascii=False),
+                RUBRIC_VERSION,
                 optional_float(recommended_weight_min),
                 optional_float(recommended_weight_max),
                 memo.strip(),
@@ -1036,6 +1096,10 @@ def job_add_validation_weight_review(
     rating_style: int = Form(0),
     rating_stability: int = Form(0),
     rating_overall: int = Form(0),
+    strength_label: str = Form(""),
+    overfit_level: str = Form(""),
+    adoption_label: str = Form(""),
+    failure_tags: list[str] = Form([]),
     recommended_weight_min: str = Form(""),
     recommended_weight_max: str = Form(""),
     memo: str = Form(""),
@@ -1051,9 +1115,10 @@ def job_add_validation_weight_review(
             INSERT INTO validation_weight_reviews(
                 job_id, selected_output_id, lora_weight, validation_type,
                 rating_face, rating_costume, rating_style, rating_stability, rating_overall,
+                strength_label, overfit_level, adoption_label, failure_tags_json, rubric_version,
                 recommended_weight_min, recommended_weight_max, memo, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job_id,
@@ -1065,6 +1130,11 @@ def job_add_validation_weight_review(
                 clamp_rating(rating_style),
                 clamp_rating(rating_stability),
                 clamp_rating(rating_overall),
+                clean_choice(strength_label, {key for key, _ in STRENGTH_LABELS}),
+                clean_choice(overfit_level, {key for key, _ in OVERFIT_LEVELS}),
+                clean_choice(adoption_label, {key for key, _ in ADOPTION_LABELS}),
+                json.dumps(clean_failure_tags(failure_tags), ensure_ascii=False),
+                RUBRIC_VERSION,
                 optional_float(recommended_weight_min),
                 optional_float(recommended_weight_max),
                 memo.strip(),
@@ -1118,7 +1188,7 @@ def lora_profile_edit(request: Request, profile_id: int) -> HTMLResponse:
     weight_reviews = fetch_all("SELECT * FROM validation_weight_reviews WHERE job_id = ? ORDER BY lora_weight, id", (profile["job_id"],))
     validation_images = fetch_all("SELECT * FROM validation_images WHERE job_id = ? ORDER BY created_at DESC, id DESC", (profile["job_id"],))
     recommendations = list_recommendations(int(profile["job_id"]))
-    return render(request, "lora_profile_edit.html", profile=profile, weight_reviews=weight_reviews, validation_images=validation_images, recommendations=recommendations)
+    return render(request, "lora_profile_edit.html", profile=profile, weight_reviews=weight_reviews, validation_images=validation_images, recommendations=recommendations, rubric_options=rubric_options())
 
 
 @app.post("/lora-library/{profile_id}/edit")
@@ -1448,6 +1518,34 @@ def clamp_rating(value: Any) -> int:
         return max(0, min(5, int(value or 0)))
     except (TypeError, ValueError):
         return 0
+
+
+def rubric_options() -> dict[str, Any]:
+    return {
+        "version": RUBRIC_VERSION,
+        "strength_labels": STRENGTH_LABELS,
+        "overfit_levels": OVERFIT_LEVELS,
+        "adoption_labels": ADOPTION_LABELS,
+        "failure_tags": FAILURE_TAGS,
+    }
+
+
+def clean_choice(value: str, allowed: set[str]) -> str:
+    value = (value or "").strip()
+    return value if value in allowed else ""
+
+
+def clean_failure_tags(values: list[str] | str | None) -> list[str]:
+    if values is None:
+        return []
+    if isinstance(values, str):
+        values = [values]
+    allowed = set(FAILURE_TAGS)
+    result = []
+    for value in values:
+        if value in allowed and value not in result:
+            result.append(value)
+    return result
 
 
 def optional_float(value: Any) -> float | None:
@@ -1942,6 +2040,16 @@ def write_comparison_markdown(comparison: dict[str, Any]) -> str:
     return str(path)
 
 
+def parse_json_list(value: Any) -> list[str]:
+    if not value:
+        return []
+    try:
+        payload = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return payload if isinstance(payload, list) else []
+
+
 def group_samples(sample_prompts: list[Any], samples: list[Any]) -> list[dict[str, Any]]:
     prompt_map = {row["id"]: row for row in sample_prompts}
     groups: dict[int, dict[str, Any]] = {}
@@ -1949,6 +2057,7 @@ def group_samples(sample_prompts: list[Any], samples: list[Any]) -> list[dict[st
     for sample in samples:
         sample_item = dict(sample)
         sample_item["filename"] = Path(sample["image_path"]).name
+        sample_item["failure_tags"] = parse_json_list(sample_item.get("failure_tags_json"))
         key = sample["prompt_id"] or fallback_key
         prompt = prompt_map.get(sample["prompt_id"])
         groups.setdefault(

@@ -43,12 +43,12 @@
 <section>
   <h2>weight評価</h2>
   <table>
-    <thead><tr><th>weight</th><th>顔</th><th>衣装</th><th>スタイル</th><th>安定性</th><th>総合</th><th>推奨</th><th>メモ</th></tr></thead>
+    <thead><tr><th>weight</th><th>顔</th><th>衣装</th><th>スタイル</th><th>安定性</th><th>総合</th><th>強さ</th><th>過学習</th><th>採用</th><th>推奨</th><th>メモ</th></tr></thead>
     <tbody>
       {% for row in weight_reviews %}
-      <tr><td>{{ row.lora_weight }}</td><td>{{ row.rating_face or '-' }}</td><td>{{ row.rating_costume or '-' }}</td><td>{{ row.rating_style or '-' }}</td><td>{{ row.rating_stability or '-' }}</td><td>{{ row.rating_overall or '-' }}</td><td>{{ row.recommended_weight_min if row.recommended_weight_min is not none else '-' }} - {{ row.recommended_weight_max if row.recommended_weight_max is not none else '-' }}</td><td>{{ row.memo or '-' }}</td></tr>
+      <tr><td>{{ row.lora_weight }}</td><td>{{ row.rating_face or '-' }}</td><td>{{ row.rating_costume or '-' }}</td><td>{{ row.rating_style or '-' }}</td><td>{{ row.rating_stability or '-' }}</td><td>{{ row.rating_overall or '-' }}</td><td>{{ row.strength_label or '-' }}</td><td>{{ row.overfit_level or '-' }}</td><td>{{ row.adoption_label or '-' }}</td><td>{{ row.recommended_weight_min if row.recommended_weight_min is not none else '-' }} - {{ row.recommended_weight_max if row.recommended_weight_max is not none else '-' }}</td><td>{{ row.memo or '-' }}</td></tr>
       {% else %}
-      <tr><td colspan="8" class="muted">weight評価はまだありません。</td></tr>
+      <tr><td colspan="11" class="muted">weight評価はまだありません。</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -59,7 +59,7 @@
     {% for image in validation_images %}
     <figure>
       <img src="/validation-images/{{ image.id }}" alt="validation image {{ image.id }}">
-      <figcaption>#{{ image.id }} {{ image.validation_type or '-' }} / weight {{ image.lora_weights or '-' }}<br>{{ image.memo or '' }}</figcaption>
+      <figcaption>#{{ image.id }} {{ image.validation_type or '-' }} / weight {{ image.lora_weights or '-' }}<br>強さ {{ image.strength_label or '-' }} / 過学習 {{ image.overfit_level or '-' }} / 採用 {{ image.adoption_label or '-' }}<br>{{ image.memo or '' }}</figcaption>
     </figure>
     {% else %}
     <p class="muted">外部Validation画像はまだありません。</p>

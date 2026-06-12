@@ -31,6 +31,7 @@ def init_db() -> None:
         seed_app_settings(conn)
         seed_presets(conn)
         seed_sample_prompt_templates(conn)
+        seed_evaluation_rubrics(conn)
         import_latest_environment(conn)
 
 
@@ -118,7 +119,34 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "rating_style": "INTEGER",
             "rating_stability": "INTEGER",
             "rating_overall": "INTEGER",
+            "strength_label": "TEXT",
+            "overfit_level": "TEXT",
+            "adoption_label": "TEXT",
+            "failure_tags_json": "TEXT",
+            "rubric_version": "TEXT",
             "memo": "TEXT",
+        },
+    )
+    ensure_columns(
+        conn,
+        "validation_images",
+        {
+            "strength_label": "TEXT",
+            "overfit_level": "TEXT",
+            "adoption_label": "TEXT",
+            "failure_tags_json": "TEXT",
+            "rubric_version": "TEXT",
+        },
+    )
+    ensure_columns(
+        conn,
+        "validation_weight_reviews",
+        {
+            "strength_label": "TEXT",
+            "overfit_level": "TEXT",
+            "adoption_label": "TEXT",
+            "failure_tags_json": "TEXT",
+            "rubric_version": "TEXT",
         },
     )
     conn.execute("UPDATE sample_images SET rating_overall = rating WHERE rating_overall IS NULL AND rating IS NOT NULL")
@@ -257,6 +285,54 @@ def seed_sample_prompt_templates(conn: sqlite3.Connection) -> None:
             "顔LoRAの基本確認用",
             json.dumps(prompts, ensure_ascii=False, indent=2),
             now,
+            now,
+        ),
+    )
+
+
+def seed_evaluation_rubrics(conn: sqlite3.Connection) -> None:
+    now = utc_now()
+    schema = {
+        "version": "1.0",
+        "fields": {
+            "strength_label": ["too_weak", "weak_but_usable", "recommended", "strong_but_usable", "too_strong", "broken"],
+            "overfit_level": ["none", "slight", "moderate", "severe"],
+            "adoption_label": ["reject", "candidate", "adopt"],
+            "failure_tags": [
+                "顔が弱い",
+                "顔が変わる",
+                "衣装が弱い",
+                "衣装固定",
+                "背景汚染",
+                "構図固定",
+                "表情固定",
+                "手足破綻",
+                "画風過多",
+                "LoRA効果弱い",
+                "LoRA効果強すぎ",
+                "trigger反応弱い",
+                "triggerなし暴発",
+            ],
+            "ratings": ["rating_face", "rating_costume", "rating_style", "rating_stability", "rating_overall"],
+        },
+    }
+    conn.execute(
+        """
+        INSERT INTO evaluation_rubrics(id, name, version, description, schema_json, is_active, created_at)
+        VALUES (?, ?, ?, ?, ?, 1, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            version = excluded.version,
+            description = excluded.description,
+            schema_json = excluded.schema_json,
+            is_active = excluded.is_active
+        """,
+        (
+            "lora_visual_eval_v1",
+            "LoRA Visual Evaluation Rubric",
+            "1.0",
+            "LoRAの強さ、過学習、採用判断、失敗タグを定型化する評価schema。",
+            json.dumps(schema, ensure_ascii=False, indent=2),
             now,
         ),
     )
@@ -748,6 +824,11 @@ CREATE TABLE IF NOT EXISTS validation_results (
     flexibility_score INTEGER, overall_score INTEGER,
     memo TEXT, image_path TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS evaluation_rubrics (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, version TEXT NOT NULL,
+    description TEXT, schema_json TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS validation_images (
     id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, selected_output_id INTEGER,
     image_path TEXT NOT NULL, validation_type TEXT, prompt TEXT, negative_prompt TEXT,
@@ -755,6 +836,8 @@ CREATE TABLE IF NOT EXISTS validation_images (
     hires_enabled INTEGER NOT NULL DEFAULT 0, hires_scale REAL, lora_weights TEXT, seeds TEXT,
     rating_face INTEGER, rating_costume INTEGER, rating_style INTEGER,
     rating_stability INTEGER, rating_overall INTEGER,
+    strength_label TEXT, overfit_level TEXT, adoption_label TEXT,
+    failure_tags_json TEXT, rubric_version TEXT,
     recommended_weight_min REAL, recommended_weight_max REAL,
     memo TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
@@ -762,6 +845,8 @@ CREATE TABLE IF NOT EXISTS validation_weight_reviews (
     id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, selected_output_id INTEGER,
     lora_weight REAL NOT NULL, validation_type TEXT, rating_face INTEGER, rating_costume INTEGER,
     rating_style INTEGER, rating_stability INTEGER, rating_overall INTEGER,
+    strength_label TEXT, overfit_level TEXT, adoption_label TEXT,
+    failure_tags_json TEXT, rubric_version TEXT,
     recommended_weight_min REAL, recommended_weight_max REAL, memo TEXT,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );

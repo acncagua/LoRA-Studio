@@ -15,12 +15,19 @@ def regenerate_recommendations(job_id: int) -> list[dict[str, Any]]:
     now = utc_now()
     with connect() as conn:
         conn.execute(
-            "UPDATE experiment_recommendations SET status = 'dismissed', updated_at = ? WHERE source_job_id = ? AND status = 'proposed'",
+            "UPDATE experiment_recommendations SET status = 'dismissed', updated_at = ? WHERE source_job_id = ? AND status != 'job_created'",
             (now, job_id),
         )
+        created_rows = conn.execute(
+            "SELECT recommendation_type, title FROM experiment_recommendations WHERE source_job_id = ? AND status = 'job_created'",
+            (job_id,),
+        ).fetchall()
+    created_keys = {(row["recommendation_type"], row["title"]) for row in created_rows}
     recommendations = build_recommendations(context)
     with connect() as conn:
         for item in sorted(recommendations, key=lambda row: (PRIORITY_ORDER.get(row["priority"], 9), row["title"])):
+            if (item["recommendation_type"], item["title"]) in created_keys:
+                continue
             conn.execute(
                 """
                 INSERT INTO experiment_recommendations(
@@ -83,6 +90,7 @@ def build_recommendations(context: dict[str, Any]) -> list[dict[str, Any]]:
     recommended_max = profile["recommended_weight_max"] if profile else None
     strong_weight = profile["strong_weight"] if profile else None
     validation_memo = profile["validation_memo"] if profile else ""
+    weight_rubric = weight_review_rubric_summary(context["weight_reviews"])
     epoch_label = summary["epoch_trend_label"] if summary else "UNKNOWN"
     health_label = summary["health_label"] if summary else "UNKNOWN"
     visual_good = selected_epoch_has_good_rating(context, selected_epoch)
@@ -104,7 +112,7 @@ def build_recommendations(context: dict[str, Any]) -> list[dict[str, Any]]:
         )
 
     if selected_epoch and recommended_min is not None and recommended_max is not None and dataset_label in {"OK", None, "UNKNOWN"}:
-        if health_label in {"OK", "WARNING"} and (visual_good or recommended_max <= 0.8):
+        if health_label in {"OK", "WARNING"} and (visual_good or recommended_max <= 0.8 or weight_rubric["has_adopt"]):
             recs.append(
                 recommendation(
                     "adopt_current",
@@ -146,7 +154,7 @@ def build_recommendations(context: dict[str, Any]) -> list[dict[str, Any]]:
             )
         )
 
-    if (strong_weight and strong_weight >= 1.0 and contains_strong_warning(validation_memo)) or health_label == "WARNING":
+    if (strong_weight and strong_weight >= 1.0 and (weight_rubric["strong_warning"] or contains_strong_warning(validation_memo))) or health_label == "WARNING":
         lower_lr = dict(params)
         for key in ("learning_rate", "unet_lr"):
             if key in lower_lr and lower_lr[key]:
@@ -201,14 +209,14 @@ def build_recommendations(context: dict[str, Any]) -> list[dict[str, Any]]:
         )
     )
 
-    if recommended_min is not None and recommended_min >= 0.8 and not contains_strong_warning(validation_memo):
+    if recommended_min is not None and recommended_min >= 0.8 and not weight_rubric["strong_warning"] and not contains_strong_warning(validation_memo):
         stronger = dict(params)
         stronger["network_dim"] = max(64, int(stronger.get("network_dim") or 32))
         stronger["network_alpha"] = max(32, int(stronger.get("network_alpha") or 16))
         recs.append(
             recommendation("strengthen", "medium", "特徴を強める設定を試す", "LoRAの効きが弱い場合の案です。", "推奨weightが高めです。", stronger, "低いweightでも特徴が出やすくなる可能性があります。", "固定化が強まる可能性があります。")
         )
-    if recommended_min is not None and recommended_min <= 0.4:
+    if (recommended_min is not None and recommended_min <= 0.4) or weight_rubric["too_strong_at_low_weight"]:
         weaker = dict(params)
         for key in ("learning_rate", "unet_lr"):
             if key in weaker and weaker[key]:
@@ -264,11 +272,14 @@ def sample_rating_summary(samples: list[Any]) -> dict[int, dict[str, Any]]:
     result: dict[int, dict[str, Any]] = {}
     for epoch, rows in grouped.items():
         values = []
+        adoptions = []
         for row in rows:
             value = row["rating_overall"] if "rating_overall" in row.keys() else row["rating"] if "rating" in row.keys() else None
             if value is not None and int(value) > 0:
                 values.append(int(value))
-        result[epoch] = {"avg_overall": sum(values) / len(values) if values else None, "count": len(values)}
+            if "adoption_label" in row.keys() and row["adoption_label"]:
+                adoptions.append(row["adoption_label"])
+        result[epoch] = {"avg_overall": sum(values) / len(values) if values else None, "count": len(values), "adoptions": adoptions}
     return result
 
 
@@ -276,7 +287,7 @@ def selected_epoch_has_good_rating(context: dict[str, Any], selected_epoch: int)
     if not selected_epoch:
         return False
     row = context["sample_ratings"].get(selected_epoch)
-    return bool(row and row["avg_overall"] is not None and row["avg_overall"] >= 3)
+    return bool(row and (("adopt" in row.get("adoptions", [])) or (row["avg_overall"] is not None and row["avg_overall"] >= 3)))
 
 
 def later_epoch_rating_declines(context: dict[str, Any], selected_epoch: int) -> bool:
@@ -292,9 +303,50 @@ def contains_strong_warning(text: str | None) -> bool:
     return "やや強い" in text or "強すぎ" in text or "strong" in text.lower()
 
 
+def weight_review_rubric_summary(rows: list[Any]) -> dict[str, bool]:
+    strong_labels = {"too_strong", "broken", "strong_but_usable"}
+    weak_labels = {"too_weak", "weak_but_usable"}
+    strong_tags = {"LoRA効果強すぎ", "画風過多", "背景汚染", "構図固定", "衣装固定", "表情固定"}
+    weak_tags = {"LoRA効果弱い", "顔が弱い", "衣装が弱い", "trigger反応弱い"}
+    result = {
+        "strong_warning": False,
+        "too_strong_at_low_weight": False,
+        "weak_warning": False,
+        "has_adopt": False,
+        "severe_overfit": False,
+    }
+    for row in rows:
+        weight = float(row["lora_weight"] or 0)
+        strength = row["strength_label"] if "strength_label" in row.keys() else None
+        overfit = row["overfit_level"] if "overfit_level" in row.keys() else None
+        adoption = row["adoption_label"] if "adoption_label" in row.keys() else None
+        tags = parse_tags(row["failure_tags_json"] if "failure_tags_json" in row.keys() else "")
+        if adoption == "adopt":
+            result["has_adopt"] = True
+        if overfit == "severe":
+            result["severe_overfit"] = True
+        if strength in strong_labels or any(tag in strong_tags for tag in tags):
+            result["strong_warning"] = True
+            if weight <= 0.6:
+                result["too_strong_at_low_weight"] = True
+        if strength in weak_labels or any(tag in weak_tags for tag in tags):
+            result["weak_warning"] = True
+    return result
+
+
+def parse_tags(value: str | None) -> list[str]:
+    if not value:
+        return []
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    return payload if isinstance(payload, list) else []
+
+
 def list_recommendations(job_id: int) -> list[dict[str, Any]]:
     rows = fetch_all(
-        "SELECT * FROM experiment_recommendations WHERE source_job_id = ? ORDER BY CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, id",
+        "SELECT * FROM experiment_recommendations WHERE source_job_id = ? AND status != 'dismissed' ORDER BY CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, id",
         (job_id,),
     )
     return [dict(row) for row in rows]
