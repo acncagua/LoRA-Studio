@@ -1,5 +1,27 @@
-﻿{% extends "base.html" %}{% block content %}
-<header class="page-head"><h1>Datasets</h1></header>
-<section><form method="post" action="/datasets" class="form-grid"><label>Name<input name="name" required></label><label>Path<input name="path" required placeholder="D:\datasets\character_a"></label><label>Model Family<select name="model_family"><option>SDXL</option><option>SD1.5</option></select></label><label>Trigger Word<input name="trigger_word" placeholder="char_name"></label><label>Class Token<input name="class_token" value="person"></label><label>Memo<textarea name="memo"></textarea></label><button type="submit">Register Dataset</button></form></section>
-<section><h2>Registered</h2><table><thead><tr><th>ID</th><th>Name</th><th>Images</th><th>Captions</th><th>Missing</th><th>Status</th><th>Path</th></tr></thead><tbody>{% for dataset in datasets %}<tr><td><a href="/datasets/{{ dataset.id }}">#{{ dataset.id }}</a></td><td>{{ dataset.name }}</td><td>{{ dataset.image_count }}</td><td>{{ dataset.caption_count }}</td><td>{{ dataset.missing_caption_count }}</td><td>{{ dataset.scan_status }}</td><td>{{ dataset.path }}</td></tr>{% else %}<tr><td colspan="7" class="muted">No datasets yet.</td></tr>{% endfor %}</tbody></table></section>
+{% extends "base.html" %}{% block content %}
+<header class="page-head"><h1>データセット</h1></header>
+<section>
+  <form method="post" action="/datasets" class="form-grid">
+    <label>名前<input name="name" required></label>
+    <label>パス<input name="path" required placeholder="D:\datasets\character_a"></label>
+    <label>モデル種別<select name="model_family"><option>SDXL</option><option>SD1.5</option></select></label>
+    <label>トリガーワード<input name="trigger_word" placeholder="char_name"></label>
+    <label>クラストークン<input name="class_token" value="person"></label>
+    <label>メモ<textarea name="memo"></textarea></label>
+    <button type="submit">データセット登録</button>
+  </form>
+</section>
+<section>
+  <h2>登録済みデータセット</h2>
+  <table>
+    <thead><tr><th>ID</th><th>名前</th><th>画像</th><th>キャプション</th><th>不足</th><th>状態</th><th>パス</th></tr></thead>
+    <tbody>
+      {% for dataset in datasets %}
+      <tr><td><a href="/datasets/{{ dataset.id }}">#{{ dataset.id }}</a></td><td>{{ dataset.name }}</td><td>{{ dataset.image_count }}</td><td>{{ dataset.caption_count }}</td><td>{{ dataset.missing_caption_count }}</td><td>{{ dataset.scan_status }}</td><td>{{ dataset.path }}</td></tr>
+      {% else %}
+      <tr><td colspan="7" class="muted">データセットはまだありません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
 {% endblock %}

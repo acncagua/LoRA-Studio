@@ -1,5 +1,5 @@
-﻿{% extends "base.html" %}{% block content %}
-<header class="page-head"><h1>{{ preset.name }}</h1><a class="button" href="/jobs/new">Use Preset</a></header>
-<section class="panel-grid"><div><h2>Profile</h2><dl><dt>ID</dt><dd>{{ preset.id }}</dd><dt>Family</dt><dd>{{ preset.model_family }}</dd><dt>Script</dt><dd>{{ preset.training_script }}</dd><dt>Purpose</dt><dd>{{ preset.purpose }}</dd><dt>no_metadata</dt><dd>{{ 'enabled' if '"no_metadata": true' in preset.params_json else 'disabled' }}</dd></dl></div><div><h2>Notes</h2><p>{{ preset.expected_behavior }}</p><p class="warning">{{ preset.risk_note }}</p></div></section>
-<section><h2>Params</h2><pre>{{ preset.params_json }}</pre></section>
+{% extends "base.html" %}{% block content %}
+<header class="page-head"><h1>{{ preset.name }}</h1><a class="button" href="/jobs/new">このプリセットで作成</a></header>
+<section class="panel-grid"><div><h2>プロフィール</h2><dl><dt>ID</dt><dd>{{ preset.id }}</dd><dt>モデル種別</dt><dd>{{ preset.model_family }}</dd><dt>スクリプト</dt><dd>{{ preset.training_script }}</dd><dt>目的</dt><dd>{{ preset.purpose }}</dd><dt>no_metadata</dt><dd>{{ '有効' if '"no_metadata": true' in preset.params_json else '無効' }}</dd></dl></div><div><h2>メモ</h2><p>{{ preset.expected_behavior }}</p><p class="warning">{{ preset.risk_note }}</p></div></section>
+<section><h2>パラメータ</h2><pre>{{ preset.params_json }}</pre></section>
 {% endblock %}

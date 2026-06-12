@@ -1,9 +1,9 @@
 {% extends "base.html" %}{% block content %}
-<header class="page-head"><h1>Create Job</h1></header>
+<header class="page-head"><h1>ジョブ作成</h1></header>
 <section>
-  <h2>Dataset Trigger Consistency</h2>
+  <h2>データセットのトリガー整合性</h2>
   <table>
-    <thead><tr><th>Dataset</th><th>Trigger</th><th>Occurrence</th><th>Status</th><th>Message</th></tr></thead>
+    <thead><tr><th>データセット</th><th>トリガー</th><th>出現数</th><th>状態</th><th>メッセージ</th></tr></thead>
     <tbody>
       {% for dataset in datasets %}
       {% set info = trigger_infos.get(dataset.id) %}
@@ -12,21 +12,21 @@
         <td>{{ dataset.trigger_word or '-' }}</td>
         <td>{% if info %}{{ info.trigger_word_count or 0 }} / {{ dataset.caption_count or 0 }}{% else %}-{% endif %}</td>
         <td><span class="label {{ (info.trigger_consistency_label if info else 'unknown')|lower }}">{{ info.trigger_consistency_label if info else 'UNKNOWN' }}</span></td>
-        <td>{{ info.trigger_consistency_message if info else 'Rescan the dataset to calculate trigger consistency.' }}</td>
+        <td>{{ info.trigger_consistency_message if info else 'データセットをRescanするとトリガー整合性を計算できます。' }}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
 </section>
 <form method="post" action="/jobs" class="form-grid wide">
-  <label>Name<input name="name" required></label>
-  <label>Dataset<select name="dataset_id" required>{% for dataset in datasets %}<option value="{{ dataset.id }}">#{{ dataset.id }} {{ dataset.name }}</option>{% endfor %}</select></label>
-  <label>Preset<select name="preset_id" required>{% for preset in presets %}<option value="{{ preset.id }}">{{ preset.model_family }} / {{ preset.name }}</option>{% endfor %}</select></label>
-  <label>Sample Prompt Template<select name="sample_prompt_template_id"><option value="">Default generated prompts</option>{% for template in sample_prompt_templates %}<option value="{{ template.id }}">{{ template.name }}</option>{% endfor %}</select></label>
-  <label>Base Model Path<input name="base_model_path" required></label>
-  <label>VAE Path<input name="vae_path"></label>
-  <label>Output Name<input name="output_name"></label>
-  <label>Memo<textarea name="memo"></textarea></label>
-  <button type="submit">Create Draft</button>
+  <label>名前<input name="name" required></label>
+  <label>データセット<select name="dataset_id" required>{% for dataset in datasets %}<option value="{{ dataset.id }}">#{{ dataset.id }} {{ dataset.name }}</option>{% endfor %}</select></label>
+  <label>プリセット<select name="preset_id" required>{% for preset in presets %}<option value="{{ preset.id }}">{{ preset.model_family }} / {{ preset.name }}</option>{% endfor %}</select></label>
+  <label>サンプルプロンプトテンプレート<select name="sample_prompt_template_id"><option value="">デフォルト生成プロンプト</option>{% for template in sample_prompt_templates %}<option value="{{ template.id }}">{{ template.name }}</option>{% endfor %}</select></label>
+  <label>ベースモデルパス<input name="base_model_path" required></label>
+  <label>VAEパス<input name="vae_path"></label>
+  <label>出力名<input name="output_name"></label>
+  <label>メモ<textarea name="memo"></textarea></label>
+  <button type="submit">下書きを作成</button>
 </form>
 {% endblock %}

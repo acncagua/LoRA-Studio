@@ -1,12 +1,12 @@
 {% extends "base.html" %}{% block content %}
-<header class="page-head"><h1>Sample Prompt Templates</h1></header>
+<header class="page-head"><h1>サンプルプロンプトテンプレート</h1></header>
 <table>
-  <thead><tr><th>ID</th><th>Name</th><th>Purpose</th><th>Prompts</th></tr></thead>
+  <thead><tr><th>ID</th><th>名前</th><th>目的</th><th>プロンプト</th></tr></thead>
   <tbody>
     {% for template in templates %}
     <tr><td>{{ template.id }}</td><td>{{ template.name }}</td><td>{{ template.purpose or '-' }}</td><td><pre>{{ template.prompts_json }}</pre></td></tr>
     {% else %}
-    <tr><td colspan="4" class="muted">No templates.</td></tr>
+    <tr><td colspan="4" class="muted">テンプレートはまだありません。</td></tr>
     {% endfor %}
   </tbody>
 </table>

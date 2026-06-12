@@ -1,47 +1,55 @@
 {% extends "base.html" %}{% block content %}
+{% set status_labels = {
+  "draft": "下書き",
+  "prepared": "準備済み",
+  "running": "実行中",
+  "completed": "完了",
+  "failed": "失敗",
+  "stopped": "停止"
+} %}
 <header class="page-head">
-  <h1>Compare Jobs</h1>
+  <h1>ジョブ比較</h1>
   {% if comparison %}
   <form method="post" action="/compare/export">
     <input type="hidden" name="job_a" value="{{ comparison.left.job.id }}">
     <input type="hidden" name="job_b" value="{{ comparison.right.job.id }}">
-    <button type="submit">Export Markdown</button>
+    <button type="submit">Markdown出力</button>
   </form>
   <form method="post" action="/compare/export-contact-sheet">
     <input type="hidden" name="job_a" value="{{ comparison.left.job.id }}">
     <input type="hidden" name="job_b" value="{{ comparison.right.job.id }}">
-    <button type="submit">Export Compare Contact Sheet</button>
+    <button type="submit">比較Contact Sheet出力</button>
   </form>
   {% endif %}
 </header>
 
-{% if exported %}<p class="notice">Exported: {{ exported }}</p>{% endif %}
+{% if exported %}<p class="notice">出力しました: {{ exported }}</p>{% endif %}
 
 {% if not comparison %}
 <form method="get" action="/compare">
   <table>
-    <thead><tr><th>Select</th><th>Job</th><th>Status</th><th>Adopted Epoch</th></tr></thead>
+    <thead><tr><th>選択</th><th>ジョブ</th><th>状態</th><th>採用epoch</th></tr></thead>
     <tbody>
       {% for job in jobs %}
       <tr>
         <td><input type="checkbox" name="job_ids" value="{{ job.id }}"></td>
         <td><a href="/jobs/{{ job.id }}">#{{ job.id }} {{ job.name }}</a></td>
-        <td>{{ job.status }}</td>
+        <td>{{ status_labels.get(job.status, job.status) }}</td>
         <td>{{ job.adopted_epoch or '-' }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="4" class="muted">No jobs yet.</td></tr>
+      <tr><td colspan="4" class="muted">ジョブはまだありません。</td></tr>
       {% endfor %}
     </tbody>
   </table>
-  <p><button type="submit">Compare Selected</button></p>
+  <p><button type="submit">選択したジョブを比較</button></p>
 </form>
 {% else %}
 {% set left = comparison.left %}
 {% set right = comparison.right %}
 {% if comparison.warnings %}
 <section>
-  <h2>Dataset Version Warnings</h2>
+  <h2>データセットバージョンの警告</h2>
   {% for warning in comparison.warnings %}<p class="notice warning">{{ warning }}</p>{% endfor %}
 </section>
 {% endif %}
@@ -50,24 +58,24 @@
   <div>
     <h2>#{{ bundle.job.id }} {{ bundle.job.name }}</h2>
     <dl>
-      <dt>Preset</dt><dd>{{ bundle.preset.name if bundle.preset else '-' }}</dd>
-      <dt>Parent Job</dt><dd>{% if bundle.job.parent_job_id %}<a href="/jobs/{{ bundle.job.parent_job_id }}">#{{ bundle.job.parent_job_id }}</a>{% else %}-{% endif %}</dd>
-      <dt>Dataset</dt><dd>{{ bundle.dataset.name if bundle.dataset else '-' }}</dd>
-      <dt>Dataset Version</dt><dd>{% if bundle.dataset_version %}v{{ bundle.dataset_version.version_no }} (#{{ bundle.dataset_version.id }}){% else %}snapshot unavailable{% endif %}</dd>
-      <dt>Trigger at Creation</dt><dd>{{ bundle.job.trigger_word_at_creation or 'snapshot unavailable' }}</dd>
-      <dt>Base Model</dt><dd>{{ bundle.job.base_model_path }}</dd>
-      <dt>Status</dt><dd>{{ bundle.job.status }}</dd>
-      <dt>Elapsed</dt><dd>{{ bundle.job.elapsed_seconds if bundle.job.elapsed_seconds is not none else '-' }}</dd>
-      <dt>Selected LoRA</dt><dd>{{ bundle.job.adopted_model_path or '-' }}</dd>
+      <dt>プリセット</dt><dd>{{ bundle.preset.name if bundle.preset else '-' }}</dd>
+      <dt>派生元ジョブ</dt><dd>{% if bundle.job.parent_job_id %}<a href="/jobs/{{ bundle.job.parent_job_id }}">#{{ bundle.job.parent_job_id }}</a>{% else %}-{% endif %}</dd>
+      <dt>データセット</dt><dd>{{ bundle.dataset.name if bundle.dataset else '-' }}</dd>
+      <dt>データセットバージョン</dt><dd>{% if bundle.dataset_version %}v{{ bundle.dataset_version.version_no }} (#{{ bundle.dataset_version.id }}){% else %}スナップショットなし{% endif %}</dd>
+      <dt>作成時トリガー</dt><dd>{{ bundle.job.trigger_word_at_creation or 'スナップショットなし' }}</dd>
+      <dt>ベースモデル</dt><dd>{{ bundle.job.base_model_path }}</dd>
+      <dt>状態</dt><dd>{{ status_labels.get(bundle.job.status, bundle.job.status) }}</dd>
+      <dt>経過秒数</dt><dd>{{ bundle.job.elapsed_seconds if bundle.job.elapsed_seconds is not none else '-' }}</dd>
+      <dt>採用LoRA</dt><dd>{{ bundle.job.adopted_model_path or '-' }}</dd>
     </dl>
   </div>
   {% endfor %}
 </section>
 
 <section>
-  <h2>Parameter Differences</h2>
+  <h2>パラメータ差分</h2>
   <table>
-    <thead><tr><th>Param</th><th>Job #{{ left.job.id }}</th><th>Job #{{ right.job.id }}</th></tr></thead>
+    <thead><tr><th>項目</th><th>ジョブ #{{ left.job.id }}</th><th>ジョブ #{{ right.job.id }}</th></tr></thead>
     <tbody>
       {% for row in comparison.param_rows %}
       <tr class="{{ 'changed' if row.changed else '' }} {{ 'emphasis' if row.emphasized else '' }}"><td>{{ row.key }}</td><td>{{ row.left }}</td><td>{{ row.right }}</td></tr>
@@ -77,10 +85,10 @@
 </section>
 
 <section>
-  <h2>Metrics</h2>
-  <p class="muted">Loss health is a training-log health check, not an image quality score. WARNING can still be usable when sample images look better.</p>
+  <h2>メトリクス</h2>
+  <p class="muted">Loss healthは学習ログの健全性チェックであり、画像品質スコアではありません。WARNINGでもサンプル画像が良ければ採用候補になります。</p>
   <table>
-    <thead><tr><th>Metric</th><th>Job #{{ left.job.id }}</th><th>Job #{{ right.job.id }}</th></tr></thead>
+    <thead><tr><th>項目</th><th>ジョブ #{{ left.job.id }}</th><th>ジョブ #{{ right.job.id }}</th></tr></thead>
     <tbody>
       {% for row in comparison.metric_rows %}
       <tr class="{{ 'changed' if row.changed else '' }}"><td>{{ row.key }}</td><td>{{ row.left }}</td><td>{{ row.right }}</td></tr>
@@ -90,15 +98,15 @@
   <div class="compare-columns">
     {% for bundle in [left, right] %}
     <div>
-      <h3>Health Details #{{ bundle.job.id }}</h3>
+      <h3>健全性詳細 #{{ bundle.job.id }}</h3>
       <dl>
         <dt>spike_count</dt><dd>{{ bundle.health_details.spike_count if bundle.health_details.spike_count is not none else '-' }}</dd>
-        <dt>spike threshold</dt><dd>{{ bundle.health_details.spike_threshold or '-' }} ({{ bundle.health_details.spike_rule }})</dd>
+        <dt>spikeしきい値</dt><dd>{{ bundle.health_details.spike_threshold or '-' }} ({{ bundle.health_details.spike_rule }})</dd>
         <dt>loss_volatility</dt><dd>{{ '%.6f'|format(bundle.health_details.loss_volatility) if bundle.health_details.loss_volatility is not none else '-' }}</dd>
         <dt>late_stage_slope</dt><dd>{{ '%.6f'|format(bundle.health_details.late_stage_slope) if bundle.health_details.late_stage_slope is not none else '-' }}</dd>
         <dt>min_loss_step</dt><dd>{{ bundle.health_details.min_loss_step or '-' }}</dd>
         <dt>final_loss</dt><dd>{{ '%.6f'|format(bundle.health_details.final_loss) if bundle.health_details.final_loss is not none else '-' }}</dd>
-        <dt>message</dt><dd>{{ bundle.health_details.health_message or '-' }}</dd>
+        <dt>メッセージ</dt><dd>{{ bundle.health_details.health_message or '-' }}</dd>
       </dl>
     </div>
     {% endfor %}
@@ -106,20 +114,20 @@
 </section>
 
 <section>
-  <h2>Loss Charts</h2>
+  <h2>Lossグラフ</h2>
   <div class="compare-columns">
     {% for bundle in [left, right] %}
     <div>
-      <h3>Job #{{ bundle.job.id }}</h3>
+      <h3>ジョブ #{{ bundle.job.id }}</h3>
       {% if bundle.loss_chart %}
       <svg class="loss-chart" viewBox="0 0 {{ bundle.loss_chart.width }} {{ bundle.loss_chart.height }}" role="img" aria-label="loss chart job {{ bundle.job.id }}">
         <rect x="0" y="0" width="{{ bundle.loss_chart.width }}" height="{{ bundle.loss_chart.height }}"></rect>
         <polyline class="raw" points="{{ bundle.loss_chart.raw_points }}"></polyline>
         <polyline class="avg" points="{{ bundle.loss_chart.ma_points }}"></polyline>
       </svg>
-      <p class="muted">Step {{ bundle.loss_chart.min_step }} to {{ bundle.loss_chart.max_step }}</p>
+      <p class="muted">Step {{ bundle.loss_chart.min_step }} から {{ bundle.loss_chart.max_step }}</p>
       {% else %}
-      <p class="muted">No loss chart data.</p>
+      <p class="muted">Lossグラフのデータはまだありません。</p>
       {% endif %}
     </div>
     {% endfor %}
@@ -127,26 +135,26 @@
 </section>
 
 <section>
-  <h2>Epoch Loss Comparison</h2>
+  <h2>Epoch別Loss比較</h2>
   <table>
-    <thead><tr><th>Epoch</th><th>Job #{{ left.job.id }} avg_loss</th><th>Job #{{ right.job.id }} avg_loss</th><th>Job #{{ left.job.id }} MA final</th><th>Job #{{ right.job.id }} MA final</th><th>Job #{{ left.job.id }} samples</th><th>Job #{{ right.job.id }} samples</th></tr></thead>
+    <thead><tr><th>Epoch</th><th>ジョブ #{{ left.job.id }} 平均loss</th><th>ジョブ #{{ right.job.id }} 平均loss</th><th>ジョブ #{{ left.job.id }} 移動平均final</th><th>ジョブ #{{ right.job.id }} 移動平均final</th><th>ジョブ #{{ left.job.id }} サンプル</th><th>ジョブ #{{ right.job.id }} サンプル</th></tr></thead>
     <tbody>
       {% for row in comparison.epoch_rows %}
       <tr><td>{{ row.epoch }}</td><td>{{ row.left_avg_loss }}</td><td>{{ row.right_avg_loss }}</td><td>{{ row.left_ma_final }}</td><td>{{ row.right_ma_final }}</td><td>{{ row.left_samples }}</td><td>{{ row.right_samples }}</td></tr>
       {% else %}
-      <tr><td colspan="7" class="muted">No epoch summaries yet. Reimport both jobs to rebuild summaries.</td></tr>
+      <tr><td colspan="7" class="muted">Epochサマリーはまだありません。両方のジョブで結果を再取り込みしてください。</td></tr>
       {% endfor %}
     </tbody>
   </table>
 </section>
 
 <section>
-  <h2>Samples By Prompt</h2>
+  <h2>プロンプト別サンプル</h2>
   {% for group in comparison.sample_groups %}
   <h3>{{ group.title }}</h3>
   <p class="muted">{{ group.prompt }}</p>
   <table class="sample-compare-table">
-    <thead><tr><th>Epoch/Step</th><th>Job #{{ left.job.id }}</th><th>Job #{{ right.job.id }}</th></tr></thead>
+    <thead><tr><th>Epoch/Step</th><th>ジョブ #{{ left.job.id }}</th><th>ジョブ #{{ right.job.id }}</th></tr></thead>
     <tbody>
       {% for row in group.rows %}
       <tr>
@@ -158,12 +166,12 @@
             <img src="/jobs/{{ bundle.job.id }}/samples/{{ sample.id }}" alt="sample {{ sample.id }}">
             <figcaption>
               {{ sample.filename }}<br>
-              face {{ sample.rating_face or 0 }} / costume {{ sample.rating_costume or 0 }} / style {{ sample.rating_style or 0 }} / stability {{ sample.rating_stability or 0 }} / overall {{ sample.rating_overall or sample.rating or 0 }}<br>
-              memo {{ sample.memo or '-' }}
+              顔 {{ sample.rating_face or 0 }} / 衣装 {{ sample.rating_costume or 0 }} / スタイル {{ sample.rating_style or 0 }} / 安定性 {{ sample.rating_stability or 0 }} / 総合 {{ sample.rating_overall or sample.rating or 0 }}<br>
+              メモ {{ sample.memo or '-' }}
             </figcaption>
           </figure>
           {% else %}
-          <span class="muted">No image</span>
+          <span class="muted">画像なし</span>
           {% endif %}
         </td>
         {% endfor %}

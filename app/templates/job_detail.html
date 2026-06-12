@@ -1,135 +1,143 @@
 {% extends "base.html" %}{% block content %}
 {% if job.status == 'running' %}<meta http-equiv="refresh" content="8">{% endif %}
+{% set status_labels = {
+  "draft": "下書き",
+  "prepared": "準備済み",
+  "running": "実行中",
+  "completed": "完了",
+  "failed": "失敗",
+  "stopped": "停止"
+} %}
 <header class="page-head">
   <h1>#{{ job.id }} {{ job.name }}</h1>
   <div class="actions">
-    <form method="post" action="/jobs/{{ job.id }}/prepare"><button type="submit">Prepare Files</button></form>
+    <form method="post" action="/jobs/{{ job.id }}/prepare"><button type="submit">ファイル準備</button></form>
     <form method="post" action="/jobs/{{ job.id }}/run">
       {% if trigger_status.current_label == 'ERROR' %}
-      <label><input type="checkbox" name="acknowledge_trigger_mismatch" value="yes"> acknowledge trigger mismatch</label>
+      <label><input type="checkbox" name="acknowledge_trigger_mismatch" value="yes"> トリガー不一致を確認済み</label>
       {% endif %}
-      <button type="submit">Run</button>
+      <button type="submit">実行</button>
     </form>
-    <form method="post" action="/jobs/{{ job.id }}/stop"><button type="submit" class="danger">Stop</button></form>
-    <form method="post" action="/jobs/{{ job.id }}/reimport"><button type="submit">Reimport Results</button></form>
-    <form method="post" action="/jobs/{{ job.id }}/export-contact-sheet"><button type="submit">Export Contact Sheet</button></form>
-    <form method="post" action="/jobs/{{ job.id }}/export-selected-lora"><button type="submit">Export Selected LoRA</button></form>
+    <form method="post" action="/jobs/{{ job.id }}/stop"><button type="submit" class="danger">停止</button></form>
+    <form method="post" action="/jobs/{{ job.id }}/reimport"><button type="submit">結果を再取り込み</button></form>
+    <form method="post" action="/jobs/{{ job.id }}/export-contact-sheet"><button type="submit">Contact Sheet出力</button></form>
+    <form method="post" action="/jobs/{{ job.id }}/export-selected-lora"><button type="submit">採用LoRA出力</button></form>
   </div>
 </header>
-{% if exported %}<p class="notice">Exported: {{ exported }}</p>{% endif %}
+{% if exported %}<p class="notice">出力しました: {{ exported }}</p>{% endif %}
 <section class="panel-grid">
   <div>
-    <h2>Job</h2>
+    <h2>ジョブ</h2>
     <dl>
-      <dt>Status</dt><dd>{{ job.status }}</dd>
-      <dt>Family</dt><dd>{{ job.model_family }}</dd>
-      <dt>Script</dt><dd>{{ job.training_script }}</dd>
-      <dt>Parent Job</dt><dd>{% if job.parent_job_id %}<a href="/jobs/{{ job.parent_job_id }}">#{{ job.parent_job_id }}</a>{% else %}-{% endif %}</dd>
-      <dt>Prompt Template</dt><dd>{{ job.sample_prompt_template_id or '-' }}</dd>
-      <dt>Dataset Version</dt><dd>{% if dataset_version %}v{{ dataset_version.version_no }} (#{{ dataset_version.id }}){% else %}snapshot unavailable{% endif %}</dd>
+      <dt>状態</dt><dd>{{ status_labels.get(job.status, job.status) }}</dd>
+      <dt>モデル種別</dt><dd>{{ job.model_family }}</dd>
+      <dt>スクリプト</dt><dd>{{ job.training_script }}</dd>
+      <dt>派生元ジョブ</dt><dd>{% if job.parent_job_id %}<a href="/jobs/{{ job.parent_job_id }}">#{{ job.parent_job_id }}</a>{% else %}-{% endif %}</dd>
+      <dt>プロンプトテンプレート</dt><dd>{{ job.sample_prompt_template_id or '-' }}</dd>
+      <dt>データセットバージョン</dt><dd>{% if dataset_version %}v{{ dataset_version.version_no }} (#{{ dataset_version.id }}){% else %}スナップショットなし{% endif %}</dd>
       <dt>PID</dt><dd>{{ job.process_id or '-' }}</dd>
-      <dt>Return Code</dt><dd>{{ job.return_code if job.return_code is not none else '-' }}</dd>
-      <dt>Started</dt><dd>{{ job.start_time or '-' }}</dd>
-      <dt>Ended</dt><dd>{{ job.end_time or '-' }}</dd>
-      <dt>Elapsed</dt><dd>{{ job.elapsed_seconds if job.elapsed_seconds is not none else '-' }}</dd>
-      <dt>Expected Steps</dt><dd>{{ job.expected_total_steps if job.expected_total_steps is not none else '-' }}</dd>
-      <dt>Actual Step</dt><dd>{{ job.actual_max_step if job.actual_max_step is not none else '-' }}</dd>
-      <dt>Step Check</dt><dd><span class="label {{ (job.step_consistency_label or 'unknown')|lower }}">{{ job.step_consistency_label or '-' }}</span> {{ job.step_consistency_message or '' }}</dd>
-      <dt>no_metadata</dt><dd>{{ 'enabled' if no_metadata_enabled else 'disabled' }}</dd>
-      <dt>Run Dir</dt><dd>{{ job.run_dir }}</dd>
+      <dt>終了コード</dt><dd>{{ job.return_code if job.return_code is not none else '-' }}</dd>
+      <dt>開始</dt><dd>{{ job.start_time or '-' }}</dd>
+      <dt>終了</dt><dd>{{ job.end_time or '-' }}</dd>
+      <dt>経過秒数</dt><dd>{{ job.elapsed_seconds if job.elapsed_seconds is not none else '-' }}</dd>
+      <dt>想定Step</dt><dd>{{ job.expected_total_steps if job.expected_total_steps is not none else '-' }}</dd>
+      <dt>実Step</dt><dd>{{ job.actual_max_step if job.actual_max_step is not none else '-' }}</dd>
+      <dt>Step確認</dt><dd><span class="label {{ (job.step_consistency_label or 'unknown')|lower }}">{{ job.step_consistency_label or '-' }}</span> {{ job.step_consistency_message or '' }}</dd>
+      <dt>no_metadata</dt><dd>{{ '有効' if no_metadata_enabled else '無効' }}</dd>
+      <dt>実行フォルダ</dt><dd>{{ job.run_dir }}</dd>
     </dl>
   </div>
   <div>
-    <h2>Dataset</h2>
-    {% if dataset %}<dl><dt>Name</dt><dd>{{ dataset.name }}</dd><dt>Images</dt><dd>{{ dataset.image_count }}</dd><dt>Path</dt><dd>{{ dataset.path }}</dd></dl>{% endif %}
-    <h2>Selected LoRA</h2>
-    <p>{{ job.adopted_model_path or 'Not selected yet.' }}</p>
+    <h2>データセット</h2>
+    {% if dataset %}<dl><dt>名前</dt><dd>{{ dataset.name }}</dd><dt>画像</dt><dd>{{ dataset.image_count }}</dd><dt>パス</dt><dd>{{ dataset.path }}</dd></dl>{% endif %}
+    <h2>採用LoRA</h2>
+    <p>{{ job.adopted_model_path or '未選択' }}</p>
     <form method="post" action="/jobs/{{ job.id }}/select-epoch" class="inline-form">
-      <label>Set selected by epoch
+      <label>epochから採用LoRAを選択
         <select name="epoch">
           {% for output in outputs if output.epoch is not none %}
           <option value="{{ output.epoch }}" {{ 'selected' if output.selected else '' }}>epoch {{ output.epoch }} / {{ output.file_path }}</option>
           {% endfor %}
         </select>
       </label>
-      <button type="submit">Select Epoch</button>
+      <button type="submit">epochを選択</button>
     </form>
   </div>
 </section>
 <section>
-  <h2>Trigger / Prompt Consistency</h2>
+  <h2>トリガー / プロンプト整合性</h2>
   <div class="panel-grid">
     <div>
       <dl>
-        <dt>Current trigger_word</dt><dd>{{ trigger_status.trigger_word or '-' }}</dd>
-        <dt>Current captions</dt><dd>{{ trigger_status.current_count if trigger_status.current_count is not none else '-' }} / {{ dataset.caption_count if dataset else '-' }}{% if trigger_status.current_rate is not none %} ({{ '%.1f%%'|format(trigger_status.current_rate * 100) }}){% endif %}</dd>
-        <dt>Current status</dt><dd><span class="label {{ (trigger_status.current_label or 'unknown')|lower }}">{{ trigger_status.current_label or 'UNKNOWN' }}</span></dd>
-        <dt>Current message</dt><dd>{{ trigger_status.message }}</dd>
+        <dt>現在のtrigger_word</dt><dd>{{ trigger_status.trigger_word or '-' }}</dd>
+        <dt>現在のキャプション</dt><dd>{{ trigger_status.current_count if trigger_status.current_count is not none else '-' }} / {{ dataset.caption_count if dataset else '-' }}{% if trigger_status.current_rate is not none %} ({{ '%.1f%%'|format(trigger_status.current_rate * 100) }}){% endif %}</dd>
+        <dt>現在の状態</dt><dd><span class="label {{ (trigger_status.current_label or 'unknown')|lower }}">{{ trigger_status.current_label or 'UNKNOWN' }}</span></dd>
+        <dt>現在のメッセージ</dt><dd>{{ trigger_status.message }}</dd>
       </dl>
     </div>
     <div>
       <dl>
-        <dt>Creation snapshot</dt><dd>{{ trigger_status.snapshot_message }}</dd>
-        <dt>Dataset version</dt><dd>{% if job.dataset_version_id %}#{{ job.dataset_version_id }}{% else %}snapshot unavailable{% endif %}</dd>
-        <dt>Job label</dt><dd><span class="label {{ (trigger_status.label or 'unknown')|lower }}">{{ trigger_status.label or 'UNKNOWN' }}</span></dd>
-        <dt>Sample prompts</dt><dd>{{ trigger_status.sample_prompt_message }}</dd>
-        <dt>Note</dt><dd>Caption trigger consistency and sample prompt trigger usage should match for reliable evaluation.</dd>
+        <dt>作成時スナップショット</dt><dd>{{ trigger_status.snapshot_message }}</dd>
+        <dt>データセットバージョン</dt><dd>{% if job.dataset_version_id %}#{{ job.dataset_version_id }}{% else %}スナップショットなし{% endif %}</dd>
+        <dt>ジョブラベル</dt><dd><span class="label {{ (trigger_status.label or 'unknown')|lower }}">{{ trigger_status.label or 'UNKNOWN' }}</span></dd>
+        <dt>サンプルプロンプト</dt><dd>{{ trigger_status.sample_prompt_message }}</dd>
+        <dt>メモ</dt><dd>caption内のtriggerとsample prompt内のtriggerが揃っていると評価しやすくなります。</dd>
       </dl>
     </div>
   </div>
 </section>
 <section class="panel-grid">
   <div>
-    <h2>Clone Job</h2>
+    <h2>ジョブ複製</h2>
     <form method="post" action="/jobs/{{ job.id }}/clone" class="form-grid">
-      <label>New Job Name<input name="name" value="{{ job.name }}_clone"></label>
-      <button type="submit">Clone Job</button>
+      <label>新しいジョブ名<input name="name" value="{{ job.name }}_clone"></label>
+      <button type="submit">ジョブを複製</button>
     </form>
   </div>
   <div>
-    <h2>Quick Variant</h2>
+    <h2>クイック派生</h2>
     <form method="post" action="/jobs/{{ job.id }}/variant" class="form-grid">
-      <label>Variant<select name="variant">
-        <option value="lower_lr">Lower LR</option>
-        <option value="higher_lr">Higher LR</option>
-        <option value="lower_dim">Lower Dim</option>
-        <option value="higher_dim">Higher Dim</option>
-        <option value="more_epoch">More Epoch</option>
-        <option value="fewer_epoch">Fewer Epoch</option>
+      <label>派生タイプ<select name="variant">
+        <option value="lower_lr">LRを下げる</option>
+        <option value="higher_lr">LRを上げる</option>
+        <option value="lower_dim">Dimを下げる</option>
+        <option value="higher_dim">Dimを上げる</option>
+        <option value="more_epoch">Epochを増やす</option>
+        <option value="fewer_epoch">Epochを減らす</option>
       </select></label>
-      <button type="submit">Create Variant</button>
+      <button type="submit">派生ジョブを作成</button>
     </form>
   </div>
 </section>
-<section><h2>Command</h2><pre>{{ job.command_line or 'Not prepared yet.' }}</pre></section>
+<section><h2>コマンド</h2><pre>{{ job.command_line or 'まだ準備されていません。' }}</pre></section>
 <section>
-  <h2>Metrics / Loss</h2>
+  <h2>メトリクス / Loss</h2>
   <div class="panel-grid">
     <div>
       <dl>
-        <dt>Metric Count</dt><dd>{{ job.actual_metric_count if job.actual_metric_count is not none else metrics|length }}</dd>
-        <dt>Outputs</dt><dd>{{ job.output_model_count if job.output_model_count is not none else outputs|length }}</dd>
-        <dt>Samples</dt><dd>{{ job.sample_image_count if job.sample_image_count is not none else samples|length }}</dd>
-        <dt>Health</dt><dd><span class="label {{ (metric_summary.health_label if metric_summary else 'unknown')|lower }}">{{ metric_summary.health_label if metric_summary else 'UNKNOWN' }}</span></dd>
-        <dt>Message</dt><dd>{{ metric_summary.health_message if metric_summary else 'No metric summary yet.' }}</dd>
-        <dt>Raw Loss</dt><dd><span class="label {{ (metric_summary.raw_loss_label if metric_summary else 'unknown')|lower }}">{{ metric_summary.raw_loss_label if metric_summary else 'UNKNOWN' }}</span></dd>
-        <dt>Smoothed Loss</dt><dd><span class="label {{ (metric_summary.smoothed_loss_label if metric_summary else 'unknown')|lower }}">{{ metric_summary.smoothed_loss_label if metric_summary else 'UNKNOWN' }}</span></dd>
-        <dt>Epoch Trend</dt><dd><span class="label {{ (metric_summary.epoch_trend_label if metric_summary else 'unknown')|lower }}">{{ metric_summary.epoch_trend_label if metric_summary else 'UNKNOWN' }}</span></dd>
-        <dt>Health Note</dt><dd>Loss health is a training-log health check, not an image quality score. WARNING can still be usable when sample images look better.</dd>
+        <dt>メトリクス数</dt><dd>{{ job.actual_metric_count if job.actual_metric_count is not none else metrics|length }}</dd>
+        <dt>出力</dt><dd>{{ job.output_model_count if job.output_model_count is not none else outputs|length }}</dd>
+        <dt>サンプル</dt><dd>{{ job.sample_image_count if job.sample_image_count is not none else samples|length }}</dd>
+        <dt>健全性</dt><dd><span class="label {{ (metric_summary.health_label if metric_summary else 'unknown')|lower }}">{{ metric_summary.health_label if metric_summary else 'UNKNOWN' }}</span></dd>
+        <dt>メッセージ</dt><dd>{{ metric_summary.health_message if metric_summary else 'メトリクスsummaryはまだありません。' }}</dd>
+        <dt>Raw Loss判定</dt><dd><span class="label {{ (metric_summary.raw_loss_label if metric_summary else 'unknown')|lower }}">{{ metric_summary.raw_loss_label if metric_summary else 'UNKNOWN' }}</span></dd>
+        <dt>平滑Loss判定</dt><dd><span class="label {{ (metric_summary.smoothed_loss_label if metric_summary else 'unknown')|lower }}">{{ metric_summary.smoothed_loss_label if metric_summary else 'UNKNOWN' }}</span></dd>
+        <dt>Epoch傾向</dt><dd><span class="label {{ (metric_summary.epoch_trend_label if metric_summary else 'unknown')|lower }}">{{ metric_summary.epoch_trend_label if metric_summary else 'UNKNOWN' }}</span></dd>
+        <dt>補足</dt><dd>Loss healthは学習ログの健全性チェックであり、画像品質スコアではありません。WARNINGでもサンプル画像が良ければ採用候補になります。</dd>
       </dl>
     </div>
     <div>
       <dl>
-        <dt>Initial Loss</dt><dd>{{ '%.6f'|format(metric_summary.initial_loss) if metric_summary and metric_summary.initial_loss is not none else '-' }}</dd>
-        <dt>Final Loss</dt><dd>{{ '%.6f'|format(metric_summary.final_loss) if metric_summary and metric_summary.final_loss is not none else '-' }}</dd>
-        <dt>Min Loss</dt><dd>{{ '%.6f'|format(metric_summary.min_loss) if metric_summary and metric_summary.min_loss is not none else '-' }}{% if metric_summary and metric_summary.min_loss_step is not none %} @ step {{ metric_summary.min_loss_step }}{% endif %}</dd>
-        <dt>Moving Avg Final</dt><dd>{{ '%.6f'|format(metric_summary.moving_avg_final_loss) if metric_summary and metric_summary.moving_avg_final_loss is not none else '-' }}</dd>
-        <dt>Drop Rate</dt><dd>{{ '%.2f%%'|format(metric_summary.loss_drop_rate * 100) if metric_summary and metric_summary.loss_drop_rate is not none else '-' }}</dd>
+        <dt>初期Loss</dt><dd>{{ '%.6f'|format(metric_summary.initial_loss) if metric_summary and metric_summary.initial_loss is not none else '-' }}</dd>
+        <dt>最終Loss</dt><dd>{{ '%.6f'|format(metric_summary.final_loss) if metric_summary and metric_summary.final_loss is not none else '-' }}</dd>
+        <dt>最小Loss</dt><dd>{{ '%.6f'|format(metric_summary.min_loss) if metric_summary and metric_summary.min_loss is not none else '-' }}{% if metric_summary and metric_summary.min_loss_step is not none %} @ step {{ metric_summary.min_loss_step }}{% endif %}</dd>
+        <dt>移動平均Final</dt><dd>{{ '%.6f'|format(metric_summary.moving_avg_final_loss) if metric_summary and metric_summary.moving_avg_final_loss is not none else '-' }}</dd>
+        <dt>低下率</dt><dd>{{ '%.2f%%'|format(metric_summary.loss_drop_rate * 100) if metric_summary and metric_summary.loss_drop_rate is not none else '-' }}</dd>
         <dt>Volatility</dt><dd>{{ '%.6f'|format(metric_summary.loss_volatility) if metric_summary and metric_summary.loss_volatility is not none else '-' }}</dd>
         <dt>Spikes</dt><dd>{{ metric_summary.spike_count if metric_summary else '-' }}</dd>
-        <dt>Spike Threshold</dt><dd>{{ health_details.spike_threshold or '-' }} ({{ health_details.spike_rule }})</dd>
-        <dt>Late Slope</dt><dd>{{ '%.6f'|format(health_details.late_stage_slope) if health_details.late_stage_slope is not none else '-' }}</dd>
-        <dt>Final Loss</dt><dd>{{ '%.6f'|format(health_details.final_loss) if health_details.final_loss is not none else '-' }}</dd>
+        <dt>Spikeしきい値</dt><dd>{{ health_details.spike_threshold or '-' }} ({{ health_details.spike_rule }})</dd>
+        <dt>終盤Slope</dt><dd>{{ '%.6f'|format(health_details.late_stage_slope) if health_details.late_stage_slope is not none else '-' }}</dd>
+        <dt>最終Loss</dt><dd>{{ '%.6f'|format(health_details.final_loss) if health_details.final_loss is not none else '-' }}</dd>
       </dl>
     </div>
   </div>
@@ -139,23 +147,23 @@
     <polyline class="raw" points="{{ loss_chart.raw_points }}"></polyline>
     <polyline class="avg" points="{{ loss_chart.ma_points }}"></polyline>
   </svg>
-  <p class="muted">Raw loss and 10-point moving average. Step {{ loss_chart.min_step }} to {{ loss_chart.max_step }}.</p>
+  <p class="muted">Raw lossと10点移動平均。Step {{ loss_chart.min_step }} から {{ loss_chart.max_step }}。</p>
   {% else %}
-  <p class="muted">No loss chart data yet. Reimport Results will try TensorBoard first, then train.log.</p>
+  <p class="muted">Lossグラフのデータはまだありません。結果を再取り込みするとTensorBoard、次にtrain.logから読み込みます。</p>
   {% endif %}
   <table>
-    <thead><tr><th>Step</th><th>Loss</th><th>Learning Rate</th><th>Source</th><th>Tag</th></tr></thead>
+    <thead><tr><th>Step</th><th>Loss</th><th>学習率</th><th>取得元</th><th>タグ</th></tr></thead>
     <tbody>
       {% for metric in metrics %}
       <tr><td>{{ metric.step }}</td><td>{{ '%.6f'|format(metric.loss) if metric.loss is not none else '-' }}</td><td>{{ metric.learning_rate if metric.learning_rate is not none else '-' }}</td><td>{{ metric.source or '-' }}</td><td>{{ metric.raw_tag or '-' }}</td></tr>
       {% else %}
-      <tr><td colspan="5" class="muted">No metrics imported yet.</td></tr>
+      <tr><td colspan="5" class="muted">メトリクスはまだ取り込まれていません。</td></tr>
       {% endfor %}
     </tbody>
   </table>
-  <h3>Epoch Summary</h3>
+  <h3>Epochサマリー</h3>
   <table>
-    <thead><tr><th>Epoch</th><th>Steps</th><th>Metrics</th><th>Avg Loss</th><th>Min</th><th>Max</th><th>Final</th><th>MA Final</th><th>Spikes</th><th>Samples</th><th>Output</th></tr></thead>
+    <thead><tr><th>Epoch</th><th>Step範囲</th><th>メトリクス</th><th>平均Loss</th><th>最小</th><th>最大</th><th>最終</th><th>移動平均Final</th><th>Spikes</th><th>サンプル</th><th>出力</th></tr></thead>
     <tbody>
       {% for epoch in epoch_summaries %}
       <tr>
@@ -169,16 +177,16 @@
         <td>{{ '%.6f'|format(epoch.moving_avg_final_loss) if epoch.moving_avg_final_loss is not none else '-' }}</td>
         <td>{{ epoch.spike_count }}</td>
         <td>{{ epoch.sample_count }}</td>
-        <td>{{ epoch.output_file }}{% if epoch.output_selected %} selected{% endif %}</td>
+        <td>{{ epoch.output_file }}{% if epoch.output_selected %} 採用中{% endif %}</td>
       </tr>
       {% else %}
-      <tr><td colspan="11" class="muted">No epoch summary yet. Reimport Results will rebuild it.</td></tr>
+      <tr><td colspan="11" class="muted">Epochサマリーはまだありません。結果を再取り込みすると再作成します。</td></tr>
       {% endfor %}
     </tbody>
   </table>
-  <h3>Epoch Visual Summary</h3>
+  <h3>Epoch視覚評価サマリー</h3>
   <table>
-    <thead><tr><th>Epoch</th><th>Avg Loss</th><th>Moving Avg</th><th>Samples</th><th>Face</th><th>Costume</th><th>Style</th><th>Stability</th><th>Overall</th><th>Memos</th><th>Output</th><th>Selected</th></tr></thead>
+    <thead><tr><th>Epoch</th><th>平均Loss</th><th>移動平均</th><th>サンプル</th><th>顔</th><th>衣装</th><th>スタイル</th><th>安定性</th><th>総合</th><th>メモ数</th><th>出力</th><th>採用</th></tr></thead>
     <tbody>
       {% for epoch in epoch_visual_summaries %}
       <tr>
@@ -193,33 +201,33 @@
         <td>{{ '%.2f'|format(epoch.avg_overall) if epoch.avg_overall is not none else '-' }}</td>
         <td>{{ epoch.memo_count }}</td>
         <td>{{ epoch.output_file }}</td>
-        <td>{{ 'selected' if epoch.output_selected else '' }}</td>
+        <td>{{ '採用中' if epoch.output_selected else '' }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="12" class="muted">No visual ratings yet.</td></tr>
+      <tr><td colspan="12" class="muted">視覚評価はまだありません。</td></tr>
       {% endfor %}
     </tbody>
   </table>
 </section>
-<section><h2>Train Log Tail</h2><pre>{{ log_tail or 'No train.log yet.' }}</pre></section>
+<section><h2>train.log末尾</h2><pre>{{ log_tail or 'train.logはまだありません。' }}</pre></section>
 <section>
-  <h2>Outputs</h2>
+  <h2>出力LoRA</h2>
   <table>
-    <thead><tr><th>ID</th><th>Epoch</th><th>Step</th><th>Size</th><th>SHA256</th><th>Selected</th><th>Metadata Error</th><th>Path</th><th></th></tr></thead>
+    <thead><tr><th>ID</th><th>Epoch</th><th>Step</th><th>サイズ</th><th>SHA256</th><th>採用</th><th>Metadataエラー</th><th>パス</th><th></th></tr></thead>
     <tbody>
       {% for output in outputs %}
       <tr>
-        <td>#{{ output.id }}</td><td>{{ output.epoch or '-' }}</td><td>{{ output.step or '-' }}</td><td>{{ output.file_size or '-' }}</td><td>{{ output.sha256[:8] if output.sha256 else '-' }}</td><td>{{ 'selected' if output.selected else '' }}</td><td>{{ output.metadata_error or '-' }}</td><td>{{ output.file_path }}</td>
-        <td><form method="post" action="/jobs/{{ job.id }}/outputs/{{ output.id }}/select"><button type="submit">Select</button></form></td>
+        <td>#{{ output.id }}</td><td>{{ output.epoch or '-' }}</td><td>{{ output.step or '-' }}</td><td>{{ output.file_size or '-' }}</td><td>{{ output.sha256[:8] if output.sha256 else '-' }}</td><td>{{ '採用中' if output.selected else '' }}</td><td>{{ output.metadata_error or '-' }}</td><td>{{ output.file_path }}</td>
+        <td><form method="post" action="/jobs/{{ job.id }}/outputs/{{ output.id }}/select"><button type="submit">採用</button></form></td>
       </tr>
       {% else %}
-      <tr><td colspan="9" class="muted">No LoRA outputs imported yet.</td></tr>
+      <tr><td colspan="9" class="muted">LoRA出力はまだ取り込まれていません。</td></tr>
       {% endfor %}
     </tbody>
   </table>
 </section>
 <section>
-  <h2>Samples By Prompt</h2>
+  <h2>プロンプト別サンプル</h2>
   {% for group in sample_groups %}
   <h3>{{ group.title }}</h3>
   {% if group.prompt %}<p class="muted">{{ group.prompt.prompt }}</p>{% endif %}
@@ -233,23 +241,23 @@
         </figcaption>
         <form method="post" action="/jobs/{{ job.id }}/samples/{{ sample.id }}/review" class="review-form">
           <div class="rating-grid">
-            <label>Face <input type="number" min="0" max="5" name="rating_face" value="{{ sample.rating_face or 0 }}"></label>
-            <label>Costume <input type="number" min="0" max="5" name="rating_costume" value="{{ sample.rating_costume or 0 }}"></label>
-            <label>Style <input type="number" min="0" max="5" name="rating_style" value="{{ sample.rating_style or 0 }}"></label>
-            <label>Stability <input type="number" min="0" max="5" name="rating_stability" value="{{ sample.rating_stability or 0 }}"></label>
-            <label>Overall <input type="number" min="0" max="5" name="rating_overall" value="{{ sample.rating_overall or sample.rating or 0 }}"></label>
+            <label>顔 <input type="number" min="0" max="5" name="rating_face" value="{{ sample.rating_face or 0 }}"></label>
+            <label>衣装 <input type="number" min="0" max="5" name="rating_costume" value="{{ sample.rating_costume or 0 }}"></label>
+            <label>スタイル <input type="number" min="0" max="5" name="rating_style" value="{{ sample.rating_style or 0 }}"></label>
+            <label>安定性 <input type="number" min="0" max="5" name="rating_stability" value="{{ sample.rating_stability or 0 }}"></label>
+            <label>総合 <input type="number" min="0" max="5" name="rating_overall" value="{{ sample.rating_overall or sample.rating or 0 }}"></label>
           </div>
-          <label>Memo <textarea name="memo">{{ sample.memo or '' }}</textarea></label>
-          <button type="submit">Save</button>
+          <label>メモ <textarea name="memo">{{ sample.memo or '' }}</textarea></label>
+          <button type="submit">保存</button>
         </form>
       </figure>
     {% else %}
-      <p class="muted">No image for this prompt yet.</p>
+      <p class="muted">このプロンプトの画像はまだありません。</p>
     {% endfor %}
   </div>
   {% else %}
-  <p class="muted">No sample images imported yet.</p>
+  <p class="muted">サンプル画像はまだ取り込まれていません。</p>
   {% endfor %}
 </section>
-<section><h2>Params</h2><pre>{{ job.params_json }}</pre></section>
+<section><h2>パラメータ</h2><pre>{{ job.params_json }}</pre></section>
 {% endblock %}

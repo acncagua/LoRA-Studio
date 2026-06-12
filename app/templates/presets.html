@@ -1,4 +1,13 @@
-﻿{% extends "base.html" %}{% block content %}
-<header class="page-head"><h1>Presets</h1></header>
-<table><thead><tr><th>Name</th><th>Family</th><th>Script</th><th>Purpose</th></tr></thead><tbody>{% for preset in presets %}<tr><td><a href="/presets/{{ preset.id }}">{{ preset.name }}</a></td><td>{{ preset.model_family }}</td><td>{{ preset.training_script }}</td><td>{{ preset.purpose }}</td></tr>{% endfor %}</tbody></table>
+{% extends "base.html" %}{% block content %}
+<header class="page-head"><h1>プリセット</h1></header>
+<table>
+  <thead><tr><th>名前</th><th>モデル種別</th><th>スクリプト</th><th>目的</th></tr></thead>
+  <tbody>
+    {% for preset in presets %}
+    <tr><td><a href="/presets/{{ preset.id }}">{{ preset.name }}</a></td><td>{{ preset.model_family }}</td><td>{{ preset.training_script }}</td><td>{{ preset.purpose }}</td></tr>
+    {% else %}
+    <tr><td colspan="4" class="muted">プリセットはまだありません。</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
 {% endblock %}
