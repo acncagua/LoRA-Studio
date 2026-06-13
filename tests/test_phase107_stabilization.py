@@ -221,6 +221,24 @@ class Phase107StabilizationTests(IsolatedDbTest):
         ids = {row["id"] for row in cleanup_job_candidates(limit=20)}
         self.assertIn(job_id, ids)
 
+    def test_stale_running_job_is_marked_stopped(self) -> None:
+        project_id, _, _ = self.create_project_fixture()
+        job_id = self.add_job_with_status("running", project_id=project_id, name="stale running")
+        with connect() as conn:
+            conn.execute("UPDATE training_jobs SET process_id = 999999, start_time = ? WHERE id = ?", (utc_now(), job_id))
+        from app.services import training_runner
+
+        with mock.patch.object(training_runner, "process_exists", return_value=False), \
+            mock.patch.object(training_runner, "job_marker_process_exists", return_value=False), \
+            mock.patch.object(training_runner, "collect_job_results", return_value={"models": 0, "samples": 0}):
+            fixed = training_runner.reconcile_stale_running_jobs()
+
+        self.assertIn(job_id, fixed)
+        job = fetch_one("SELECT status, process_id, return_code FROM training_jobs WHERE id = ?", (job_id,))
+        self.assertEqual(job["status"], "stopped")
+        self.assertIsNone(job["process_id"])
+        self.assertEqual(job["return_code"], 4294967295)
+
     def test_pilot_recommendation_required_without_real_completed_job(self) -> None:
         project_id, _, _ = self.create_project_fixture()
         from app.main import pilot_recommendation
@@ -697,6 +715,18 @@ class StartHelperTests(unittest.TestCase):
             mock.patch.object(start_lora_helper, "release_port") as release_port:
             start_lora_helper.main()
         release_port.assert_called_once_with(8768)
+
+    def test_release_port_does_not_kill_process_tree(self) -> None:
+        import start_lora_helper
+
+        with mock.patch.object(start_lora_helper, "find_listening_pids", return_value={1234}), \
+            mock.patch.object(start_lora_helper.os, "getpid", return_value=9999), \
+            mock.patch.object(start_lora_helper.subprocess, "run") as run:
+            start_lora_helper.release_port(8768)
+
+        args = run.call_args.args[0]
+        self.assertEqual(args, ["taskkill", "/PID", "1234", "/F"])
+        self.assertNotIn("/T", args)
 
 
 class OneoffScriptTests(unittest.TestCase):

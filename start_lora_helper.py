@@ -85,7 +85,10 @@ def release_port(port: int) -> None:
     for pid in sorted(find_listening_pids(port)):
         if pid == current_pid:
             continue
-        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], check=False, capture_output=True)
+        # Only kill the process that owns the LoRA-Studio port. Do not use /T here:
+        # training jobs are child processes of the web app and must not be killed by
+        # a server restart.
+        subprocess.run(["taskkill", "/PID", str(pid), "/F"], check=False, capture_output=True)
 
 
 def main() -> None:

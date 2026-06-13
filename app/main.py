@@ -31,7 +31,7 @@ from app.services.image_store import (
 from app.services.maintenance import create_app_backup, export_diagnostics, maintenance_summary
 from app.services.output_collector import collect_job_results
 from app.services.recommendations import create_draft_job_from_recommendation, list_recommendations, regenerate_recommendations, set_recommendation_status, write_recommendation_report
-from app.services.training_runner import read_log_tail, start_job, stop_job, validate_job_ready
+from app.services.training_runner import read_log_tail, reconcile_stale_running_jobs, start_job, stop_job, validate_job_ready
 from app.services.validation_runs import (
     apply_suggestion_to_profile,
     calculate_suggested_weights,
@@ -117,6 +117,7 @@ templates = Environment(
 @app.on_event("startup")
 def on_startup() -> None:
     init_db()
+    reconcile_stale_running_jobs()
 
 
 def render(request: Request, template: str, **context: Any) -> HTMLResponse:
@@ -944,6 +945,7 @@ def update_project_selected_from_job(project_id: int, job_id: int) -> None:
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request) -> HTMLResponse:
+    reconcile_stale_running_jobs()
     stats = {
         "presets": fetch_one("SELECT COUNT(*) AS count FROM presets")["count"],
         "datasets": fetch_one("SELECT COUNT(*) AS count FROM datasets")["count"],
@@ -1664,6 +1666,7 @@ def decode_analysis(row: Any) -> dict[str, Any]:
 
 @app.get("/jobs", response_class=HTMLResponse)
 def jobs_list(request: Request, view: str = Query("active")) -> HTMLResponse:
+    reconcile_stale_running_jobs()
     if view not in {key for key, _ in JOB_FILTERS}:
         view = "active"
     where = job_filter_where(view)
@@ -1857,6 +1860,7 @@ def job_detail(
     created: str | None = None,
     preflight: str | None = None,
 ) -> HTMLResponse:
+    reconcile_stale_running_jobs()
     job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")

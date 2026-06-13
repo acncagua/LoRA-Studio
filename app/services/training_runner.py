@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +13,94 @@ from app.services.command_builder import prepare_job_files
 from app.services.output_collector import collect_job_results
 
 RUNNABLE_STATUSES = {"draft", "prepared", "failed", "stopped"}
+
+
+def reconcile_stale_running_jobs() -> list[int]:
+    rows = []
+    with connect() as conn:
+        rows = conn.execute("SELECT * FROM training_jobs WHERE status = 'running'").fetchall()
+    fixed: list[int] = []
+    for row in rows:
+        job = dict(row)
+        pid = job.get("process_id")
+        if pid and process_exists(int(pid)):
+            continue
+        marker = Path(job.get("run_dir") or "").name
+        if marker.startswith("job_") and job_marker_process_exists(marker):
+            continue
+        mark_running_job_lost(job)
+        fixed.append(int(job["id"]))
+    return fixed
+
+
+def process_exists(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        result = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        return str(pid) in result.stdout
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def job_marker_process_exists(marker: str) -> bool:
+    if sys.platform != "win32":
+        return False
+    script = (
+        "$marker = " + json.dumps(marker) + "; "
+        "$p = Get-CimInstance Win32_Process -Filter \"name = 'python.exe'\" | "
+        "Where-Object { $_.CommandLine -like ('*' + $marker + '*') } | "
+        "Select-Object -First 1 -ExpandProperty ProcessId; "
+        "if ($p) { Write-Output $p }"
+    )
+    result = subprocess.run(
+        ["powershell", "-NoProfile", "-Command", script],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    return bool(result.stdout.strip())
+
+
+def mark_running_job_lost(job: dict[str, object]) -> None:
+    job_id = int(job["id"])
+    end_time = utc_now()
+    elapsed = elapsed_seconds(str(job.get("start_time") or ""), end_time)
+    log_path = Path(str(job.get("run_dir") or "")) / "logs" / "train.log"
+    if log_path.exists():
+        with log_path.open("a", encoding="utf-8", errors="replace") as handle:
+            handle.write("\n[LoRA-Studio] running status reconciled: training process was not found. Marking job stopped.\n")
+    try:
+        collect_job_results(job_id)
+    except Exception as exc:
+        if log_path.exists():
+            with log_path.open("a", encoding="utf-8", errors="replace") as handle:
+                handle.write(f"[LoRA-Studio] result import during stale-process reconciliation failed: {exc}\n")
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE training_jobs
+            SET status = 'stopped', process_id = NULL,
+                end_time = COALESCE(end_time, ?),
+                elapsed_seconds = COALESCE(elapsed_seconds, ?),
+                return_code = COALESCE(return_code, 4294967295),
+                updated_at = ?
+            WHERE id = ? AND status = 'running'
+            """,
+            (end_time, elapsed, end_time, job_id),
+        )
 
 
 def start_job(job_id: int, acknowledge_trigger_mismatch: bool = False) -> int:
