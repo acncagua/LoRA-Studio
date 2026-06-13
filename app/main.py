@@ -600,21 +600,21 @@ def pilot_recommendation(project: Any) -> dict[str, Any]:
         (base_model_path,),
     )["count"]
     if int(base_completed or 0) == 0:
-        reasons.append("このbase modelでcompleted Jobがありません。")
+        reasons.append("このbase modelで完了済み学習ジョブがありません。")
 
     version_completed = fetch_one(
         "SELECT COUNT(*) AS count FROM training_jobs WHERE status = 'completed' AND COALESCE(return_code, 0) = 0 AND dataset_version_id IS ?",
         (dataset_version_id,),
     )["count"]
     if dataset_version_id and int(version_completed or 0) == 0:
-        reasons.append("このdataset versionでcompleted Jobがありません。")
+        reasons.append("このdataset versionで完了済み学習ジョブがありません。")
 
     preset_completed = fetch_one(
         "SELECT COUNT(*) AS count FROM training_jobs WHERE status = 'completed' AND COALESCE(return_code, 0) = 0 AND preset_id = ?",
         (STANDARD_PRESET_ID,),
     )["count"]
     if int(preset_completed or 0) == 0:
-        reasons.append("標準 6 Epoch系統のcompleted Jobがありません。")
+        reasons.append("標準6Epoch系統の完了済み学習ジョブがありません。")
 
     if reasons:
         return {
@@ -629,13 +629,19 @@ def pilot_recommendation(project: Any) -> dict[str, Any]:
     }
 
 
-def create_project_preset_job(project_id: int, preset_id: str, skip_reason: str = "") -> int:
+def create_project_preset_job(project_id: int, preset_id: str, skip_reason: str = "", source_job_id: int | None = None) -> int:
     project = fetch_one("SELECT * FROM lora_projects WHERE id = ?", (project_id,))
     preset = fetch_one("SELECT * FROM presets WHERE id = ?", (preset_id,))
     if project is None or preset is None:
         raise HTTPException(status_code=404, detail="Project or preset not found")
-    source = fetch_one("SELECT * FROM training_jobs WHERE project_id = ? ORDER BY id DESC LIMIT 1", (project_id,))
-    name_suffix = "軽量確認 3 Epoch" if preset_id == PILOT_PRESET_ID else "標準 6 Epoch"
+    source = None
+    if source_job_id:
+        source = fetch_one("SELECT * FROM training_jobs WHERE id = ? AND project_id = ?", (source_job_id, project_id))
+        if source is None:
+            raise HTTPException(status_code=400, detail="source_job_id is not in this Project.")
+    if source is None:
+        source = fetch_one("SELECT * FROM training_jobs WHERE project_id = ? ORDER BY id DESC LIMIT 1", (project_id,))
+    name_suffix = "軽量確認3Epoch" if preset_id == PILOT_PRESET_ID else "標準6Epoch"
     job_id = create_job(
         {
             "project_id": project_id,
@@ -850,8 +856,13 @@ def project_detail(request: Request, project_id: int) -> HTMLResponse:
 
 
 @app.post("/projects/{project_id}/create-preset-job")
-def project_create_preset_job(project_id: int, preset_id: str = Form(...), skip_reason: str = Form("")) -> RedirectResponse:
-    job_id = create_project_preset_job(project_id, preset_id, skip_reason)
+def project_create_preset_job(
+    project_id: int,
+    preset_id: str = Form(...),
+    skip_reason: str = Form(""),
+    source_job_id: str = Form(""),
+) -> RedirectResponse:
+    job_id = create_project_preset_job(project_id, preset_id, skip_reason, int(source_job_id) if source_job_id.strip() else None)
     return RedirectResponse(f"/jobs/{job_id}/edit", status_code=303)
 
 
@@ -859,6 +870,15 @@ def project_create_preset_job(project_id: int, preset_id: str = Form(...), skip_
 def project_select_job(project_id: int, job_id: int) -> RedirectResponse:
     update_project_selected_from_job(project_id, job_id)
     return RedirectResponse(f"/projects/{project_id}", status_code=303)
+
+
+@app.post("/jobs/{job_id}/sync-project-selection")
+def job_sync_project_selection(job_id: int) -> RedirectResponse:
+    job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
+    if job is None or not job["project_id"]:
+        raise HTTPException(status_code=400, detail="この学習ジョブはProjectに紐づいていません。")
+    update_project_selected_from_job(int(job["project_id"]), job_id)
+    return RedirectResponse(f"/jobs/{job_id}", status_code=303)
 
 
 @app.get("/maintenance", response_class=HTMLResponse)
@@ -1384,13 +1404,14 @@ def jobs_list(request: Request) -> HTMLResponse:
 
 
 @app.get("/jobs/new", response_class=HTMLResponse)
-def job_new(request: Request) -> HTMLResponse:
+def job_new(request: Request, project_id: str = Query("")) -> HTMLResponse:
     datasets = fetch_all("SELECT * FROM datasets ORDER BY id DESC")
     presets = preset_option_rows(fetch_all("SELECT * FROM presets ORDER BY model_family DESC, name"))
     projects = fetch_all("SELECT * FROM lora_projects WHERE status != 'archived' ORDER BY updated_at DESC, id DESC")
     dataset_versions = fetch_all("SELECT * FROM dataset_versions ORDER BY dataset_id, version_no DESC")
     sample_prompt_templates = fetch_all("SELECT * FROM sample_prompt_templates ORDER BY is_builtin DESC, name")
     trigger_infos = {row["dataset_id"]: row for row in fetch_all("SELECT * FROM dataset_analysis")}
+    selected_project = fetch_one("SELECT * FROM lora_projects WHERE id = ?", (int(project_id),)) if project_id.strip() else None
     return render(
         request,
         "job_create.html",
@@ -1401,6 +1422,8 @@ def job_new(request: Request) -> HTMLResponse:
         default_preset_id=DEFAULT_JOB_PRESET_ID,
         sample_prompt_templates=sample_prompt_templates,
         trigger_infos=trigger_infos,
+        selected_project=selected_project,
+        selected_project_id=int(project_id) if project_id.strip() else None,
         available_models=list_available_models(),
         default_model_path=str(settings.ROOT_DIR / "models"),
         default_project_path=str(settings.ROOT_DIR),

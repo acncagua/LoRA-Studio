@@ -7,7 +7,7 @@
 <section>
   <p class="notice">
     運用ベータでは、いきなり長時間学習へ進まず、データセット確認、短時間テスト、画像評価、外部検証を小さく回す流れをおすすめします。
-    軽量確認は毎回必須ではありません。初回や新しい条件で不安があるときの安全確認として使います。
+    結合確認は初回環境確認専用です。通常運用では、事前確認がOKで同条件の完走実績があるなら、軽量確認をスキップして標準6Epochの学習ジョブへ進めます。
   </p>
 </section>
 
@@ -27,11 +27,11 @@
   <div>
     <h2>学習に進む</h2>
     <ol class="workflow-list">
-      <li><strong>結合確認</strong><br>初回環境確認用です。sd-scripts起動、LoRA出力、サンプル生成、DB取り込みが通るか短時間で確認します。</li>
+      <li><strong>結合確認</strong><br>初回専用の環境確認です。sd-scripts起動、LoRA出力、サンプル生成、DB取り込みが通るか短時間で確認します。通常のLoRA作成では毎回実行しません。</li>
       <li><strong>ファイル準備</strong><br>ジョブ詳細で設定ファイル、sample prompt、command argvを生成します。</li>
       <li><strong>事前確認</strong><br>base model、dataset、caption、設定ファイル、command argvを確認します。</li>
       <li><strong>軽量確認の実行判定</strong><br>初回、新dataset、新base model、新preset、sd-scripts更新後は軽量確認推奨です。同条件の完走実績があり事前確認がOKならスキップできます。</li>
-      <li><strong>軽量確認 3 Epoch または 標準 6 Epochへ進む</strong><br>不安があれば軽量確認を挟み、動作確認済みなら標準学習へ直行します。</li>
+      <li><strong>軽量確認 3 Epoch または 標準 6 Epochへ進む</strong><br>不安があれば軽量確認を挟み、動作確認済みなら標準6Epochの学習ジョブを作成して直行します。</li>
       <li><strong>標準 6 Epoch</strong><br>本番寄りの短時間テストとして、複数epochの変化と採用候補を見ます。</li>
     </ol>
   </div>

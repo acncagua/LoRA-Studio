@@ -1,11 +1,11 @@
 {% extends "base.html" %}{% block content %}
 <nav class="breadcrumbs"><a href="/">ダッシュボード</a><a href="/projects">Project一覧</a><span>Project #{{ project.id }}</span></nav>
 <header class="page-head">
-  <h1>Project #{{ project.id }} {{ project.name }}</h1>
+  <h1>Project（LoRA作成単位） #{{ project.id }} {{ project.name }}</h1>
   <div class="actions">
-    {% if project.selected_job_id %}<a class="button" href="/jobs/{{ project.selected_job_id }}">採用ジョブを開く</a>{% endif %}
+    {% if project.selected_job_id %}<a class="button" href="/jobs/{{ project.selected_job_id }}">採用中の学習ジョブを開く</a>{% endif %}
     {% if project.selected_lora_profile_id %}<a class="button" href="/lora-library/{{ project.selected_lora_profile_id }}/edit">LoRAプロファイル</a>{% endif %}
-    <a class="button" href="/jobs/new">Projectにジョブ追加</a>
+    <a class="button" href="/jobs/new?project_id={{ project.id }}">このProjectに学習ジョブを追加</a>
   </div>
 </header>
 
@@ -18,14 +18,14 @@
       <dt>データセットバージョン</dt><dd>{% if project.current_dataset_version_id %}v{{ project.dataset_version_no or '?' }} (#{{ project.current_dataset_version_id }}){% else %}-{% endif %}</dd>
       <dt>トリガー</dt><dd>{{ project.trigger_word or '-' }}</dd>
       <dt>ベースモデル</dt><dd>{{ project.base_model_path or '-' }}</dd>
-      <dt>採用ジョブ</dt><dd>{% if project.selected_job_id %}<a href="/jobs/{{ project.selected_job_id }}">#{{ project.selected_job_id }} {{ project.selected_job_name or '' }}</a>{% else %}-{% endif %}</dd>
+      <dt>採用学習ジョブ</dt><dd>{% if project.selected_job_id %}<a href="/jobs/{{ project.selected_job_id }}">#{{ project.selected_job_id }} {{ project.selected_job_name or '' }}</a>{% else %}-{% endif %}</dd>
       <dt>採用LoRA</dt><dd>{{ project.selected_model_path or '-' }}</dd>
       <dt>推奨weight</dt><dd>{{ project.recommended_weight_min if project.recommended_weight_min is not none else '-' }} - {{ project.recommended_weight_max if project.recommended_weight_max is not none else '-' }}</dd>
       <dt>メモ</dt><dd>{{ project.memo or '-' }}</dd>
     </dl>
   </div>
   <div>
-    <h2>ワークフロー状況</h2>
+    <h2>ワークフロー状態</h2>
     <table>
       <thead><tr><th>ステップ</th><th>状態</th></tr></thead>
       <tbody>
@@ -44,14 +44,14 @@
   <div class="actions">
     <form method="post" action="/projects/{{ project.id }}/create-preset-job">
       <input type="hidden" name="preset_id" value="sdxl_2d_face_pilot_3epoch">
-      <button type="submit">{{ pilot_guidance.button_prefix }}軽量確認 3 Epochを作成</button>
+      <button type="submit">{{ pilot_guidance.button_prefix }}軽量確認3Epochの学習ジョブを作成</button>
     </form>
     <form method="post" action="/projects/{{ project.id }}/create-preset-job" class="inline-form">
       <input type="hidden" name="preset_id" value="sdxl_2d_face_standard_6epoch">
       <label>軽量確認スキップ理由
         <input name="skip_reason" placeholder="例: 事前確認OK、同一base modelで完走実績ありのため軽量確認をスキップ">
       </label>
-      <button type="submit">{% if pilot_guidance.label in ['REQUIRED', 'RECOMMENDED'] %}理解して標準 6 Epochへ進む{% else %}標準 6 Epochへ進む{% endif %}</button>
+      <button type="submit">{% if pilot_guidance.label in ['REQUIRED', 'RECOMMENDED'] %}理解して標準6Epochの学習ジョブを作成{% else %}標準6Epochの学習ジョブを作成{% endif %}</button>
     </form>
   </div>
 </section>
@@ -59,13 +59,13 @@
 <section id="training-jobs">
   <h2>学習ジョブ履歴</h2>
   <table>
-    <thead><tr><th>ID</th><th>ジョブ名</th><th>プリセット</th><th>状態</th><th>epoch/step</th><th>採用epoch</th><th>health</th><th>操作</th></tr></thead>
+    <thead><tr><th>ID</th><th>学習ジョブ名</th><th>プリセット</th><th>状態</th><th>epoch/step</th><th>採用epoch</th><th>health</th><th>操作</th></tr></thead>
     <tbody>
       {% for job in jobs %}
       <tr>
         <td><a href="/jobs/{{ job.id }}">#{{ job.id }}</a></td>
         <td>{{ job.name }}</td>
-        <td>{{ job.preset_name or job.preset_id or '-' }}</td>
+        <td>{{ display_preset_name(job.preset_id) if job.preset_id else job.preset_name or '-' }}</td>
         <td><span class="label {{ job.status }}">{{ status_labels.get(job.status, job.status) }}</span></td>
         <td>{{ job.max_train_epochs }}</td>
         <td>{{ job.selected_epoch if job.selected_epoch is not none else job.adopted_epoch if job.adopted_epoch is not none else '-' }}</td>
@@ -73,12 +73,12 @@
         <td>
           <div class="actions compact-actions">
             <a class="button small-button" href="/jobs/{{ job.id }}">開く</a>
-            {% if job.selected_output_id %}<form method="post" action="/projects/{{ project.id }}/select-job/{{ job.id }}"><button class="small-button" type="submit">Project採用にする</button></form>{% endif %}
+            {% if job.selected_output_id %}<form method="post" action="/projects/{{ project.id }}/select-job/{{ job.id }}"><button class="small-button" type="submit">Project採用に反映</button></form>{% endif %}
           </div>
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="8" class="muted">このProjectのジョブはまだありません。</td></tr>
+      <tr><td colspan="8" class="muted">このProjectの学習ジョブはまだありません。</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -128,7 +128,7 @@
         <td>{% if rec.status != 'job_created' %}<form method="post" action="/recommendations/{{ rec.id }}/create-draft"><button type="submit">下書きジョブ作成</button></form>{% endif %}</td>
       </tr>
       {% else %}
-      <tr><td colspan="6" class="muted">提案はまだありません。Project内のジョブ詳細から生成できます。</td></tr>
+      <tr><td colspan="6" class="muted">提案はまだありません。Project内の学習ジョブ詳細から生成できます。</td></tr>
       {% endfor %}
     </tbody>
   </table>

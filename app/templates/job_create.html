@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block content %}
-<header class="page-head"><h1>ジョブ作成</h1></header>
+<header class="page-head"><h1>学習ジョブ作成</h1></header>
 
 <section>
   <h2>データセットのトリガー整合性</h2>
@@ -22,15 +22,15 @@
 
 <form method="post" action="/jobs" class="form-grid wide">
   <fieldset class="form-fieldset wide-field">
-    <legend>Project</legend>
-    <p class="muted">Projectは1つのLoRA作成作業です。ジョブはProject内の1回の学習実行として保存されます。</p>
-    <label><input type="radio" name="project_mode" value="new" checked> 新しいProjectを作成</label>
-    <label><input type="radio" name="project_mode" value="existing"> 既存Projectに追加</label>
+    <legend>Project（LoRA作成単位）</legend>
+    <p class="muted">Projectは1つのLoRA作成作業です。学習ジョブはProject内の1回の学習実行として保存されます。</p>
+    <label><input type="radio" name="project_mode" value="new" {{ 'checked' if not selected_project else '' }}> 新しいProjectを作成</label>
+    <label><input type="radio" name="project_mode" value="existing" {{ 'checked' if selected_project else '' }}> 既存Projectに追加</label>
     <label>既存Project
       <select name="project_id">
         <option value="">選択なし</option>
         {% for project in projects %}
-        <option value="{{ project.id }}">#{{ project.id }} {{ project.name }} / {{ project.trigger_word or '-' }}</option>
+        <option value="{{ project.id }}" {{ 'selected' if selected_project_id == project.id else '' }}>#{{ project.id }} {{ project.name }} / {{ project.trigger_word or '-' }}</option>
         {% endfor %}
       </select>
     </label>
@@ -39,7 +39,7 @@
     <label>Projectトリガー<input name="project_trigger_word" placeholder="例: zuihou"></label>
   </fieldset>
 
-  <label>ジョブ名<input name="name" required></label>
+  <label>学習ジョブ名<input name="name" required value="{{ (selected_project.name ~ ' 学習ジョブ') if selected_project else '' }}"></label>
   <label>データセット<select name="dataset_id" required>{% for dataset in datasets %}<option value="{{ dataset.id }}">#{{ dataset.id }} {{ dataset.name }}</option>{% endfor %}</select></label>
   <label>データセットバージョン
     <select name="dataset_version_id">
@@ -92,6 +92,6 @@
   </label>
   <label>出力名<input name="output_name"></label>
   <label>メモ<textarea name="memo"></textarea></label>
-  <button type="submit">下書きを作成</button>
+  <button type="submit">学習ジョブの下書きを作成</button>
 </form>
 {% endblock %}
