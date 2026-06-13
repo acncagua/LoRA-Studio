@@ -59,6 +59,24 @@
   </div>
 </section>
 
+<section>
+  <h2>Projectストレージ</h2>
+  {% if storage_summary.onedrive_warning %}
+  <p class="notice warning">{{ storage_summary.onedrive_warning }}</p>
+  {% endif %}
+  <div class="summary-grid">
+    <div><span>合計</span><strong>{{ storage_summary.total_size_label }}</strong></div>
+    <div><span>モデル出力</span><strong>{{ storage_summary.model_size_label }}</strong></div>
+    <div><span>サンプル</span><strong>{{ storage_summary.sample_size_label }}</strong></div>
+    <div><span>logs/config/reports</span><strong>{{ storage_summary.support_size_label }}</strong></div>
+    <div><span>整理候補</span><strong>{{ storage_summary.cleanup_candidate_size_label }}</strong></div>
+  </div>
+  <div class="actions">
+    <a class="button danger" href="/projects/{{ project.id }}/cleanup?mode=unselected_models">このProjectの未採用LoRA削除Preview</a>
+    <a class="button danger" href="/projects/{{ project.id }}/cleanup?mode=failed_outputs">このProjectの失敗/停止出力削除Preview</a>
+  </div>
+</section>
+
 <section id="training-jobs">
   <h2>学習ジョブ履歴</h2>
   <table>

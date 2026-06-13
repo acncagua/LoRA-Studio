@@ -275,6 +275,27 @@ exports/selected_loras/
 
 `/jobs` のフィルタで `有効`、`下書き`、`準備済み`、`実行中`、`完了`、`失敗`、`アーカイブ`、`削除済み`、`すべて` を切り替えられます。`整理候補` には古い下書き、準備済み未実行、成果物なしの失敗/停止、結合確認、未採用の軽量確認などを表示します。不要なものはアーカイブ、未実行で不要なものは削除PreviewからDBのみ削除を選びます。
 
+## runsファイル整理とStorage Usage
+
+LoRA学習ではepochごとに `.safetensors` とsample画像が出るため、`runs/` はすぐ大きくなります。採用LoRAを `exports/selected_loras/` やStable Diffusion側のLoRAフォルダへ移した後は、runs側の未採用LoRAや失敗Jobの出力を整理できます。
+
+`ストレージ` 画面では、以下を確認できます。
+
+- `runs` / `exports` / `backups` / `Trash` の合計容量。
+- モデル出力、sample画像、reports/logs/configの内訳。
+- Job別のモデル容量、sample容量、ログ/設定容量、採用LoRA有無、Export有無、cleanup候補。
+
+Job詳細の `runsファイル整理` では、必ずPreviewを見てから実行します。
+
+- `未採用LoRA削除Preview`: `training_outputs.selected = 0` のモデルだけを対象にします。採用LoRAは対象外です。
+- `Export済み採用LoRAのruns側削除Preview`: Export先が存在し、sha256一致が確認できている場合だけ有効です。DBにはExport先とhash確認時刻を残します。
+- `失敗/停止出力削除Preview`: failed / stoppedで採用LoRAがないJobのモデル出力を整理するためのPreviewです。
+- `Sample Cleanup Preview`: sample画像をTrashへ移動します。必要なら先にContact Sheetを出力してください。
+
+削除操作は初期版では即完全削除ではなく、`trash/files/YYYYMMDD_HHMMSS/` へ移動します。移動履歴は `file_cleanup_history` に残り、Storage画面のTrash一覧で確認できます。`Purge Trash` を押すとTrash内の実ファイルを完全削除します。
+
+OneDrive配下で使っている場合は注意してください。LoRA-Studioのフォルダや `runs/` がOneDrive配下にあると、削除やTrash移動がクラウド側にも反映される可能性があります。また、大容量のrunsをOneDrive配下に置くと同期負荷が高くなります。
+
 ## Validation Packと実生成環境での手動検証
 
 Job詳細の `Validation Pack出力` は、採用済みLoRAをreForge / WebUIで検証するためのファイル一式を `exports/validation_packs/job_xxxxxx/` に出力します。Packには以下が含まれます。

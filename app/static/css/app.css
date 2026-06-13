@@ -44,10 +44,12 @@ nav a:hover { background: #30403b; }
 h1 { font-size: 30px; margin: 0; }
 h2 { font-size: 18px; margin: 28px 0 12px; }
 h3 { font-size: 15px; margin: 22px 0 6px; }
-.metric-grid, .panel-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 12px; }
+.metric-grid, .panel-grid, .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 12px; }
 .panel-grid { grid-template-columns: repeat(2, minmax(260px, 1fr)); }
-.metric-grid div, .panel-grid > div, section > form { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; }
-.metric-grid span { display: block; font-size: 32px; font-weight: 700; }
+.metric-grid div, .panel-grid > div, .summary-grid div, section > form { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; }
+.metric-grid span, .summary-grid span { display: block; color: var(--muted); font-size: 13px; }
+.metric-grid strong, .summary-grid strong { display: block; font-size: 24px; line-height: 1.2; margin-top: 4px; overflow-wrap: anywhere; }
+.metric-grid span { font-size: 32px; font-weight: 700; color: var(--ink); }
 .metric-grid small, .muted { color: var(--muted); }
 section { min-width: 0; overflow-x: auto; }
 table { width: 100%; min-width: min(720px, 100%); border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }

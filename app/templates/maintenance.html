@@ -44,6 +44,20 @@
 </section>
 
 <section>
+  <h2>ストレージ</h2>
+  {% if storage.onedrive_warning %}
+  <p class="notice warning">{{ storage.onedrive_warning }}</p>
+  {% endif %}
+  <div class="summary-grid">
+    <div><span>runs</span><strong>{{ storage.totals.runs.label }}</strong></div>
+    <div><span>モデル出力</span><strong>{{ storage.totals.model_outputs.label }}</strong></div>
+    <div><span>サンプル画像</span><strong>{{ storage.totals.sample_images.label }}</strong></div>
+    <div><span>Trash</span><strong>{{ storage.totals.trash.label }}</strong></div>
+  </div>
+  <p><a class="button" href="/storage">ストレージ使用量を開く</a></p>
+</section>
+
+<section>
   <h2>整理候補</h2>
   <p class="muted">古い下書き、未実行の準備済み、成果物なしの失敗/停止、結合確認、未採用の軽量確認などです。</p>
   <table>

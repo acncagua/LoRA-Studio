@@ -31,6 +31,20 @@ from app.services.image_store import (
 from app.services.maintenance import create_app_backup, export_diagnostics, maintenance_summary
 from app.services.output_collector import collect_job_results
 from app.services.recommendations import create_draft_job_from_recommendation, list_recommendations, regenerate_recommendations, set_recommendation_status, write_recommendation_report
+from app.services.storage_cleanup import (
+    cleanup_outputs,
+    cleanup_project_outputs,
+    cleanup_samples,
+    exported_selected_preview,
+    failed_outputs_preview,
+    format_bytes as storage_format_bytes,
+    project_cleanup_preview,
+    project_storage_summary,
+    purge_trash,
+    sample_cleanup_preview,
+    storage_usage,
+    unselected_model_preview,
+)
 from app.services.training_runner import read_log_tail, reconcile_stale_running_jobs, start_job, stop_job, validate_job_ready
 from app.services.validation_runs import (
     apply_suggestion_to_profile,
@@ -878,7 +892,8 @@ def cleanup_job_candidates(limit: int = 30) -> list[dict[str, Any]]:
     rows = fetch_all(
         """
         SELECT j.*, p.name AS preset_name,
-               (SELECT COUNT(*) FROM training_outputs o WHERE o.job_id = j.id) AS output_count
+               (SELECT COUNT(*) FROM training_outputs o WHERE o.job_id = j.id AND COALESCE(o.deleted_at, '') = '') AS output_count,
+               EXISTS(SELECT 1 FROM training_outputs o WHERE o.job_id = j.id AND o.selected = 1 AND COALESCE(o.deleted_at, '') = '') AS has_selected_output
         FROM training_jobs j
         LEFT JOIN presets p ON p.id = j.preset_id
         WHERE j.archived_at IS NULL
@@ -886,6 +901,8 @@ def cleanup_job_candidates(limit: int = 30) -> list[dict[str, Any]]:
           AND (
               j.status IN ('draft', 'prepared', 'prepared_dirty')
               OR (j.status IN ('failed', 'stopped') AND COALESCE(j.output_model_count, 0) = 0)
+              OR (j.status IN ('failed', 'stopped') AND COALESCE(j.output_model_count, 0) > 0
+                  AND NOT EXISTS(SELECT 1 FROM training_outputs o WHERE o.job_id = j.id AND o.selected = 1 AND COALESCE(o.deleted_at, '') = ''))
               OR j.preset_id = ?
               OR (LOWER(COALESCE(j.name, '') || ' ' || COALESCE(j.preset_id, '')) LIKE '%pilot%' AND j.adopted_model_path IS NULL)
               OR LOWER(COALESCE(j.name, '')) LIKE '%test%'
@@ -902,6 +919,8 @@ def cleanup_job_candidates(limit: int = 30) -> list[dict[str, Any]]:
             reason = "未実行の下書き/準備済みです。不要なら削除できます。"
         elif row["status"] in {"failed", "stopped"} and int(row["output_count"] or 0) == 0:
             reason = "成果物がない失敗/停止ジョブです。"
+        elif row["status"] in {"failed", "stopped"} and not row["has_selected_output"]:
+            reason = "採用LoRAがない失敗/停止ジョブです。出力モデルやサンプルの整理候補です。"
         elif row["preset_id"] == INTEGRATION_SMOKE_PRESET_ID:
             reason = "結合確認ジョブです。完了後はアーカイブ候補です。"
         elif "pilot" in ((row["preset_id"] or "") + " " + (row["name"] or "")).lower():
@@ -1072,6 +1091,7 @@ def project_detail(request: Request, project_id: int) -> HTMLResponse:
         recommendations=recommendations,
         workflow_status=project_workflow_status(project, jobs, validation_runs, recommendations),
         pilot_guidance=pilot_recommendation(project),
+        storage_summary=project_storage_summary(project_id),
         project_status_labels=PROJECT_STATUS_LABELS,
         status_labels=STATUS_LABELS,
     )
@@ -1169,10 +1189,12 @@ def job_sync_project_selection(job_id: int) -> RedirectResponse:
 
 @app.get("/maintenance", response_class=HTMLResponse)
 def maintenance(request: Request, backup_path: str = "", diagnostics_path: str = "") -> HTMLResponse:
+    usage = storage_usage()
     return render(
         request,
         "maintenance.html",
         summary=maintenance_summary(),
+        storage=usage,
         cleanup_candidates=cleanup_job_candidates(limit=20),
         backup_path=backup_path,
         diagnostics_path=diagnostics_path,
@@ -1189,6 +1211,17 @@ def maintenance_backup() -> RedirectResponse:
 def maintenance_diagnostics() -> RedirectResponse:
     diagnostics_path = export_diagnostics()
     return RedirectResponse(f"/maintenance?diagnostics_path={quote(str(diagnostics_path))}", status_code=303)
+
+
+@app.get("/storage", response_class=HTMLResponse)
+def storage_page(request: Request) -> HTMLResponse:
+    return render(request, "storage_usage.html", storage=storage_usage(), status_labels=STATUS_LABELS)
+
+
+@app.post("/storage/trash/purge")
+def storage_purge_trash() -> RedirectResponse:
+    purged = purge_trash()
+    return RedirectResponse(f"/storage?purged={quote(storage_format_bytes(purged))}", status_code=303)
 
 
 @app.get("/workflow", response_class=HTMLResponse)
@@ -2302,7 +2335,76 @@ def job_export_selected_lora(job_id: int) -> RedirectResponse:
     ensure_selected_lora_profile(job_id)
     result = export_selected_lora(job_id)
     ensure_selected_lora_profile(job_id)
-    return RedirectResponse(f"/jobs/{job_id}?exported={result['directory']}", status_code=303)
+    suffix = " / hash一致" if result.get("hash_matched") else " / hash未確認"
+    return RedirectResponse(f"/jobs/{job_id}?exported={quote(str(result['directory']) + suffix)}", status_code=303)
+
+
+@app.get("/jobs/{job_id}/cleanup/unselected-models", response_class=HTMLResponse)
+def job_cleanup_unselected_preview(request: Request, job_id: int) -> HTMLResponse:
+    return render(request, "job_cleanup_preview.html", preview=unselected_model_preview(job_id))
+
+
+@app.post("/jobs/{job_id}/cleanup/unselected-models")
+def job_cleanup_unselected(job_id: int) -> RedirectResponse:
+    result = cleanup_outputs(job_id, "unselected_models")
+    return RedirectResponse(f"/jobs/{job_id}?exported={quote('未採用LoRAをTrashへ移動: ' + str(result['moved']) + '件 / ' + result['bytes_label'])}", status_code=303)
+
+
+@app.get("/jobs/{job_id}/cleanup/exported-selected", response_class=HTMLResponse)
+def job_cleanup_exported_selected_preview(request: Request, job_id: int) -> HTMLResponse:
+    return render(request, "job_cleanup_preview.html", preview=exported_selected_preview(job_id))
+
+
+@app.post("/jobs/{job_id}/cleanup/exported-selected")
+def job_cleanup_exported_selected(job_id: int) -> RedirectResponse:
+    try:
+        result = cleanup_outputs(job_id, "exported_selected")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(f"/jobs/{job_id}?exported={quote('Export済み採用LoRAのruns側コピーをTrashへ移動: ' + str(result['moved']) + '件')}", status_code=303)
+
+
+@app.get("/jobs/{job_id}/cleanup/failed-outputs", response_class=HTMLResponse)
+def job_cleanup_failed_outputs_preview(request: Request, job_id: int) -> HTMLResponse:
+    return render(request, "job_cleanup_preview.html", preview=failed_outputs_preview(job_id))
+
+
+@app.post("/jobs/{job_id}/cleanup/failed-outputs")
+def job_cleanup_failed_outputs(job_id: int) -> RedirectResponse:
+    result = cleanup_outputs(job_id, "failed_outputs")
+    return RedirectResponse(f"/jobs/{job_id}?exported={quote('失敗/停止ジョブの出力をTrashへ移動: ' + str(result['moved']) + '件 / ' + result['bytes_label'])}", status_code=303)
+
+
+@app.get("/jobs/{job_id}/cleanup/samples", response_class=HTMLResponse)
+def job_cleanup_samples_preview(request: Request, job_id: int, action: str = Query("delete_individual")) -> HTMLResponse:
+    return render(request, "job_cleanup_preview.html", preview=sample_cleanup_preview(job_id, action))
+
+
+@app.post("/jobs/{job_id}/cleanup/samples")
+def job_cleanup_samples(job_id: int, action: str = Form("delete_individual")) -> RedirectResponse:
+    try:
+        result = cleanup_samples(job_id, action)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(f"/jobs/{job_id}?exported={quote('サンプル画像をTrashへ移動: ' + str(result['moved']) + '件 / ' + result['bytes_label'])}", status_code=303)
+
+
+@app.get("/projects/{project_id}/cleanup", response_class=HTMLResponse)
+def project_cleanup_preview_page(request: Request, project_id: int, mode: str = Query("unselected_models")) -> HTMLResponse:
+    try:
+        preview = project_cleanup_preview(project_id, mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return render(request, "project_cleanup_preview.html", preview=preview)
+
+
+@app.post("/projects/{project_id}/cleanup")
+def project_cleanup(project_id: int, mode: str = Form(...)) -> RedirectResponse:
+    try:
+        result = cleanup_project_outputs(project_id, mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(f"/projects/{project_id}?cleanup={quote(str(result['moved']) + '件 / ' + result['bytes_label'])}", status_code=303)
 
 
 @app.post("/jobs/{job_id}/export-validation-pack")

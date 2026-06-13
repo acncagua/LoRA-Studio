@@ -109,6 +109,13 @@
     {% if dataset %}<dl><dt>名前</dt><dd>{{ dataset.name }}</dd><dt>画像</dt><dd>{{ dataset.image_count }}</dd><dt>パス</dt><dd>{{ dataset.path }}</dd></dl>{% endif %}
     <h2>採用LoRA</h2>
     <p>{{ job.adopted_model_path or '未選択' }}</p>
+    {% if selected_output %}
+    <dl>
+      <dt>Export済み</dt><dd>{{ 'yes' if selected_output.external_copy_path else 'no' }}</dd>
+      <dt>Export先</dt><dd>{{ selected_output.external_copy_path or '-' }}</dd>
+      <dt>hash一致</dt><dd>{{ 'yes' if selected_output.export_verified_at else 'no' }}</dd>
+    </dl>
+    {% endif %}
     {% if validation_pack_path %}<p class="muted">検証パック: {{ validation_pack_path }}</p>{% endif %}
     <form method="post" action="/jobs/{{ job.id }}/select-epoch" class="inline-form">
       <label>epochから採用LoRAを選択
@@ -130,6 +137,16 @@
     {% if action_state.archive %}<form method="post" action="/jobs/{{ job.id }}/archive" class="inline-form"><input name="archived_reason" placeholder="理由（任意）"><button type="submit">アーカイブ</button></form>{% endif %}
     {% if action_state.restore %}<form method="post" action="/jobs/{{ job.id }}/restore"><button type="submit">復元</button></form>{% endif %}
     <a class="button danger" href="/jobs/{{ job.id }}/delete-preview">削除Previewを開く</a>
+  </div>
+</section>
+<section>
+  <h2>runsファイル整理</h2>
+  <p class="muted">params、metrics、logs、reports、DB記録は残し、大きいモデル出力やsample画像だけを明示操作でTrashへ移動します。採用LoRAは通常の未採用LoRA整理では対象外です。</p>
+  <div class="actions">
+    <a class="button danger" href="/jobs/{{ job.id }}/cleanup/unselected-models">未採用LoRA削除Preview</a>
+    <a class="button danger" href="/jobs/{{ job.id }}/cleanup/exported-selected">Export済み採用LoRAのruns側削除Preview</a>
+    {% if job.status in ['failed', 'stopped'] %}<a class="button danger" href="/jobs/{{ job.id }}/cleanup/failed-outputs">失敗/停止出力削除Preview</a>{% endif %}
+    <a class="button danger" href="/jobs/{{ job.id }}/cleanup/samples">Sample Cleanup Preview</a>
   </div>
 </section>
 <section>
@@ -326,15 +343,15 @@
 <section id="outputs">
   <h2>出力LoRA</h2>
   <table>
-    <thead><tr><th>ID</th><th>Epoch</th><th>Step</th><th>サイズ</th><th>SHA256</th><th>採用</th><th>Metadataエラー</th><th>パス</th><th></th></tr></thead>
+    <thead><tr><th>ID</th><th>Epoch</th><th>Step</th><th>サイズ</th><th>SHA256</th><th>採用</th><th>Export</th><th>整理状態</th><th>Metadataエラー</th><th>パス</th><th></th></tr></thead>
     <tbody>
       {% for output in outputs %}
       <tr>
-        <td>#{{ output.id }}</td><td>{{ output.epoch or '-' }}</td><td>{{ output.step or '-' }}</td><td>{{ output.file_size or '-' }}</td><td>{{ output.sha256[:8] if output.sha256 else '-' }}</td><td>{{ '採用中' if output.selected else '' }}</td><td>{{ output.metadata_error or '-' }}</td><td>{{ output.file_path }}</td>
+        <td>#{{ output.id }}</td><td>{{ output.epoch or '-' }}</td><td>{{ output.step or '-' }}</td><td>{{ output.file_size or '-' }}</td><td>{{ output.sha256[:8] if output.sha256 else '-' }}</td><td>{{ '採用中' if output.selected else '' }}</td><td>{% if output.external_copy_path %}Export済み{% if output.export_verified_at %} / hash一致{% endif %}{% else %}-{% endif %}</td><td>{{ output.cleanup_status or '-' }}{% if output.deleted_at %} / deleted{% endif %}</td><td>{{ output.metadata_error or '-' }}</td><td>{{ output.file_path }}{% if output.external_copy_path %}<br><span class="muted">Export: {{ output.external_copy_path }}</span>{% endif %}</td>
         <td><form method="post" action="/jobs/{{ job.id }}/outputs/{{ output.id }}/select"><button type="submit">採用</button></form></td>
       </tr>
       {% else %}
-      <tr><td colspan="9" class="muted">LoRA出力はまだ取り込まれていません。</td></tr>
+      <tr><td colspan="11" class="muted">LoRA出力はまだ取り込まれていません。</td></tr>
       {% endfor %}
     </tbody>
   </table>

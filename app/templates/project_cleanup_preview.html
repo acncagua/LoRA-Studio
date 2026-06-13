@@ -1,0 +1,59 @@
+{% extends "base.html" %}{% block content %}
+<nav class="breadcrumbs"><a href="/">ダッシュボード</a><a href="/projects">Project一覧</a><a href="/projects/{{ preview.project.id }}">Project #{{ preview.project.id }}</a><span>Cleanup Preview</span></nav>
+<header class="page-head">
+  <h1>{{ preview.title }}</h1>
+  <div class="actions"><a class="button" href="/projects/{{ preview.project.id }}">Projectへ戻る</a></div>
+</header>
+
+{% if preview.onedrive_warning %}
+<p class="notice warning">{{ preview.onedrive_warning }}</p>
+{% endif %}
+
+<section class="panel-grid">
+  <div>
+    <h2>対象</h2>
+    <dl>
+      <dt>Project</dt><dd>#{{ preview.project.id }} {{ preview.project.name }}</dd>
+      <dt>Cleanup種類</dt><dd>{{ preview.mode }}</dd>
+      <dt>対象ファイル</dt><dd>{{ preview.files|length }} 件</dd>
+      <dt>合計サイズ</dt><dd>{{ preview.total_size_label }}</dd>
+    </dl>
+  </div>
+  <div>
+    <h2>方針</h2>
+    <p class="muted">Project内の学習ジョブを横断して、対象ファイルだけをアプリ内Trashへ移動します。Dataset画像、caption、base model、sd-scripts環境は削除しません。</p>
+  </div>
+</section>
+
+<section>
+  <h2>対象ファイル</h2>
+  <table>
+    <thead><tr><th>ID</th><th>種別</th><th>採用</th><th>サイズ</th><th>存在</th><th>パス</th></tr></thead>
+    <tbody>
+      {% for file in preview.files %}
+      <tr>
+        <td>#{{ file.id }}</td>
+        <td>{{ file.kind }}</td>
+        <td>{{ '採用中' if file.selected else '-' }}</td>
+        <td>{{ file.size }}</td>
+        <td>{{ 'あり' if file.exists else 'なし' }}</td>
+        <td>{{ file.path }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">対象ファイルはありません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>実行</h2>
+  <div class="actions">
+    <form method="post" action="/projects/{{ preview.project.id }}/cleanup">
+      <input type="hidden" name="mode" value="{{ preview.mode }}">
+      <button class="danger" type="submit" {% if preview.files|length == 0 %}disabled{% endif %}>対象ファイルをTrashへ移動</button>
+    </form>
+    <a class="button" href="/projects/{{ preview.project.id }}">キャンセル</a>
+  </div>
+</section>
+{% endblock %}

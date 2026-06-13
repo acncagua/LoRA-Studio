@@ -17,6 +17,7 @@ runs/comparisons/
 external/sd-scripts/
 exports/*
 backups/
+trash/
 
 # OS / editor
 .DS_Store

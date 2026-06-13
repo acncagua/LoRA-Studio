@@ -1,0 +1,90 @@
+{% extends "base.html" %}{% block content %}
+<header class="page-head">
+  <h1>ストレージ使用量</h1>
+  <div class="actions"><a class="button" href="/maintenance">メンテナンスへ戻る</a></div>
+</header>
+
+{% if request.query_params.get('purged') %}
+<p class="notice">Trashを完全削除しました: {{ request.query_params.get('purged') }}</p>
+{% endif %}
+{% if storage.onedrive_warning %}
+<p class="notice warning">{{ storage.onedrive_warning }}</p>
+{% endif %}
+
+<section class="panel-grid">
+  <div>
+    <h2>全体</h2>
+    <dl>
+      <dt>runs合計</dt><dd>{{ storage.totals.runs.label }}</dd>
+      <dt>exports合計</dt><dd>{{ storage.totals.exports.label }}</dd>
+      <dt>backups合計</dt><dd>{{ storage.totals.backups.label }}</dd>
+      <dt>Trash合計</dt><dd>{{ storage.totals.trash.label }}</dd>
+    </dl>
+  </div>
+  <div>
+    <h2>内訳</h2>
+    <dl>
+      <dt>モデル出力</dt><dd>{{ storage.totals.model_outputs.label }}</dd>
+      <dt>サンプル画像</dt><dd>{{ storage.totals.sample_images.label }}</dd>
+      <dt>reports / logs / config</dt><dd>{{ storage.totals.reports_logs_config.label }}</dd>
+    </dl>
+  </div>
+</section>
+
+<section>
+  <h2>ジョブ別容量</h2>
+  <table>
+    <thead><tr><th>ジョブ</th><th>状態</th><th>モデル</th><th>サンプル</th><th>ログ/設定</th><th>合計</th><th>採用LoRA</th><th>Export</th><th>整理候補</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for job in storage.jobs %}
+      <tr>
+        <td><a href="/jobs/{{ job.id }}">#{{ job.id }} {{ job.name }}</a></td>
+        <td><span class="label {{ job.status }}">{{ status_labels.get(job.status, job.status) }}</span></td>
+        <td>{{ job.model_size_label }}</td>
+        <td>{{ job.sample_size_label }}</td>
+        <td>{{ job.support_size_label }}</td>
+        <td>{{ job.total_size_label }}</td>
+        <td>{{ 'あり' if job.has_selected_output else 'なし' }}</td>
+        <td>{{ 'あり' if job.has_exported_output else 'なし' }}</td>
+        <td>{% if job.cleanup_candidate %}<span class="label warning">候補 {{ job.cleanup_candidate_size_label }}</span>{% else %}-{% endif %}</td>
+        <td>
+          <div class="actions compact-actions">
+            <a class="button small-button" href="/jobs/{{ job.id }}/cleanup/unselected-models">未採用LoRA</a>
+            {% if job.status in ['failed', 'stopped'] %}<a class="button small-button" href="/jobs/{{ job.id }}/cleanup/failed-outputs">失敗/停止出力</a>{% endif %}
+            <a class="button small-button" href="/jobs/{{ job.id }}/cleanup/samples">サンプル</a>
+          </div>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="10" class="muted">ジョブはまだありません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>Trash</h2>
+  <p class="muted">削除操作はまずTrashへ移動します。Purge Trashを押すと完全削除します。</p>
+  <form method="post" action="/storage/trash/purge" class="actions">
+    <button class="danger" type="submit">Trashを完全削除</button>
+  </form>
+  <table>
+    <thead><tr><th>ID</th><th>ジョブ</th><th>操作</th><th>サイズ</th><th>元パス</th><th>Trashパス</th><th>日時</th></tr></thead>
+    <tbody>
+      {% for item in storage.trash %}
+      <tr>
+        <td>#{{ item.id }}</td>
+        <td>{% if item.job_id %}<a href="/jobs/{{ item.job_id }}">#{{ item.job_id }}</a>{% else %}-{% endif %}</td>
+        <td>{{ item.memo or item.action }}</td>
+        <td>{{ item.file_size_label }}</td>
+        <td>{{ item.original_path }}</td>
+        <td>{{ item.trash_path }}{% if not item.trash_exists %} <span class="label warning">missing</span>{% endif %}</td>
+        <td>{{ item.created_at }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="muted">Trash履歴はまだありません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

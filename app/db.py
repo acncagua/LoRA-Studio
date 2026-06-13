@@ -156,7 +156,21 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "created_at": "TEXT",
         },
     )
-    ensure_columns(conn, "training_outputs", {"selected": "INTEGER NOT NULL DEFAULT 0", "memo": "TEXT", "metadata_error": "TEXT"})
+    ensure_columns(
+        conn,
+        "training_outputs",
+        {
+            "selected": "INTEGER NOT NULL DEFAULT 0",
+            "memo": "TEXT",
+            "metadata_error": "TEXT",
+            "deleted_at": "TEXT",
+            "archived_at": "TEXT",
+            "export_verified_at": "TEXT",
+            "external_copy_path": "TEXT",
+            "cleanup_status": "TEXT",
+            "delete_reason": "TEXT",
+        },
+    )
     ensure_columns(
         conn,
         "sample_images",
@@ -173,6 +187,8 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "failure_tags_json": "TEXT",
             "rubric_version": "TEXT",
             "memo": "TEXT",
+            "deleted_at": "TEXT",
+            "cleanup_status": "TEXT",
         },
     )
     ensure_columns(
@@ -267,6 +283,8 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             ON training_outputs(job_id, file_path);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_sample_images_job_path
             ON sample_images(job_id, image_path);
+        CREATE INDEX IF NOT EXISTS idx_file_cleanup_history_job
+            ON file_cleanup_history(job_id);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_training_metrics_job_step_tag
             ON training_metrics(job_id, step, raw_tag);
         CREATE INDEX IF NOT EXISTS idx_training_jobs_status
@@ -1330,12 +1348,20 @@ CREATE TABLE IF NOT EXISTS sample_images (
     width INTEGER, height INTEGER, cfg_scale REAL, steps INTEGER, rating INTEGER,
     rating_face INTEGER, rating_costume INTEGER, rating_style INTEGER,
     rating_stability INTEGER, rating_overall INTEGER, memo TEXT,
+    deleted_at TEXT, cleanup_status TEXT,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS training_outputs (
     id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, epoch INTEGER, step INTEGER,
     file_path TEXT NOT NULL, file_type TEXT NOT NULL, file_size INTEGER, sha256 TEXT,
-    selected INTEGER NOT NULL DEFAULT 0, memo TEXT, metadata_error TEXT, created_at TEXT NOT NULL
+    selected INTEGER NOT NULL DEFAULT 0, memo TEXT, metadata_error TEXT,
+    deleted_at TEXT, archived_at TEXT, export_verified_at TEXT, external_copy_path TEXT,
+    cleanup_status TEXT, delete_reason TEXT, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS file_cleanup_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER, project_id INTEGER,
+    action TEXT NOT NULL, original_path TEXT NOT NULL, trash_path TEXT,
+    file_size INTEGER, sha256 TEXT, created_at TEXT NOT NULL, memo TEXT
 );
 CREATE TABLE IF NOT EXISTS validation_results (
     id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, selected_output_id INTEGER,

@@ -1,0 +1,73 @@
+{% extends "base.html" %}{% block content %}
+<nav class="breadcrumbs"><a href="/">ダッシュボード</a><a href="/jobs">学習ジョブ一覧</a><a href="/jobs/{{ preview.job.id }}">学習ジョブ #{{ preview.job.id }}</a><span>Cleanup Preview</span></nav>
+<header class="page-head">
+  <h1>{{ preview.title }}</h1>
+  <div class="actions"><a class="button" href="/jobs/{{ preview.job.id }}">ジョブへ戻る</a></div>
+</header>
+
+{% if preview.onedrive_warning %}
+<p class="notice warning">{{ preview.onedrive_warning }}</p>
+{% endif %}
+
+<section class="panel-grid">
+  <div>
+    <h2>対象</h2>
+    <dl>
+      <dt>学習ジョブ</dt><dd>#{{ preview.job.id }} {{ preview.job.name }}</dd>
+      <dt>状態</dt><dd>{{ preview.job.status }}</dd>
+      <dt>削除対象</dt><dd>{{ preview.files|length }} 件</dd>
+      <dt>合計サイズ</dt><dd>{{ preview.total_size_label }}</dd>
+      <dt>採用LoRA</dt><dd>{{ preview.selected_count }} 件。採用LoRAは通常の未採用LoRA整理では対象外です。</dd>
+    </dl>
+  </div>
+  <div>
+    <h2>方針</h2>
+    <p class="muted">DB記録、params、metrics、logs、reportsは残します。ファイルは即完全削除ではなく、アプリ内Trashへ移動します。</p>
+    {% if preview.contact_sheet is defined %}
+      <p>Contact Sheet: {% if preview.contact_sheet_exists %}<code>{{ preview.contact_sheet }}</code>{% else %}<span class="label warning">未作成</span>{% endif %}</p>
+      {% if not preview.contact_sheet_exists %}<p class="notice warning">個別サンプルを消す前に、必要ならコンタクトシートを作成してください。</p>{% endif %}
+    {% endif %}
+    {% if not preview.can_execute %}<p class="notice warning">{{ preview.blocked_reason }}</p>{% endif %}
+  </div>
+</section>
+
+<section>
+  <h2>対象ファイル</h2>
+  <table>
+    <thead><tr><th>ID</th><th>種別</th><th>採用</th><th>サイズ</th><th>存在</th><th>パス</th></tr></thead>
+    <tbody>
+      {% for file in preview.files %}
+      <tr>
+        <td>#{{ file.id }}</td>
+        <td>{{ file.kind }}</td>
+        <td>{{ '採用中' if file.selected else '-' }}</td>
+        <td>{{ file.size }}</td>
+        <td>{{ 'あり' if file.exists else 'なし' }}</td>
+        <td>{{ file.path }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">削除対象ファイルはありません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>実行</h2>
+  <div class="actions">
+    {% if preview.action == 'unselected_models' %}
+    <form method="post" action="/jobs/{{ preview.job.id }}/cleanup/unselected-models"><button class="danger" type="submit" {% if not preview.can_execute or preview.files|length == 0 %}disabled{% endif %}>未採用LoRAをTrashへ移動</button></form>
+    {% elif preview.action == 'failed_outputs' %}
+    <form method="post" action="/jobs/{{ preview.job.id }}/cleanup/failed-outputs"><button class="danger" type="submit" {% if not preview.can_execute or preview.files|length == 0 %}disabled{% endif %}>失敗/停止ジョブの出力をTrashへ移動</button></form>
+    {% elif preview.action == 'exported_selected' %}
+    <form method="post" action="/jobs/{{ preview.job.id }}/cleanup/exported-selected"><button class="danger" type="submit" {% if not preview.can_execute or preview.files|length == 0 %}disabled{% endif %}>Export済み採用LoRAのruns側コピーをTrashへ移動</button></form>
+    {% else %}
+    <form method="post" action="/jobs/{{ preview.job.id }}/cleanup/samples">
+      <input type="hidden" name="action" value="{{ preview.action }}">
+      <button class="danger" type="submit" {% if not preview.can_execute or preview.files|length == 0 %}disabled{% endif %}>サンプル画像をTrashへ移動</button>
+    </form>
+    {% endif %}
+    <a class="button" href="/jobs/{{ preview.job.id }}">キャンセル</a>
+  </div>
+</section>
+{% endblock %}

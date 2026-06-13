@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from app import settings
-from app.db import fetch_all, fetch_one
+from app.db import connect, fetch_all, fetch_one, utc_now
 from app.services.output_collector import sha256_file
 
 VALIDATION_WEIGHTS = [0.4, 0.6, 0.8, 1.0]
@@ -70,7 +70,19 @@ def export_selected_lora(job_id: int) -> dict[str, str]:
     export_dir.mkdir(parents=True, exist_ok=True)
     exported_model = export_dir / source.name
     shutil.copy2(source, exported_model)
+    source_sha256 = output["sha256"] or sha256_file(source)
     sha256 = sha256_file(exported_model)
+    export_verified_at = utc_now() if source_sha256 == sha256 else None
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE training_outputs
+            SET external_copy_path = ?, export_verified_at = ?, cleanup_status = 'exported',
+                sha256 = COALESCE(sha256, ?)
+            WHERE id = ?
+            """,
+            (str(exported_model), export_verified_at, source_sha256, output["id"]),
+        )
     selected_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     info = {
         "job_id": job_id,
@@ -86,6 +98,8 @@ def export_selected_lora(job_id: int) -> dict[str, str]:
         "selected_model_path_exported": str(exported_model),
         "file_size": exported_model.stat().st_size,
         "sha256": sha256,
+        "source_sha256": source_sha256,
+        "hash_matched": source_sha256 == sha256,
         "health_label": summary["health_label"] if summary else None,
         "health_message": summary["health_message"] if summary else None,
         "selected_at": selected_at,
@@ -93,7 +107,7 @@ def export_selected_lora(job_id: int) -> dict[str, str]:
     }
     (export_dir / "selected_lora_info.json").write_text(json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8")
     (export_dir / "selected_lora_notes.md").write_text(selected_lora_notes(job, preset, summary, info, profile), encoding="utf-8")
-    return {"directory": str(export_dir), "model": str(exported_model), "info": str(export_dir / "selected_lora_info.json")}
+    return {"directory": str(export_dir), "model": str(exported_model), "info": str(export_dir / "selected_lora_info.json"), "hash_matched": source_sha256 == sha256}
 
 
 def write_validation_pack(job_id: int) -> dict[str, str]:
