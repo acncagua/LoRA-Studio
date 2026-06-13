@@ -35,6 +35,9 @@ a { color: var(--accent); text-decoration: none; }
 nav { display: grid; gap: 6px; }
 nav a { color: #dbe7e1; padding: 9px 10px; border-radius: 6px; line-height: 1.35; overflow-wrap: anywhere; }
 nav a:hover { background: #30403b; }
+.nav-group { display: grid; gap: 4px; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,.08); }
+.nav-group:last-child { border-bottom: 0; }
+.nav-heading { color: #8fb0a4; font-size: 11px; font-weight: 700; letter-spacing: 0; padding: 4px 10px 0; }
 .release { margin-top: auto; color: #b8c6bf; font-size: 12px; line-height: 1.5; }
 .content { margin-left: 220px; padding: 28px 34px 48px; min-width: 0; width: calc(100% - 220px); }
 .page-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }

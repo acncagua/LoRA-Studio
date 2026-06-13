@@ -58,19 +58,19 @@
 {% if project and job.status == 'prepared' and pilot_guidance %}
 <section>
   <h2>次に進む判断</h2>
-  <p>Pilot判定: <span class="label {{ pilot_guidance.label|lower }}">{{ pilot_guidance.label }}</span></p>
+  <p>軽量確認判定: <span class="label {{ pilot_guidance.label|lower }}">{{ pilot_guidance.label }}</span></p>
   <p>{{ pilot_guidance.reason }}</p>
   <div class="actions">
     <form method="post" action="/projects/{{ project.id }}/create-preset-job">
       <input type="hidden" name="preset_id" value="{{ pilot_preset_id }}">
-      <button type="submit">{{ pilot_guidance.button_prefix }}Pilot 3 Epochを作成</button>
+      <button type="submit">{{ pilot_guidance.button_prefix }}軽量確認 3 Epochを作成</button>
     </form>
     <form method="post" action="/projects/{{ project.id }}/create-preset-job" class="inline-form">
       <input type="hidden" name="preset_id" value="{{ standard_preset_id }}">
-      <label>Pilotスキップ理由
-        <input name="skip_reason" placeholder="例: Preflight OK、同一base modelで完走実績ありのためPilotスキップ">
+      <label>軽量確認スキップ理由
+        <input name="skip_reason" placeholder="例: 事前確認OK、同一base modelで完走実績ありのため軽量確認をスキップ">
       </label>
-      <button type="submit">{% if pilot_guidance.label in ['REQUIRED', 'RECOMMENDED'] %}理解してStandardへ進む{% else %}Standard 6 Epochへ進む{% endif %}</button>
+      <button type="submit">{% if pilot_guidance.label in ['REQUIRED', 'RECOMMENDED'] %}理解して標準へ進む{% else %}標準 6 Epochへ進む{% endif %}</button>
     </form>
   </div>
 </section>
@@ -366,7 +366,7 @@
       <form method="post" action="/jobs/{{ job.id }}/validation-runs" class="form-grid">
         <label>プリセット<select name="validation_preset_id">
           {% for preset in validation_presets %}
-          <option value="{{ preset.id }}" {{ 'selected' if selected_lora_profile and selected_lora_profile.default_validation_preset_id == preset.id else '' }}>{{ preset.name }} / {{ preset.expected_image_count }}枚</option>
+          <option value="{{ preset.id }}" {{ 'selected' if selected_lora_profile and selected_lora_profile.default_validation_preset_id == preset.id else '' }}>{{ display_validation_preset_name(preset) }} / {{ preset.expected_image_count }}枚</option>
           {% endfor %}
         </select></label>
         <label>ベースモデル<input name="base_model" value="{{ selected_lora_profile.base_model if selected_lora_profile else '' }}"></label>
@@ -492,7 +492,7 @@
   <div class="sample-grid">
     {% for image in validation_images %}
     <figure>
-      <img src="/validation-images/{{ image.id }}" alt="validation image {{ image.id }}">
+      <img src="/validation-images/{{ image.id }}" alt="検証画像 {{ image.id }}">
       <figcaption>#{{ image.id }} {{ image.validation_type or '-' }} / weight {{ image.lora_weights or '-' }}<br>{{ image.base_model or '-' }} / {{ image.sampler or '-' }}<br>顔 {{ image.rating_face or '-' }} 衣装 {{ image.rating_costume or '-' }} スタイル {{ image.rating_style or '-' }} 安定性 {{ image.rating_stability or '-' }} 総合 {{ image.rating_overall or '-' }}<br>強さ {{ image.strength_label or '-' }} / 過学習 {{ image.overfit_level or '-' }} / 採用 {{ image.adoption_label or '-' }}<br>{{ image.memo or '' }}</figcaption>
     </figure>
     {% else %}

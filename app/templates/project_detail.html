@@ -38,20 +38,20 @@
 </section>
 
 <section>
-  <h2>Pilot実行判定</h2>
+  <h2>軽量確認の実行判定</h2>
   <p><span class="label {{ pilot_guidance.label|lower }}">{{ pilot_guidance.label }}</span></p>
   <p>{{ pilot_guidance.reason }}</p>
   <div class="actions">
     <form method="post" action="/projects/{{ project.id }}/create-preset-job">
       <input type="hidden" name="preset_id" value="sdxl_2d_face_pilot_3epoch">
-      <button type="submit">{{ pilot_guidance.button_prefix }}Pilot 3 Epochを作成</button>
+      <button type="submit">{{ pilot_guidance.button_prefix }}軽量確認 3 Epochを作成</button>
     </form>
     <form method="post" action="/projects/{{ project.id }}/create-preset-job" class="inline-form">
       <input type="hidden" name="preset_id" value="sdxl_2d_face_standard_6epoch">
-      <label>Pilotスキップ理由
-        <input name="skip_reason" placeholder="例: Preflight OK、同一base modelで完走実績ありのためPilotスキップ">
+      <label>軽量確認スキップ理由
+        <input name="skip_reason" placeholder="例: 事前確認OK、同一base modelで完走実績ありのため軽量確認をスキップ">
       </label>
-      <button type="submit">{% if pilot_guidance.label in ['REQUIRED', 'RECOMMENDED'] %}理解してStandard 6 Epochへ進む{% else %}Standard 6 Epochへ進む{% endif %}</button>
+      <button type="submit">{% if pilot_guidance.label in ['REQUIRED', 'RECOMMENDED'] %}理解して標準 6 Epochへ進む{% else %}標準 6 Epochへ進む{% endif %}</button>
     </form>
   </div>
 </section>
@@ -101,7 +101,7 @@
         {% for run in validation_runs %}
         <tr>
           <td><a href="/validation-runs/{{ run.id }}">#{{ run.id }}</a></td>
-          <td>{{ run.preset_name or run.validation_preset_id or '旧形式' }}</td>
+          <td>{{ display_validation_preset_name(run.validation_preset_id) if run.validation_preset_id else (run.preset_name or '旧形式') }}</td>
           <td>{{ run.expected_image_count if run.expected_image_count is not none else '-' }} / {{ run.actual_image_count if run.actual_image_count is not none else '-' }} / {{ run.reviewed_count if run.reviewed_count is not none else '-' }}</td>
           <td><span class="label {{ run.status }}">{{ run.status }}</span></td>
         </tr>

@@ -8,14 +8,15 @@
 {% if not editable %}
 <section class="notice warning">
   <h2>直接編集できません</h2>
-  <p>このジョブは実行済みまたは実行中のため、再現性保護のため直接編集できません。</p>
-  <p>変更したい場合は <strong>派生ドラフトを作成</strong> を使って派生ジョブを作成してください。</p>
+  <p>このジョブは実行済み、または実行中のため、再現性保護のため直接編集できません。</p>
+  <p>変更したい場合は <strong>派生ドラフトを作成</strong> して、新しいジョブとして調整してください。</p>
   <form method="post" action="/jobs/{{ job.id }}/revised-draft"><button type="submit">派生ドラフトを作成</button></form>
 </section>
 {% else %}
 {% if job.status in ['prepared', 'prepared_dirty'] or job.config_dirty %}
 <p class="notice warning">このジョブを編集すると生成済みconfigが古くなります。保存後、実行前にファイル準備を再実行してください。</p>
 {% endif %}
+
 <form method="post" action="/jobs/{{ job.id }}/edit" class="form-grid wide">
   <label>ジョブ名<input name="name" required value="{{ job.name }}"></label>
   <label>出力名<input name="output_name" required value="{{ job.output_name }}"></label>
@@ -34,10 +35,10 @@
       {% endfor %}
     </select>
   </label>
-  <label>プリセット
+  <label>学習プリセット
     <select name="preset_id" required>
       {% for preset in presets %}
-      <option value="{{ preset.id }}" {{ 'selected' if preset.id == job.preset_id else '' }}>{{ preset.option_label }}</option>
+      <option value="{{ preset.id }}" {{ 'selected' if preset.id == job.preset_id else '' }}>{{ preset.option_label.replace(preset.name, display_preset_name(preset)) }}</option>
       {% endfor %}
     </select>
   </label>
@@ -49,6 +50,7 @@
       {% endfor %}
     </select>
   </label>
+
   <fieldset class="form-fieldset">
     <legend>使用モデル</legend>
     <label>modelsフォルダ内のモデル

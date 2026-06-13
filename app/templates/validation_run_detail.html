@@ -4,7 +4,7 @@
   <div class="actions">
     <a class="button" href="/jobs/{{ run.job_id }}">ジョブへ戻る</a>
     {% if run.project_id %}<a class="button" href="/projects/{{ run.project_id }}">Projectへ戻る</a>{% endif %}
-    {% if run.selected_lora_profile_id %}<a class="button" href="/lora-library/{{ run.selected_lora_profile_id }}/edit">プロファイルへ戻る</a>{% endif %}
+    {% if run.selected_lora_profile_id %}<a class="button" href="/lora-library/{{ run.selected_lora_profile_id }}/edit">LoRAプロファイルへ</a>{% endif %}
     <form method="post" action="/validation-runs/{{ run.id }}/export"><button type="submit">プロンプトパック再出力</button></form>
     <form method="post" action="/validation-runs/{{ run.id }}/export-report"><button type="submit">検証レポート出力</button></form>
   </div>
@@ -14,8 +14,8 @@
 {% if condition_warning %}<p class="notice warning">{{ condition_warning }}</p>{% endif %}
 {% if apply_result %}
 <section class="notice">
-  <h2>プロファイル反映結果</h2>
-  <p>人間操作により、推奨weightをLoRAプロファイルへ反映しました。</p>
+  <h2>LoRAプロファイル反映結果</h2>
+  <p>人間評価から推奨weightをLoRAプロファイルへ反映しました。</p>
   <dl>
     <dt>推奨</dt><dd>{{ apply_result.before.recommended_weight_min }} - {{ apply_result.before.recommended_weight_max }} → {{ apply_result.after.recommended_weight_min }} - {{ apply_result.after.recommended_weight_max }}</dd>
     <dt>弱め / 強め</dt><dd>{{ apply_result.before.light_weight }} / {{ apply_result.before.strong_weight }} → {{ apply_result.after.light_weight }} / {{ apply_result.after.strong_weight }}</dd>
@@ -25,11 +25,11 @@
 
 <section class="panel-grid">
   <div>
-    <h2>実行情報</h2>
+    <h2>検証情報</h2>
     <dl>
       <dt>名前</dt><dd>{{ run.name }}</dd>
-      <dt>プリセット</dt><dd>{{ preset.name if preset else '旧形式 / プリセット未指定' }}</dd>
-      <dt>レベル</dt><dd>{{ run.validation_level or '-' }}</dd>
+      <dt>プリセット</dt><dd>{{ display_validation_preset_name(preset) if preset else '旧形式 / プリセット未指定' }}</dd>
+      <dt>レベル</dt><dd>{{ display_validation_level(run.validation_level) }}</dd>
       <dt>状態</dt><dd><span class="label {{ run.status }}">{{ run.status }}</span></dd>
       <dt>出力先</dt><dd>{{ output_dir }}</dd>
       <dt>ベースモデル</dt><dd>{{ run.base_model or '-' }}</dd>
@@ -38,13 +38,13 @@
     </dl>
   </div>
   <div>
-    <h2>カバー状況</h2>
+    <h2>進捗</h2>
     <dl>
       <dt>予定</dt><dd>{{ coverage.expected_image_count }}</dd>
       <dt>登録済み</dt><dd>{{ coverage.registered_condition_count }}</dd>
       <dt>レビュー済み</dt><dd>{{ coverage.reviewed_condition_count }}</dd>
       <dt>未登録</dt><dd>{{ coverage.missing_condition_count }}</dd>
-      <dt>登録カバー率</dt><dd>{{ '%.1f%%'|format(coverage.coverage_rate * 100) }}</dd>
+      <dt>登録率</dt><dd>{{ '%.1f%%'|format(coverage.coverage_rate * 100) }}</dd>
       <dt>レビュー率</dt><dd>{{ '%.1f%%'|format(coverage.review_rate * 100) }}</dd>
     </dl>
     <form method="post" action="/validation-runs/{{ run.id }}/status" class="inline-form">
@@ -70,7 +70,7 @@
       <form method="post" action="/validation-runs/{{ run.id }}/suggest"><button type="submit">推奨weightを保存</button></form>
       <form method="post" action="/validation-runs/{{ run.id }}/apply"><button type="submit">LoRAプロファイルへ反映</button></form>
     </div>
-    <p class="muted">自動反映はしません。プロファイルへ反映する場合は必ず反映ボタンを押してください。</p>
+    <p class="muted">自動反映はしません。プロファイルへ反映する場合は、内容を確認してからボタンを押してください。</p>
   </div>
   <div>
     <h2>リファレンスセット</h2>
@@ -84,7 +84,7 @@
     <div class="sample-grid">
       {% for ref in reference_images %}
       <figure>
-        <img src="/reference-images/{{ ref.id }}" alt="reference image {{ ref.id }}">
+        <img src="/reference-images/{{ ref.id }}" alt="リファレンス画像 {{ ref.id }}">
         <figcaption>{{ ref.image_role }} / {{ ref.caption or '' }}</figcaption>
       </figure>
       {% endfor %}
@@ -97,7 +97,7 @@
 
 <section class="panel-grid">
   <div>
-      <h2>個別画像登録</h2>
+    <h2>個別画像登録</h2>
     <form method="post" action="/validation-runs/{{ run.id }}/images/individual" class="form-grid">
       <label class="wide-field">画像パス
         <span class="path-picker">
@@ -105,7 +105,7 @@
           <button type="button" data-browse-target="#individual-image-path" data-browse-kind="image" data-browse-title="検証画像を選択" data-browse-initial="{{ default_project_path }}">参照</button>
         </span>
       </label>
-      <label>プロンプトキー<select name="prompt_key">{% for c in coverage.rows|unique(attribute='prompt_key') %}<option value="{{ c.prompt_key }}">{{ c.prompt_key }}</option>{% endfor %}</select></label>
+      <label>promptキー<select name="prompt_key">{% for c in coverage.rows|unique(attribute='prompt_key') %}<option value="{{ c.prompt_key }}">{{ c.prompt_key }}</option>{% endfor %}</select></label>
       <label>seed<select name="seed">{% for c in coverage.rows|unique(attribute='seed') %}<option value="{{ c.seed }}">{{ c.seed }}</option>{% endfor %}</select></label>
       <label>Weight<select name="lora_weight">{% for c in coverage.rows|unique(attribute='lora_weight') %}<option value="{{ c.lora_weight }}">{{ c.lora_weight }}</option>{% endfor %}</select></label>
       <label>Hires<select name="hires_enabled"><option value="">なし</option><option value="1">あり</option></select></label>
@@ -114,7 +114,7 @@
     </form>
   </div>
   <div>
-      <h2>グリッド画像登録</h2>
+    <h2>グリッド画像登録</h2>
     <form method="post" action="/validation-runs/{{ run.id }}/images/grid" class="form-grid">
       <label class="wide-field">画像パス
         <span class="path-picker">
@@ -122,7 +122,7 @@
           <button type="button" data-browse-target="#grid-image-path" data-browse-kind="image" data-browse-title="グリッド画像を選択" data-browse-initial="{{ default_project_path }}">参照</button>
         </span>
       </label>
-      <label>プロンプトキー<input name="prompt_key" placeholder="basic_face"></label>
+      <label>promptキー<input name="prompt_key" placeholder="basic_face"></label>
       <label>Hires<select name="hires_enabled"><option value="">なし</option><option value="1">あり</option></select></label>
       <label>X軸<input name="grid_axis_x" value="weight"></label>
       <label>Y軸<input name="grid_axis_y" value="seed"></label>
@@ -135,7 +135,7 @@
 <section>
   <h2>条件カバレッジ</h2>
   <table>
-    <thead><tr><th>#</th><th>プロンプト</th><th>seed</th><th>weight</th><th>Hires</th><th>状態</th><th>画像</th><th>Hash</th></tr></thead>
+    <thead><tr><th>#</th><th>prompt</th><th>seed</th><th>weight</th><th>Hires</th><th>状態</th><th>画像</th><th>Hash</th></tr></thead>
     <tbody>
       {% for row in coverage.rows %}
       <tr>
@@ -172,7 +172,7 @@
       </table>
     </div>
     <div>
-      <h3>分布</h3>
+      <h3>まとめ</h3>
       <dl>
         <dt>推奨weight</dt><dd>{{ weight_matrix.recommended_weights or '-' }}</dd>
         <dt>強すぎるweight</dt><dd>{{ weight_matrix.too_strong_weights or '-' }}</dd>
@@ -186,11 +186,11 @@
 </section>
 
 <section>
-  <h2>登録済み画像レビュー</h2>
+  <h2>検証レビュー</h2>
   <div class="sample-grid compare">
     {% for image in images %}
     <figure>
-      <img src="/validation-images/{{ image.id }}" alt="validation image {{ image.id }}">
+      <img src="/validation-images/{{ image.id }}" alt="検証画像 {{ image.id }}">
       <figcaption>
         #{{ image.id }} {{ image.image_role }} / {{ image.prompt_key or '-' }} / seed {{ image.seed or '-' }} / weight {{ image.lora_weight if image.lora_weight is not none else '-' }} / Hires {{ 'あり' if image.hires_enabled else 'なし' }}<br>
         条件: {{ image.expected_condition_id or '未一致 / グリッド' }}
@@ -212,7 +212,7 @@
           <label><input type="checkbox" name="failure_tags" value="{{ tag }}"> {{ tag }}</label>
           {% endfor %}
         </div>
-        <label><input type="checkbox" name="ignored" value="1" {{ 'checked' if image.ignored else '' }}> カバー判定では無視扱いにする</label>
+        <label><input type="checkbox" name="ignored" value="1" {{ 'checked' if image.ignored else '' }}> カバレッジ判定では無視する</label>
         <label>メモ<textarea name="memo">{{ image.memo or '' }}</textarea></label>
         <button type="submit">レビューを保存</button>
       </form>

@@ -24,7 +24,7 @@
     <label>標準の検証プリセット<select name="default_validation_preset_id">
       <option value="">未指定</option>
       {% for preset in validation_presets %}
-      <option value="{{ preset.id }}" {{ 'selected' if profile.default_validation_preset_id == preset.id else '' }}>{{ preset.name }}</option>
+      <option value="{{ preset.id }}" {{ 'selected' if profile.default_validation_preset_id == preset.id else '' }}>{{ display_validation_preset_name(preset) }}</option>
       {% endfor %}
     </select></label>
     <label>リファレンスセット<select name="reference_set_id">
@@ -47,7 +47,7 @@
       <form method="post" action="/lora-library/{{ profile.id }}/validation-runs" class="form-grid">
         <label>プリセット<select name="validation_preset_id">
           {% for preset in validation_presets %}
-          <option value="{{ preset.id }}" {{ 'selected' if profile.default_validation_preset_id == preset.id else '' }}>{{ preset.name }} / {{ preset.expected_image_count }}枚</option>
+          <option value="{{ preset.id }}" {{ 'selected' if profile.default_validation_preset_id == preset.id else '' }}>{{ display_validation_preset_name(preset) }} / {{ preset.expected_image_count }}枚</option>
           {% endfor %}
         </select></label>
         <label>ベースモデル<input name="base_model" value="{{ profile.base_model or '' }}"></label>
@@ -110,7 +110,7 @@
   <div class="sample-grid">
     {% for image in validation_images %}
     <figure>
-      <img src="/validation-images/{{ image.id }}" alt="validation image {{ image.id }}">
+      <img src="/validation-images/{{ image.id }}" alt="検証画像 {{ image.id }}">
       <figcaption>#{{ image.id }} {{ image.validation_type or '-' }} / weight {{ image.lora_weights or '-' }}<br>強さ {{ image.strength_label or '-' }} / 過学習 {{ image.overfit_level or '-' }} / 採用 {{ image.adoption_label or '-' }}<br>{{ image.memo or '' }}</figcaption>
     </figure>
     {% else %}

@@ -1,13 +1,27 @@
 {% extends "base.html" %}{% block content %}
-<header class="page-head"><h1>サンプルプロンプトテンプレート</h1></header>
-<table>
-  <thead><tr><th>ID</th><th>名前</th><th>目的</th><th>プロンプト</th></tr></thead>
-  <tbody>
-    {% for template in templates %}
-    <tr><td>{{ template.id }}</td><td>{{ template.name }}</td><td>{{ template.purpose or '-' }}</td><td><pre>{{ template.prompts_json }}</pre></td></tr>
-    {% else %}
-    <tr><td colspan="4" class="muted">テンプレートはまだありません。</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
+<header class="page-head">
+  <h1>サンプルプロンプトテンプレート</h1>
+  <a class="button" href="/sample-prompt-templates/new">新規作成</a>
+</header>
+
+<section>
+  <p class="muted">学習中に生成するsample画像用のpromptセットです。`{trigger_word}` はジョブのtrigger wordに置き換えられます。</p>
+  <table>
+    <thead><tr><th>ID</th><th>名前</th><th>用途</th><th>種別</th><th>prompt数</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for template in templates %}
+      <tr>
+        <td>{{ template.id }}</td>
+        <td>{{ template.name }}</td>
+        <td>{{ template.purpose or '-' }}</td>
+        <td>{{ '組み込み' if template.is_builtin else 'ユーザー作成' }}</td>
+        <td>{{ template.prompts_json.count('"prompt"') }}</td>
+        <td><a class="button small-button" href="/sample-prompt-templates/{{ template.id }}/edit">編集</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">テンプレートはまだありません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
 {% endblock %}

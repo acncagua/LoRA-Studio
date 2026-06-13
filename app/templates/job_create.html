@@ -1,5 +1,6 @@
 {% extends "base.html" %}{% block content %}
 <header class="page-head"><h1>ジョブ作成</h1></header>
+
 <section>
   <h2>データセットのトリガー整合性</h2>
   <table>
@@ -18,10 +19,11 @@
     </tbody>
   </table>
 </section>
+
 <form method="post" action="/jobs" class="form-grid wide">
   <fieldset class="form-fieldset wide-field">
     <legend>Project</legend>
-    <p class="muted">Projectは1つのLoRA作成作業です。JobはProject内の1回の学習実行として保存されます。</p>
+    <p class="muted">Projectは1つのLoRA作成作業です。ジョブはProject内の1回の学習実行として保存されます。</p>
     <label><input type="radio" name="project_mode" value="new" checked> 新しいProjectを作成</label>
     <label><input type="radio" name="project_mode" value="existing"> 既存Projectに追加</label>
     <label>既存Project
@@ -36,7 +38,8 @@
     <label>Project説明<input name="project_description"></label>
     <label>Projectトリガー<input name="project_trigger_word" placeholder="例: zuihou"></label>
   </fieldset>
-  <label>名前<input name="name" required></label>
+
+  <label>ジョブ名<input name="name" required></label>
   <label>データセット<select name="dataset_id" required>{% for dataset in datasets %}<option value="{{ dataset.id }}">#{{ dataset.id }} {{ dataset.name }}</option>{% endfor %}</select></label>
   <label>データセットバージョン
     <select name="dataset_version_id">
@@ -46,8 +49,22 @@
       {% endfor %}
     </select>
   </label>
-  <label>プリセット<select name="preset_id" required>{% for preset in presets %}<option value="{{ preset.id }}" {{ 'selected' if preset.id == default_preset_id else '' }}>{{ preset.option_label }}</option>{% endfor %}</select></label>
-  <label>サンプルプロンプトテンプレート<select name="sample_prompt_template_id"><option value="">デフォルト生成プロンプト</option>{% for template in sample_prompt_templates %}<option value="{{ template.id }}">{{ template.name }}</option>{% endfor %}</select></label>
+  <label>学習プリセット
+    <select name="preset_id" required>
+      {% for preset in presets %}
+      <option value="{{ preset.id }}" {{ 'selected' if preset.id == default_preset_id else '' }}>{{ preset.option_label.replace(preset.name, display_preset_name(preset)) }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>サンプルプロンプトテンプレート
+    <select name="sample_prompt_template_id">
+      <option value="">デフォルト生成プロンプト</option>
+      {% for template in sample_prompt_templates %}
+      <option value="{{ template.id }}">{{ template.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
   <fieldset class="form-fieldset">
     <legend>使用モデル</legend>
     <p class="muted">学習に使うStable Diffusionのbase modelを指定します。modelsフォルダ内の候補を選ぶか、参照ボタンで .safetensors / .ckpt を選択してください。</p>
@@ -66,6 +83,7 @@
       </span>
     </label>
   </fieldset>
+
   <label>VAEパス
     <span class="path-picker">
       <input id="vae-path" name="vae_path" placeholder="D:\...\vae.safetensors">

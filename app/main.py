@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from datetime import datetime
@@ -80,6 +81,31 @@ FAILURE_TAGS = [
     "triggerなし暴発",
 ]
 
+PRESET_DISPLAY_NAMES = {
+    "integration_smoke_sdxl": "結合確認 - SDXL",
+    "sdxl_2d_face_pilot_3epoch": "SDXL 2D顔 - 軽量確認 3 Epoch",
+    "sdxl_2d_face_pilot_generalize_3epoch": "SDXL 2D顔 - 汎化寄り軽量確認 3 Epoch",
+    "sdxl_2d_face_standard_6epoch": "SDXL 2D顔 - 標準 6 Epoch",
+}
+
+VALIDATION_PRESET_DISPLAY_NAMES = {
+    "quick_validation_v1": "クイック検証 v1",
+    "standard_validation_v1": "標準検証 v1",
+    "extended_validation_v1": "拡張検証 v1",
+}
+
+VALIDATION_LEVEL_LABELS = {
+    "quick": "クイック",
+    "standard": "標準",
+    "extended": "拡張",
+}
+
+STATUS_TEXT_REPLACEMENTS = {
+    "Pilot": "軽量確認",
+    "Standard": "標準",
+    "Validation": "検証",
+}
+
 templates = Environment(
     loader=FileSystemLoader(settings.ROOT_DIR / "app" / "templates"),
     autoescape=select_autoescape(["html", "xml"]),
@@ -98,7 +124,111 @@ def render(request: Request, template: str, **context: Any) -> HTMLResponse:
     context.setdefault("sd_scripts_release_tag", settings.SD_SCRIPTS_RELEASE_TAG)
     context.setdefault("sd_scripts_release_commit", settings.SD_SCRIPTS_RELEASE_COMMIT)
     context.setdefault("app_meta", current_app_meta())
+    context.setdefault("display_preset_name", display_preset_name)
+    context.setdefault("display_validation_preset_name", display_validation_preset_name)
+    context.setdefault("display_validation_level", display_validation_level)
+    context.setdefault("display_status_text", display_status_text)
     return HTMLResponse(tpl.render(**context))
+
+
+def display_preset_name(preset: Any) -> str:
+    preset_id = ""
+    name = ""
+    if isinstance(preset, str):
+        preset_id = preset
+    elif preset:
+        preset_id = preset["id"] if "id" in preset.keys() else ""
+        name = preset["name"] if "name" in preset.keys() else ""
+    if preset_id in PRESET_DISPLAY_NAMES:
+        return PRESET_DISPLAY_NAMES[preset_id]
+    text = name or preset_id or "-"
+    replacements = [
+        ("Integration Smoke", "結合確認"),
+        ("Pilot Generalize", "汎化寄り軽量確認"),
+        ("Pilot", "軽量確認"),
+        ("Standard", "標準"),
+        ("Generalize", "汎化寄り"),
+        ("Strong", "強め"),
+        ("Soft", "弱め"),
+        ("Medium Dataset", "中規模Dataset"),
+        ("Small Dataset", "少数Dataset"),
+        ("2D Face", "2D顔"),
+    ]
+    for old, new in replacements:
+        text = text.replace(old, new)
+    return text
+
+
+def display_validation_preset_name(preset: Any) -> str:
+    preset_id = ""
+    name = ""
+    if isinstance(preset, str):
+        preset_id = preset
+    elif preset:
+        preset_id = preset["id"] if "id" in preset.keys() else ""
+        name = preset["name"] if "name" in preset.keys() else ""
+    return VALIDATION_PRESET_DISPLAY_NAMES.get(preset_id, name or preset_id or "-")
+
+
+def display_validation_level(level: str | None) -> str:
+    return VALIDATION_LEVEL_LABELS.get(level or "", level or "-")
+
+
+def display_status_text(text: str | None) -> str:
+    value = text or "-"
+    for old, new in STATUS_TEXT_REPLACEMENTS.items():
+        value = value.replace(old, new)
+    return value
+
+
+def validate_sample_prompt_template_id(template_id: str) -> str:
+    value = template_id.strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{3,80}", value):
+        raise HTTPException(status_code=400, detail="IDは英数字、ハイフン、アンダースコアで3〜80文字にしてください。")
+    return value
+
+
+def validate_sample_prompts_json(prompts_json: str) -> str:
+    try:
+        prompts = json.loads(prompts_json)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"prompts_jsonがJSONとして読めません: {exc}") from exc
+    if not isinstance(prompts, list) or not prompts:
+        raise HTTPException(status_code=400, detail="prompts_jsonは1件以上の配列にしてください。")
+    required = {"name", "prompt"}
+    for index, prompt in enumerate(prompts, start=1):
+        if not isinstance(prompt, dict):
+            raise HTTPException(status_code=400, detail=f"{index}件目がオブジェクトではありません。")
+        missing = [key for key in required if not str(prompt.get(key, "")).strip()]
+        if missing:
+            raise HTTPException(status_code=400, detail=f"{index}件目に必須項目がありません: {', '.join(missing)}")
+    return json.dumps(prompts, ensure_ascii=False, indent=2)
+
+
+def default_sample_prompts_json() -> str:
+    prompts = [
+        {
+            "name": "basic_face",
+            "prompt": "{trigger_word}, 1girl, upper body, looking at viewer, simple background",
+            "negative_prompt": "low quality, worst quality, bad anatomy, bad hands",
+            "width": 1024,
+            "height": 1024,
+            "seed": 42,
+            "steps": 28,
+            "cfg_scale": 7,
+        },
+        {
+            "name": "full_body",
+            "prompt": "{trigger_word}, 1girl, full body, standing, outdoors",
+            "negative_prompt": "low quality, worst quality, bad anatomy, bad hands",
+            "width": 1024,
+            "height": 1024,
+            "seed": 43,
+            "steps": 28,
+            "cfg_scale": 7,
+        },
+    ]
+    return json.dumps(prompts, ensure_ascii=False, indent=2)
 
 
 def current_app_meta() -> dict[str, Any]:
@@ -398,12 +528,12 @@ def project_workflow_status(project: Any, jobs: list[dict[str, Any]], validation
     has_recommendation = bool(recommendations)
     return [
         {"name": "データセット整備", "status": "OK" if has_dataset else "未設定"},
-        {"name": "Pilot Job（任意安全確認）", "status": "OK" if has_pilot else "任意"},
-        {"name": "Standard Job", "status": "OK" if has_standard else "未実施"},
+        {"name": "軽量確認ジョブ（任意安全確認）", "status": "OK" if has_pilot else "任意"},
+        {"name": "標準ジョブ", "status": "OK" if has_standard else "未実施"},
         {"name": "Sample評価", "status": "OK" if has_completed else "未実施"},
         {"name": "採用LoRA", "status": "OK" if has_selected else "未選択"},
         {"name": "Export", "status": "OK" if has_export else "未出力"},
-        {"name": "Validation", "status": "OK" if has_validation else "未実施"},
+        {"name": "外部検証", "status": "OK" if has_validation else "未実施"},
         {"name": "Recommendation", "status": "OK" if has_recommendation else "未生成"},
     ]
 
@@ -427,7 +557,7 @@ def pilot_recommendation(project: Any) -> dict[str, Any]:
     if int(real_completed or 0) == 0:
         return {
             "label": "REQUIRED",
-            "reason": "sd-scripts環境で実モデル学習の完走実績がまだありません。まずPilotで動作確認してください。",
+            "reason": "sd-scripts環境で実モデル学習の完走実績がまだありません。まず軽量確認で動作確認してください。",
             "button_prefix": "推奨: ",
         }
 
@@ -446,7 +576,7 @@ def pilot_recommendation(project: Any) -> dict[str, Any]:
     if int(standard_completed or 0) > 0:
         return {
             "label": "SKIPPABLE",
-            "reason": "同じdataset version / base model / model familyでStandard完走実績があります。PreflightがOKならStandardへ直行して構いません。",
+            "reason": "同じdataset version / base model / model familyで標準ジョブの完走実績があります。事前確認がOKなら標準学習へ直行して構いません。",
             "button_prefix": "",
         }
 
@@ -461,7 +591,7 @@ def pilot_recommendation(project: Any) -> dict[str, Any]:
     if int(project_pilot_completed or 0) > 0:
         return {
             "label": "OPTIONAL",
-            "reason": "同じProject内でPilotが完走済みです。必要なら追加確認としてPilotを挟めますが、Standardへ進んでもよい状態です。",
+            "reason": "同じProject内で軽量確認が完走済みです。必要なら追加確認として軽量確認を挟めますが、標準学習へ進んでもよい状態です。",
             "button_prefix": "",
         }
 
@@ -484,17 +614,17 @@ def pilot_recommendation(project: Any) -> dict[str, Any]:
         (STANDARD_PRESET_ID,),
     )["count"]
     if int(preset_completed or 0) == 0:
-        reasons.append("Standard 6 Epoch系統のcompleted Jobがありません。")
+        reasons.append("標準 6 Epoch系統のcompleted Jobがありません。")
 
     if reasons:
         return {
             "label": "RECOMMENDED",
-            "reason": " ".join(reasons) + " Pilotで軽く確認してからStandardへ進むことを推奨します。",
+            "reason": " ".join(reasons) + " 軽量確認で軽く確認してから標準学習へ進むことを推奨します。",
             "button_prefix": "推奨: ",
         }
     return {
         "label": "OPTIONAL",
-        "reason": "この環境では実モデル学習が完走済みです。Dataset/triggerを確認し、PreflightがOKならPilotは任意です。",
+        "reason": "この環境では実モデル学習が完走済みです。Dataset/triggerを確認し、事前確認がOKなら軽量確認は任意です。",
         "button_prefix": "",
     }
 
@@ -505,7 +635,7 @@ def create_project_preset_job(project_id: int, preset_id: str, skip_reason: str 
     if project is None or preset is None:
         raise HTTPException(status_code=404, detail="Project or preset not found")
     source = fetch_one("SELECT * FROM training_jobs WHERE project_id = ? ORDER BY id DESC LIMIT 1", (project_id,))
-    name_suffix = "Pilot 3 Epoch" if preset_id == PILOT_PRESET_ID else "Standard 6 Epoch"
+    name_suffix = "軽量確認 3 Epoch" if preset_id == PILOT_PRESET_ID else "標準 6 Epoch"
     job_id = create_job(
         {
             "project_id": project_id,
@@ -534,7 +664,7 @@ def create_project_preset_job(project_id: int, preset_id: str, skip_reason: str 
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (f"Pilot skip: {skip_reason.strip()}", now, project_id),
+                (f"軽量確認スキップ: {skip_reason.strip()}", now, project_id),
             )
     return job_id
 
@@ -957,6 +1087,78 @@ def dataset_restore_confirm(dataset_id: int, history_id: int = Form(...), confir
 def sample_prompt_templates(request: Request) -> HTMLResponse:
     templates_rows = fetch_all("SELECT * FROM sample_prompt_templates ORDER BY is_builtin DESC, name")
     return render(request, "sample_prompt_templates.html", templates=templates_rows)
+
+
+@app.get("/sample-prompt-templates/new", response_class=HTMLResponse)
+def sample_prompt_template_new(request: Request) -> HTMLResponse:
+    return render(
+        request,
+        "sample_prompt_template_form.html",
+        template_row=None,
+        prompts_json=default_sample_prompts_json(),
+        mode="new",
+    )
+
+
+@app.post("/sample-prompt-templates")
+def sample_prompt_template_create(
+    template_id: str = Form(...),
+    name: str = Form(...),
+    purpose: str = Form(""),
+    prompts_json: str = Form(...),
+) -> RedirectResponse:
+    clean_id = validate_sample_prompt_template_id(template_id)
+    if fetch_one("SELECT id FROM sample_prompt_templates WHERE id = ?", (clean_id,)):
+        raise HTTPException(status_code=400, detail="同じIDのテンプレートが既にあります。")
+    now = settings_now()
+    clean_json = validate_sample_prompts_json(prompts_json)
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO sample_prompt_templates(id, name, purpose, prompts_json, is_builtin, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 0, ?, ?)
+            """,
+            (clean_id, name.strip(), purpose.strip(), clean_json, now, now),
+        )
+    return RedirectResponse("/sample-prompt-templates", status_code=303)
+
+
+@app.get("/sample-prompt-templates/{template_id}/edit", response_class=HTMLResponse)
+def sample_prompt_template_edit(request: Request, template_id: str) -> HTMLResponse:
+    template_row = fetch_one("SELECT * FROM sample_prompt_templates WHERE id = ?", (template_id,))
+    if template_row is None:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return render(
+        request,
+        "sample_prompt_template_form.html",
+        template_row=template_row,
+        prompts_json=json.dumps(json.loads(template_row["prompts_json"]), ensure_ascii=False, indent=2),
+        mode="edit",
+    )
+
+
+@app.post("/sample-prompt-templates/{template_id}/edit")
+def sample_prompt_template_update(
+    template_id: str,
+    name: str = Form(...),
+    purpose: str = Form(""),
+    prompts_json: str = Form(...),
+) -> RedirectResponse:
+    template_row = fetch_one("SELECT * FROM sample_prompt_templates WHERE id = ?", (template_id,))
+    if template_row is None:
+        raise HTTPException(status_code=404, detail="Template not found")
+    now = settings_now()
+    clean_json = validate_sample_prompts_json(prompts_json)
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE sample_prompt_templates
+            SET name = ?, purpose = ?, prompts_json = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (name.strip(), purpose.strip(), clean_json, now, template_id),
+        )
+    return RedirectResponse("/sample-prompt-templates", status_code=303)
 
 
 def rescan_dataset(dataset_id: int, memo: str = "Rescan") -> None:
@@ -3084,7 +3286,7 @@ def ensure_selected_lora_profile(job_id: int) -> Any:
                 exported_model_path(job_id),
                 base_model_label(job["base_model_path"]),
                 "standard_validation_v1",
-                "通常比較はHiresなしのStandard Validationを基準にする。HiresありはExtended Validationで最終見栄え確認として扱う。",
+                "通常比較はHiresなしの標準検証を基準にする。Hiresありは拡張検証で最終見栄え確認として扱う。",
                 now,
                 now,
             ),

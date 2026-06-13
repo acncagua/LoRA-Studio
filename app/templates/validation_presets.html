@@ -2,6 +2,7 @@
 <header class="page-head">
   <h1>検証プリセット</h1>
 </header>
+
 <section>
   <p class="muted">外部生成環境で人間が検証画像を作る時の標準条件です。LoRA-Studioは画像生成を自動実行せず、プロンプトパックと条件管理を担当します。</p>
   <table>
@@ -12,8 +13,8 @@
       {% for preset in presets %}
       <tr>
         <td>{{ preset.id }}</td>
-        <td>{{ preset.name }}</td>
-        <td><span class="label {{ preset.validation_level }}">{{ preset.validation_level }}</span></td>
+        <td>{{ display_validation_preset_name(preset) }}</td>
+        <td><span class="label {{ preset.validation_level }}">{{ display_validation_level(preset.validation_level) }}</span></td>
         <td>{{ preset.expected_image_count }}</td>
         <td>{{ preset.width }}x{{ preset.height }}</td>
         <td>{{ preset.sampler }}</td>

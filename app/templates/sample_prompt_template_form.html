@@ -1,0 +1,30 @@
+{% extends "base.html" %}{% block content %}
+<nav class="breadcrumbs"><a href="/sample-prompt-templates">サンプルプロンプト</a><span>{{ '新規作成' if mode == 'new' else '編集' }}</span></nav>
+<header class="page-head">
+  <h1>サンプルプロンプトテンプレート{{ '作成' if mode == 'new' else '編集' }}</h1>
+  <a class="button" href="/sample-prompt-templates">一覧へ戻る</a>
+</header>
+
+<section>
+  <p class="notice">
+    prompts_jsonは配列で保存します。各項目には少なくとも <code>name</code> と <code>prompt</code> が必要です。
+    <code>{trigger_word}</code> を入れておくと、ジョブ実行時のtrigger wordで置き換えられます。
+  </p>
+  <form method="post" action="{% if mode == 'new' %}/sample-prompt-templates{% else %}/sample-prompt-templates/{{ template_row.id }}/edit{% endif %}" class="form-grid wide">
+    {% if mode == 'new' %}
+    <label>ID<input name="template_id" required placeholder="例: sdxl_face_custom"></label>
+    {% else %}
+    <label>ID<input value="{{ template_row.id }}" disabled></label>
+    {% endif %}
+    <label>名前<input name="name" required value="{{ template_row.name if template_row else '' }}" placeholder="例: SDXL 顔確認 3 prompts"></label>
+    <label class="wide-field">用途<input name="purpose" value="{{ template_row.purpose if template_row else '' }}" placeholder="例: 顔LoRAの表情と全身確認用"></label>
+    <label class="wide-field">prompts_json
+      <textarea name="prompts_json" class="mono-textarea" required>{{ prompts_json }}</textarea>
+    </label>
+    {% if template_row and template_row.is_builtin %}
+    <p class="notice warning wide-field">これは組み込みテンプレートです。編集できますが、将来のseed更新で内容が上書きされる可能性があります。残したい場合は別IDで新規作成してください。</p>
+    {% endif %}
+    <button type="submit">{{ '作成' if mode == 'new' else '保存' }}</button>
+  </form>
+</section>
+{% endblock %}
