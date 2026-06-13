@@ -55,6 +55,26 @@
     {% if action_state.contact_sheet %}<form method="post" action="/jobs/{{ job.id }}/export-contact-sheet"><button type="submit">コンタクトシート出力</button></form>{% else %}<span class="button disabled">コンタクトシート出力</span>{% endif %}
   </div>
 </section>
+{% if project and job.status == 'prepared' and pilot_guidance %}
+<section>
+  <h2>次に進む判断</h2>
+  <p>Pilot判定: <span class="label {{ pilot_guidance.label|lower }}">{{ pilot_guidance.label }}</span></p>
+  <p>{{ pilot_guidance.reason }}</p>
+  <div class="actions">
+    <form method="post" action="/projects/{{ project.id }}/create-preset-job">
+      <input type="hidden" name="preset_id" value="{{ pilot_preset_id }}">
+      <button type="submit">{{ pilot_guidance.button_prefix }}Pilot 3 Epochを作成</button>
+    </form>
+    <form method="post" action="/projects/{{ project.id }}/create-preset-job" class="inline-form">
+      <input type="hidden" name="preset_id" value="{{ standard_preset_id }}">
+      <label>Pilotスキップ理由
+        <input name="skip_reason" placeholder="例: Preflight OK、同一base modelで完走実績ありのためPilotスキップ">
+      </label>
+      <button type="submit">{% if pilot_guidance.label in ['REQUIRED', 'RECOMMENDED'] %}理解してStandardへ進む{% else %}Standard 6 Epochへ進む{% endif %}</button>
+    </form>
+  </div>
+</section>
+{% endif %}
 <section class="panel-grid">
   <div>
     <h2>ジョブ</h2>

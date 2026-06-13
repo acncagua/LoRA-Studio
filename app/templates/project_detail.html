@@ -37,6 +37,25 @@
   </div>
 </section>
 
+<section>
+  <h2>Pilot実行判定</h2>
+  <p><span class="label {{ pilot_guidance.label|lower }}">{{ pilot_guidance.label }}</span></p>
+  <p>{{ pilot_guidance.reason }}</p>
+  <div class="actions">
+    <form method="post" action="/projects/{{ project.id }}/create-preset-job">
+      <input type="hidden" name="preset_id" value="sdxl_2d_face_pilot_3epoch">
+      <button type="submit">{{ pilot_guidance.button_prefix }}Pilot 3 Epochを作成</button>
+    </form>
+    <form method="post" action="/projects/{{ project.id }}/create-preset-job" class="inline-form">
+      <input type="hidden" name="preset_id" value="sdxl_2d_face_standard_6epoch">
+      <label>Pilotスキップ理由
+        <input name="skip_reason" placeholder="例: Preflight OK、同一base modelで完走実績ありのためPilotスキップ">
+      </label>
+      <button type="submit">{% if pilot_guidance.label in ['REQUIRED', 'RECOMMENDED'] %}理解してStandard 6 Epochへ進む{% else %}Standard 6 Epochへ進む{% endif %}</button>
+    </form>
+  </div>
+</section>
+
 <section id="training-jobs">
   <h2>学習ジョブ履歴</h2>
   <table>

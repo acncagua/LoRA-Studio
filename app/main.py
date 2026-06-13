@@ -336,6 +336,10 @@ PROJECT_STATUS_LABELS = {
 }
 
 
+PILOT_PRESET_ID = "sdxl_2d_face_pilot_3epoch"
+STANDARD_PRESET_ID = "sdxl_2d_face_standard_6epoch"
+
+
 def create_lora_project(data: dict[str, Any]) -> int:
     now = settings_now()
     with connect() as conn:
@@ -394,7 +398,7 @@ def project_workflow_status(project: Any, jobs: list[dict[str, Any]], validation
     has_recommendation = bool(recommendations)
     return [
         {"name": "データセット整備", "status": "OK" if has_dataset else "未設定"},
-        {"name": "Pilot Job", "status": "OK" if has_pilot else "未実施"},
+        {"name": "Pilot Job（任意安全確認）", "status": "OK" if has_pilot else "任意"},
         {"name": "Standard Job", "status": "OK" if has_standard else "未実施"},
         {"name": "Sample評価", "status": "OK" if has_completed else "未実施"},
         {"name": "採用LoRA", "status": "OK" if has_selected else "未選択"},
@@ -402,6 +406,137 @@ def project_workflow_status(project: Any, jobs: list[dict[str, Any]], validation
         {"name": "Validation", "status": "OK" if has_validation else "未実施"},
         {"name": "Recommendation", "status": "OK" if has_recommendation else "未生成"},
     ]
+
+
+def pilot_recommendation(project: Any) -> dict[str, Any]:
+    dataset_version_id = project["current_dataset_version_id"] if project else None
+    base_model_path = project["base_model_path"] if project else ""
+    model_family_row = fetch_one("SELECT model_family FROM datasets WHERE id = ?", (project["dataset_id"],)) if project and project["dataset_id"] else None
+    model_family = model_family_row["model_family"] if model_family_row else ""
+    reasons: list[str] = []
+
+    real_completed = fetch_one(
+        """
+        SELECT COUNT(*) AS count FROM training_jobs
+        WHERE status = 'completed'
+          AND COALESCE(return_code, 0) = 0
+          AND COALESCE(preset_id, '') != 'integration_smoke_sdxl'
+          AND COALESCE(output_model_count, 0) > 0
+        """
+    )["count"]
+    if int(real_completed or 0) == 0:
+        return {
+            "label": "REQUIRED",
+            "reason": "sd-scripts環境で実モデル学習の完走実績がまだありません。まずPilotで動作確認してください。",
+            "button_prefix": "推奨: ",
+        }
+
+    standard_completed = fetch_one(
+        """
+        SELECT COUNT(*) AS count FROM training_jobs
+        WHERE status = 'completed'
+          AND COALESCE(return_code, 0) = 0
+          AND preset_id = ?
+          AND dataset_version_id IS ?
+          AND base_model_path = ?
+          AND model_family = ?
+        """,
+        (STANDARD_PRESET_ID, dataset_version_id, base_model_path, model_family),
+    )["count"]
+    if int(standard_completed or 0) > 0:
+        return {
+            "label": "SKIPPABLE",
+            "reason": "同じdataset version / base model / model familyでStandard完走実績があります。PreflightがOKならStandardへ直行して構いません。",
+            "button_prefix": "",
+        }
+
+    project_pilot_completed = fetch_one(
+        """
+        SELECT COUNT(*) AS count FROM training_jobs
+        WHERE project_id = ? AND status = 'completed' AND COALESCE(return_code, 0) = 0
+          AND preset_id IN (?, ?)
+        """,
+        (project["id"], PILOT_PRESET_ID, "sdxl_2d_face_pilot_generalize_3epoch"),
+    )["count"] if project else 0
+    if int(project_pilot_completed or 0) > 0:
+        return {
+            "label": "OPTIONAL",
+            "reason": "同じProject内でPilotが完走済みです。必要なら追加確認としてPilotを挟めますが、Standardへ進んでもよい状態です。",
+            "button_prefix": "",
+        }
+
+    base_completed = fetch_one(
+        "SELECT COUNT(*) AS count FROM training_jobs WHERE status = 'completed' AND COALESCE(return_code, 0) = 0 AND base_model_path = ?",
+        (base_model_path,),
+    )["count"]
+    if int(base_completed or 0) == 0:
+        reasons.append("このbase modelでcompleted Jobがありません。")
+
+    version_completed = fetch_one(
+        "SELECT COUNT(*) AS count FROM training_jobs WHERE status = 'completed' AND COALESCE(return_code, 0) = 0 AND dataset_version_id IS ?",
+        (dataset_version_id,),
+    )["count"]
+    if dataset_version_id and int(version_completed or 0) == 0:
+        reasons.append("このdataset versionでcompleted Jobがありません。")
+
+    preset_completed = fetch_one(
+        "SELECT COUNT(*) AS count FROM training_jobs WHERE status = 'completed' AND COALESCE(return_code, 0) = 0 AND preset_id = ?",
+        (STANDARD_PRESET_ID,),
+    )["count"]
+    if int(preset_completed or 0) == 0:
+        reasons.append("Standard 6 Epoch系統のcompleted Jobがありません。")
+
+    if reasons:
+        return {
+            "label": "RECOMMENDED",
+            "reason": " ".join(reasons) + " Pilotで軽く確認してからStandardへ進むことを推奨します。",
+            "button_prefix": "推奨: ",
+        }
+    return {
+        "label": "OPTIONAL",
+        "reason": "この環境では実モデル学習が完走済みです。Dataset/triggerを確認し、PreflightがOKならPilotは任意です。",
+        "button_prefix": "",
+    }
+
+
+def create_project_preset_job(project_id: int, preset_id: str, skip_reason: str = "") -> int:
+    project = fetch_one("SELECT * FROM lora_projects WHERE id = ?", (project_id,))
+    preset = fetch_one("SELECT * FROM presets WHERE id = ?", (preset_id,))
+    if project is None or preset is None:
+        raise HTTPException(status_code=404, detail="Project or preset not found")
+    source = fetch_one("SELECT * FROM training_jobs WHERE project_id = ? ORDER BY id DESC LIMIT 1", (project_id,))
+    name_suffix = "Pilot 3 Epoch" if preset_id == PILOT_PRESET_ID else "Standard 6 Epoch"
+    job_id = create_job(
+        {
+            "project_id": project_id,
+            "name": f"{project['name']} {name_suffix}",
+            "dataset_id": project["dataset_id"],
+            "preset_id": preset_id,
+            "base_model_path": project["base_model_path"],
+            "vae_path": source["vae_path"] if source and source["vae_path"] else "",
+            "output_name": f"{project['name']}_{preset_id}".replace(" ", "_"),
+            "memo": skip_reason.strip() if skip_reason.strip() else f"Project #{project_id}から作成",
+            "parent_job_id": source["id"] if source else None,
+            "sample_prompt_template_id": source["sample_prompt_template_id"] if source and source["sample_prompt_template_id"] else "",
+        }
+    )
+    now = settings_now()
+    with connect() as conn:
+        conn.execute(
+            "UPDATE training_jobs SET dataset_version_id = ?, updated_at = ? WHERE id = ?",
+            (project["current_dataset_version_id"], now, job_id),
+        )
+        if skip_reason.strip():
+            conn.execute(
+                """
+                UPDATE lora_projects
+                SET memo = TRIM(COALESCE(memo, '') || CASE WHEN COALESCE(memo, '') = '' THEN '' ELSE char(10) END || ?),
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (f"Pilot skip: {skip_reason.strip()}", now, project_id),
+            )
+    return job_id
 
 
 def project_training_jobs(project_id: int) -> list[dict[str, Any]]:
@@ -578,9 +713,16 @@ def project_detail(request: Request, project_id: int) -> HTMLResponse:
         validation_runs=validation_runs,
         recommendations=recommendations,
         workflow_status=project_workflow_status(project, jobs, validation_runs, recommendations),
+        pilot_guidance=pilot_recommendation(project),
         project_status_labels=PROJECT_STATUS_LABELS,
         status_labels=STATUS_LABELS,
     )
+
+
+@app.post("/projects/{project_id}/create-preset-job")
+def project_create_preset_job(project_id: int, preset_id: str = Form(...), skip_reason: str = Form("")) -> RedirectResponse:
+    job_id = create_project_preset_job(project_id, preset_id, skip_reason)
+    return RedirectResponse(f"/jobs/{job_id}/edit", status_code=303)
 
 
 @app.post("/projects/{project_id}/select-job/{job_id}")
@@ -1165,6 +1307,7 @@ def job_detail(
     project = fetch_one("SELECT * FROM lora_projects WHERE id = ?", (job["project_id"],)) if "project_id" in job.keys() and job["project_id"] else None
     project_jobs = fetch_all("SELECT id, name, status FROM training_jobs WHERE project_id = ? ORDER BY id", (project["id"],)) if project else []
     project_selected_job = fetch_one("SELECT id, name FROM training_jobs WHERE id = ?", (project["selected_job_id"],)) if project and project["selected_job_id"] else None
+    pilot_guidance = pilot_recommendation(project) if project else None
     return render(
         request,
         "job_detail.html",
@@ -1199,6 +1342,9 @@ def job_detail(
         project=project,
         project_jobs=project_jobs,
         project_selected_job=project_selected_job,
+        pilot_guidance=pilot_guidance,
+        pilot_preset_id=PILOT_PRESET_ID,
+        standard_preset_id=STANDARD_PRESET_ID,
         action_state=job_action_state(job, selected_output),
         next_action=recommended_next_action(job, selected_output),
         status_labels=STATUS_LABELS,

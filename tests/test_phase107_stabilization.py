@@ -37,11 +37,101 @@ class IsolatedDbTest(unittest.TestCase):
 
 
 class Phase107StabilizationTests(IsolatedDbTest):
+    def create_project_fixture(self, base_model: str = "D:/models/base.safetensors") -> tuple[int, int, int]:
+        now = utc_now()
+        with connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO datasets(
+                    name, path, model_family, trigger_word, class_token, image_count,
+                    caption_count, missing_caption_count, resolution_summary_json,
+                    tag_summary_json, scan_status, memo, created_at, updated_at
+                )
+                VALUES ('dataset', 'D:/datasets/test', 'SDXL', 'testchar', 'person', 50, 50, 0, '{}', '{}', 'ok', '', ?, ?)
+                """,
+                (now, now),
+            )
+            dataset_id = int(cur.lastrowid)
+            cur = conn.execute(
+                """
+                INSERT INTO dataset_versions(dataset_id, version_no, trigger_word, image_count, caption_count, created_at, memo)
+                VALUES (?, 1, 'testchar', 50, 50, ?, 'test')
+                """,
+                (dataset_id, now),
+            )
+            version_id = int(cur.lastrowid)
+            cur = conn.execute(
+                """
+                INSERT INTO lora_projects(
+                    name, dataset_id, current_dataset_version_id, trigger_word,
+                    base_model_path, status, created_at, updated_at, memo
+                )
+                VALUES ('project', ?, ?, 'testchar', ?, 'active', ?, ?, '')
+                """,
+                (dataset_id, version_id, base_model, now, now),
+            )
+            project_id = int(cur.lastrowid)
+        return project_id, dataset_id, version_id
+
+    def add_completed_job(
+        self,
+        dataset_id: int,
+        version_id: int,
+        preset_id: str,
+        base_model: str = "D:/models/base.safetensors",
+        project_id: int | None = None,
+    ) -> int:
+        now = utc_now()
+        with connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO training_jobs(
+                    project_id, name, dataset_id, preset_id, status, model_family, training_script,
+                    base_model_path, output_name, output_dir, run_dir, params_json,
+                    return_code, output_model_count, dataset_version_id, created_at, updated_at
+                )
+                VALUES (?, 'completed job', ?, ?, 'completed', 'SDXL', 'sdxl_train_network.py',
+                    ?, 'out', 'outdir', 'rundir', '{}', 0, 1, ?, ?, ?)
+                """,
+                (project_id, dataset_id, preset_id, base_model, version_id, now, now),
+            )
+            return int(cur.lastrowid)
+
     def test_init_db_and_validation_presets(self) -> None:
         count = fetch_one("SELECT COUNT(*) AS count FROM validation_presets")["count"]
         standard = fetch_one("SELECT expected_image_count FROM validation_presets WHERE id = 'standard_validation_v1'")
         self.assertGreaterEqual(count, 3)
         self.assertEqual(standard["expected_image_count"], 45)
+
+    def test_pilot_recommendation_required_without_real_completed_job(self) -> None:
+        project_id, _, _ = self.create_project_fixture()
+        from app.main import pilot_recommendation
+
+        project = fetch_one("SELECT * FROM lora_projects WHERE id = ?", (project_id,))
+        guidance = pilot_recommendation(project)
+        self.assertEqual(guidance["label"], "REQUIRED")
+
+    def test_pilot_recommendation_skippable_with_same_standard_completed(self) -> None:
+        project_id, dataset_id, version_id = self.create_project_fixture()
+        self.add_completed_job(dataset_id, version_id, "sdxl_2d_face_standard_6epoch", project_id=project_id)
+        from app.main import pilot_recommendation
+
+        project = fetch_one("SELECT * FROM lora_projects WHERE id = ?", (project_id,))
+        guidance = pilot_recommendation(project)
+        self.assertEqual(guidance["label"], "SKIPPABLE")
+
+    def test_project_standard_creation_saves_pilot_skip_reason(self) -> None:
+        project_id, dataset_id, version_id = self.create_project_fixture()
+        self.add_completed_job(dataset_id, version_id, "sdxl_2d_face_pilot_3epoch", project_id=project_id)
+        from app.main import create_project_preset_job
+
+        reason = "Preflight OK、同一base modelで完走実績ありのためPilotスキップ"
+        job_id = create_project_preset_job(project_id, "sdxl_2d_face_standard_6epoch", reason)
+        job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
+        project = fetch_one("SELECT * FROM lora_projects WHERE id = ?", (project_id,))
+        self.assertEqual(job["preset_id"], "sdxl_2d_face_standard_6epoch")
+        self.assertEqual(job["dataset_version_id"], version_id)
+        self.assertIn(reason, project["memo"])
 
     def test_validation_image_outside_allowed_root_is_403(self) -> None:
         outside = self.make_png(self.root / "outside.png")

@@ -10,8 +10,10 @@
     <li><strong>トリガー整合性確認</strong><br>トリガーの出現率、captionの揺れ、混入タグを見ます。</li>
     <li><strong>caption修正</strong><br>必要に応じてprepend、replace、個別編集、restore previewを使います。</li>
     <li><strong>データセットバージョン作成</strong><br>caption整備後の状態をsnapshotとして残します。</li>
-    <li><strong>Pilot 3 Epoch</strong><br>Project内の最初の短時間ジョブとしてloss推移、epoch差、sample比較の導線を確認します。</li>
-    <li><strong>Standard 6 Epoch</strong><br>Pilotから同じProject内に新しいジョブを作成し、本番寄り条件で複数epochの変化と採用候補を見ます。</li>
+    <li><strong>Preflight Check</strong><br>ファイル準備後、base model、dataset、caption、設定ファイル、command argvを確認します。</li>
+    <li><strong>Pilot実行判定</strong><br>初回、新dataset、新base model、新preset、sd-scripts更新後はPilot推奨です。既に同条件で完走実績がありPreflightがOKならPilotはスキップできます。</li>
+    <li><strong>Pilot 3 Epoch または Standard 6 Epochへ進む</strong><br>Pilotは任意の軽量確認です。不安がある場合はPilotを挟み、動作確認済みならStandardへ直行します。</li>
+    <li><strong>Standard 6 Epoch</strong><br>同じProject内に新しいジョブを作成し、本番寄り条件で複数epochの変化と採用候補を見ます。</li>
     <li><strong>サンプル評価</strong><br>顔、衣装、スタイル、安定性、柔軟性、メモを保存します。</li>
     <li><strong>採用LoRA出力</strong><br>採用epochを選び、Project詳細からProject採用LoRAにも反映します。</li>
     <li><strong>検証プリセットで外部検証</strong><br>Quick、Standard、Extendedの順でreForge/WebUI生成用プロンプトパックを使います。</li>
