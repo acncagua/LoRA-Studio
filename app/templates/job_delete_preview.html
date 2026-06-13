@@ -1,0 +1,67 @@
+{% extends "base.html" %}{% block content %}
+<nav class="breadcrumbs"><a href="/">ダッシュボード</a><a href="/jobs">学習ジョブ一覧</a><a href="/jobs/{{ preview.job.id }}">学習ジョブ #{{ preview.job.id }}</a><span>削除Preview</span></nav>
+<header class="page-head">
+  <h1>学習ジョブ削除Preview #{{ preview.job.id }}</h1>
+  <div class="actions">
+    <a class="button" href="/jobs/{{ preview.job.id }}">戻る</a>
+  </div>
+</header>
+
+<section class="panel-grid">
+  <div>
+    <h2>対象</h2>
+    <dl>
+      <dt>学習ジョブ</dt><dd>#{{ preview.job.id }} {{ preview.job.name }}</dd>
+      <dt>状態</dt><dd>{{ status_labels.get(preview.job.status, preview.job.status) }}</dd>
+      <dt>実行フォルダ</dt><dd>{{ preview.run_dir }}</dd>
+      <dt>推定サイズ</dt><dd>{{ preview.folder_size_label }}</dd>
+      <dt>採用LoRA紐づき</dt><dd>{{ 'あり' if preview.selected_links else 'なし' }}</dd>
+    </dl>
+  </div>
+  <div>
+    <h2>影響範囲</h2>
+    <dl>
+      <dt>LoRA出力</dt><dd>{{ preview.counts.outputs }}</dd>
+      <dt>Sample画像</dt><dd>{{ preview.counts.samples }}</dd>
+      <dt>Metrics</dt><dd>{{ preview.counts.metrics }}</dd>
+      <dt>外部検証画像</dt><dd>{{ preview.counts.validation_images }}</dd>
+      <dt>外部検証Run</dt><dd>{{ preview.counts.validation_runs }}</dd>
+      <dt>次回実験提案</dt><dd>{{ preview.counts.recommendations }}</dd>
+      <dt>LoRAプロファイル</dt><dd>{{ preview.counts.profiles }}</dd>
+      <dt>Exportフォルダ</dt><dd>{{ preview.counts.exports }}</dd>
+    </dl>
+  </div>
+</section>
+
+{% if preview.warnings %}
+<section>
+  <h2>注意</h2>
+  <ul class="workflow-list">
+    {% for warning in preview.warnings %}
+    <li>{{ warning }}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<section class="panel-grid">
+  <form method="post" action="/jobs/{{ preview.job.id }}/archive">
+    <h2>アーカイブ推奨</h2>
+    <p class="muted">DB、runs、成果物は残したまま、通常一覧から非表示にします。</p>
+    <label>理由（任意）<input name="archived_reason" placeholder="例: テストラン整理"></label>
+    <button type="submit">削除せずアーカイブ</button>
+  </form>
+  <form method="post" action="/jobs/{{ preview.job.id }}/delete">
+    <h2>DBのみ論理削除</h2>
+    <p class="muted">初期版ではDBの deleted_at を設定するだけです。runsファイルは削除しません。</p>
+    <input type="hidden" name="delete_mode" value="db_only">
+    <label>削除理由<input name="delete_reason" placeholder="例: 未実行の下書き整理"></label>
+    <button type="submit" class="danger" {% if not preview.can_delete_db %}disabled{% endif %}>DBのみ削除</button>
+  </form>
+  <div>
+    <h2>DB + files削除</h2>
+    <p class="muted">物理ファイル削除は初期版では未実装です。Dataset画像、caption、base modelは削除対象外です。</p>
+    <span class="button disabled">未実装</span>
+  </div>
+</section>
+{% endblock %}

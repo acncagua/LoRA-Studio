@@ -44,6 +44,32 @@
 </section>
 
 <section>
+  <h2>整理候補</h2>
+  <p class="muted">古い下書き、未実行の準備済み、成果物なしの失敗/停止、結合確認、未採用の軽量確認などです。</p>
+  <table>
+    <thead><tr><th>ID</th><th>学習ジョブ名</th><th>状態</th><th>理由</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for job in cleanup_candidates %}
+      <tr>
+        <td><a href="/jobs/{{ job.id }}">#{{ job.id }}</a></td>
+        <td>{{ job.name }}</td>
+        <td>{{ job.status }}</td>
+        <td>{{ job.cleanup_reason }}</td>
+        <td>
+          <div class="actions compact-actions">
+            <form method="post" action="/jobs/{{ job.id }}/archive"><button class="small-button" type="submit">アーカイブ</button></form>
+            {% if job.actions.delete %}<a class="button small-button danger" href="/jobs/{{ job.id }}/delete-preview">削除確認</a>{% endif %}
+          </div>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">整理候補はありません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section>
   <h2>既知の警告</h2>
   <ul class="workflow-list">
     {% for warning in summary.warnings %}

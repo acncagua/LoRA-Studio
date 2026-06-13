@@ -72,6 +72,10 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "recommended_weight_min": "REAL",
             "recommended_weight_max": "REAL",
             "memo": "TEXT",
+            "archived_at": "TEXT",
+            "deleted_at": "TEXT",
+            "archive_reason": "TEXT",
+            "delete_reason": "TEXT",
         },
     )
     ensure_columns(
@@ -123,6 +127,10 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "dataset_version_id": "INTEGER",
             "project_id": "INTEGER",
             "updated_at": "TEXT",
+            "archived_at": "TEXT",
+            "deleted_at": "TEXT",
+            "archived_reason": "TEXT",
+            "delete_reason": "TEXT",
         },
     )
     ensure_columns(
@@ -1277,6 +1285,7 @@ CREATE TABLE IF NOT EXISTS lora_projects (
     base_model_path TEXT, status TEXT NOT NULL DEFAULT 'draft',
     selected_job_id INTEGER, selected_output_id INTEGER, selected_lora_profile_id INTEGER,
     recommended_weight_min REAL, recommended_weight_max REAL,
+    archived_at TEXT, deleted_at TEXT, archive_reason TEXT, delete_reason TEXT,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, memo TEXT
 );
 CREATE TABLE IF NOT EXISTS training_jobs (
@@ -1290,6 +1299,7 @@ CREATE TABLE IF NOT EXISTS training_jobs (
     trigger_word_at_creation TEXT, trigger_occurrence_count_at_creation INTEGER,
     trigger_occurrence_rate_at_creation REAL, trigger_consistency_label_at_creation TEXT,
     dataset_version_id INTEGER, config_dirty INTEGER NOT NULL DEFAULT 0,
+    archived_at TEXT, deleted_at TEXT, archived_reason TEXT, delete_reason TEXT,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS training_metrics (

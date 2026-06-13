@@ -76,6 +76,7 @@ dt { color: var(--muted); }
 dd { margin: 0; word-break: break-word; }
 pre { background: #18211e; color: #e9f2ed; padding: 14px; border-radius: 8px; overflow: auto; white-space: pre-wrap; }
 button, .button { border: 0; border-radius: 6px; background: var(--accent); color: white; padding: 9px 14px; font-weight: 600; cursor: pointer; }
+button.active, .button.active { background: var(--ink); color: white; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(240px, 1fr)); gap: 14px; }
 .form-grid.wide { max-width: 980px; }
 .wide-field { grid-column: 1 / -1; }

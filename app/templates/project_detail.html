@@ -6,6 +6,7 @@
     {% if project.selected_job_id %}<a class="button" href="/jobs/{{ project.selected_job_id }}">採用中の学習ジョブを開く</a>{% endif %}
     {% if project.selected_lora_profile_id %}<a class="button" href="/lora-library/{{ project.selected_lora_profile_id }}/edit">LoRAプロファイル</a>{% endif %}
     <a class="button" href="/jobs/new?project_id={{ project.id }}">このProjectに学習ジョブを追加</a>
+    {% if project.archived_at %}<form method="post" action="/projects/{{ project.id }}/restore"><button type="submit">アーカイブから復元</button></form>{% endif %}
   </div>
 </header>
 
@@ -21,6 +22,8 @@
       <dt>採用学習ジョブ</dt><dd>{% if project.selected_job_id %}<a href="/jobs/{{ project.selected_job_id }}">#{{ project.selected_job_id }} {{ project.selected_job_name or '' }}</a>{% else %}-{% endif %}</dd>
       <dt>採用LoRA</dt><dd>{{ project.selected_model_path or '-' }}</dd>
       <dt>推奨weight</dt><dd>{{ project.recommended_weight_min if project.recommended_weight_min is not none else '-' }} - {{ project.recommended_weight_max if project.recommended_weight_max is not none else '-' }}</dd>
+      <dt>アーカイブ</dt><dd>{% if project.archived_at %}{{ project.archived_at }}{% if project.archive_reason %} / {{ project.archive_reason }}{% endif %}{% else %}-{% endif %}</dd>
+      <dt>削除</dt><dd>{% if project.deleted_at %}{{ project.deleted_at }}{% if project.delete_reason %} / {{ project.delete_reason }}{% endif %}{% else %}-{% endif %}</dd>
       <dt>メモ</dt><dd>{{ project.memo or '-' }}</dd>
     </dl>
   </div>
@@ -132,5 +135,21 @@
       {% endfor %}
     </tbody>
   </table>
+</section>
+
+<section>
+  <h2>Project整理</h2>
+  <p class="muted">Projectは作業単位なので、標準操作はアーカイブ推奨です。Dataset画像、caption、base model、sd-scripts環境はProject整理では削除しません。</p>
+  <div class="actions">
+    {% if not project.archived_at and not project.deleted_at %}
+    <form method="post" action="/projects/{{ project.id }}/archive" class="form-grid">
+      <label>理由（任意）<input name="archive_reason" placeholder="例: テスト作業完了のため非表示"></label>
+      <label class="inline-check"><input type="checkbox" name="archive_jobs" value="1"> Project配下の実行中以外の学習ジョブもアーカイブ</label>
+      <button type="submit">Projectをアーカイブ</button>
+    </form>
+    {% endif %}
+    {% if project.archived_at and not project.deleted_at %}<form method="post" action="/projects/{{ project.id }}/restore"><button type="submit">Projectを復元</button></form>{% endif %}
+    <a class="button danger" href="/projects/{{ project.id }}/delete-preview">Project削除Previewを開く</a>
+  </div>
 </section>
 {% endblock %}

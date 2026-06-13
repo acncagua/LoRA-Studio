@@ -8,6 +8,14 @@
 </header>
 
 <section>
+  <div class="actions compact-actions">
+    {% for key, label in job_filters %}
+    <a class="button small-button {% if view == key %}active{% endif %}" href="/jobs?view={{ key }}">{{ label }}</a>
+    {% endfor %}
+  </div>
+</section>
+
+<section>
   <table class="wide-table jobs-table">
     <thead>
       <tr>
@@ -39,11 +47,41 @@
             {% if job.actions.run %}<form method="post" action="/jobs/{{ job.id }}/run"><button class="small-button" type="submit">実行</button></form>{% else %}<span class="button small-button disabled">実行</span>{% endif %}
             {% if job.actions.compare %}<a class="button small-button" href="/compare?job_a={{ job.id }}">比較</a>{% else %}<span class="button small-button disabled">比較</span>{% endif %}
             {% if job.actions.clone %}<form method="post" action="/jobs/{{ job.id }}/clone"><button class="small-button" type="submit">複製</button></form>{% else %}<span class="button small-button disabled">複製</span>{% endif %}
+            {% if job.actions.archive %}<form method="post" action="/jobs/{{ job.id }}/archive"><button class="small-button" type="submit">アーカイブ</button></form>{% endif %}
+            {% if job.actions.restore %}<form method="post" action="/jobs/{{ job.id }}/restore"><button class="small-button" type="submit">復元</button></form>{% endif %}
+            {% if job.actions.delete %}<a class="button small-button danger" href="/jobs/{{ job.id }}/delete-preview">削除</a>{% endif %}
           </div>
         </td>
       </tr>
       {% else %}
       <tr><td colspan="13" class="muted">学習ジョブはまだありません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>整理候補</h2>
+  <p class="muted">未実行、成果物なしの失敗/停止、結合確認、未採用の軽量確認など、一覧を見やすくする候補です。</p>
+  <table>
+    <thead><tr><th>ID</th><th>学習ジョブ名</th><th>状態</th><th>理由</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for job in cleanup_candidates %}
+      <tr>
+        <td><a href="/jobs/{{ job.id }}">#{{ job.id }}</a></td>
+        <td>{{ job.name }}</td>
+        <td>{{ status_labels.get(job.status, job.status) }}</td>
+        <td>{{ job.cleanup_reason }}</td>
+        <td>
+          <div class="actions compact-actions">
+            <form method="post" action="/jobs/{{ job.id }}/archive"><button class="small-button" type="submit">アーカイブ</button></form>
+            {% if job.actions.delete %}<a class="button small-button danger" href="/jobs/{{ job.id }}/delete-preview">削除確認</a>{% endif %}
+            <span class="button small-button disabled">残す</span>
+          </div>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">整理候補はありません。</td></tr>
       {% endfor %}
     </tbody>
   </table>

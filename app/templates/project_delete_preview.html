@@ -1,0 +1,55 @@
+{% extends "base.html" %}{% block content %}
+<nav class="breadcrumbs"><a href="/">ダッシュボード</a><a href="/projects">Project一覧</a><a href="/projects/{{ preview.project.id }}">Project #{{ preview.project.id }}</a><span>削除Preview</span></nav>
+<header class="page-head">
+  <h1>Project削除Preview #{{ preview.project.id }}</h1>
+  <div class="actions">
+    <a class="button" href="/projects/{{ preview.project.id }}">戻る</a>
+  </div>
+</header>
+
+<section class="panel-grid">
+  <div>
+    <h2>対象</h2>
+    <dl>
+      <dt>Project</dt><dd>#{{ preview.project.id }} {{ preview.project.name }}</dd>
+      <dt>状態</dt><dd>{{ preview.project.status }}</dd>
+      <dt>採用LoRA紐づき</dt><dd>{{ 'あり' if preview.selected_links else 'なし' }}</dd>
+      <dt>runs総サイズ</dt><dd>{{ preview.runs_size_label }}</dd>
+      <dt>exports参考サイズ</dt><dd>{{ preview.exports_size_label }}</dd>
+    </dl>
+  </div>
+  <div>
+    <h2>影響範囲</h2>
+    <dl>
+      <dt>学習ジョブ</dt><dd>{{ preview.counts.jobs }}</dd>
+      <dt>完了ジョブ</dt><dd>{{ preview.counts.completed_jobs }}</dd>
+      <dt>下書き/準備済みジョブ</dt><dd>{{ preview.counts.draft_jobs }}</dd>
+      <dt>LoRAプロファイル</dt><dd>{{ preview.counts.profiles }}</dd>
+      <dt>外部検証Run</dt><dd>{{ preview.counts.validation_runs }}</dd>
+      <dt>次回実験提案</dt><dd>{{ preview.counts.recommendations }}</dd>
+    </dl>
+  </div>
+</section>
+
+<section class="panel-grid">
+  <form method="post" action="/projects/{{ preview.project.id }}/archive">
+    <h2>Projectだけアーカイブ</h2>
+    <p class="muted">Projectを通常一覧から非表示にします。配下の学習ジョブはそのまま残します。</p>
+    <label>理由（任意）<input name="archive_reason" placeholder="例: 作業完了のため整理"></label>
+    <button type="submit">Projectだけアーカイブ</button>
+  </form>
+  <form method="post" action="/projects/{{ preview.project.id }}/archive">
+    <h2>Projectと配下ジョブをアーカイブ</h2>
+    <p class="muted">Projectに加えて、実行中以外の配下学習ジョブも通常一覧から非表示にします。</p>
+    <input type="hidden" name="archive_jobs" value="1">
+    <label>理由（任意）<input name="archive_reason" placeholder="例: Projectごと整理"></label>
+    <button type="submit">まとめてアーカイブ</button>
+  </form>
+  <form method="post" action="/projects/{{ preview.project.id }}/delete">
+    <h2>Projectを論理削除</h2>
+    <p class="muted">Dataset画像、caption、base model、sd-scripts環境は削除しません。採用LoRA紐づきがあるProjectは拒否します。</p>
+    <label>削除理由<input name="delete_reason" placeholder="例: 誤作成Project"></label>
+    <button type="submit" class="danger" {% if preview.selected_links %}disabled{% endif %}>Projectを論理削除</button>
+  </form>
+</section>
+{% endblock %}

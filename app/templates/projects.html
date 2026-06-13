@@ -6,6 +6,12 @@
 
 <section>
   <p class="muted">Projectは1つのLoRA作成作業です。学習ジョブ、採用LoRA、外部検証、次回実験提案をまとめて確認できます。</p>
+  <div class="actions compact-actions">
+    <a class="button small-button {% if view == 'active' %}active{% endif %}" href="/projects?view=active">有効</a>
+    <a class="button small-button {% if view == 'archived' %}active{% endif %}" href="/projects?view=archived">アーカイブ</a>
+    <a class="button small-button {% if view == 'deleted' %}active{% endif %}" href="/projects?view=deleted">削除済み</a>
+    <a class="button small-button {% if view == 'all' %}active{% endif %}" href="/projects?view=all">すべて</a>
+  </div>
   <table>
     <thead>
       <tr>
@@ -31,6 +37,7 @@
             <a class="button small-button" href="/projects/{{ project.id }}">Projectを開く</a>
             {% if project.selected_job_id %}<a class="button small-button" href="/jobs/{{ project.selected_job_id }}">採用ジョブ</a>{% endif %}
             {% if project.selected_lora_profile_id %}<a class="button small-button" href="/lora-library/{{ project.selected_lora_profile_id }}/edit">プロファイル</a>{% endif %}
+            {% if project.archived_at and not project.deleted_at %}<form method="post" action="/projects/{{ project.id }}/restore"><button class="small-button" type="submit">復元</button></form>{% endif %}
           </div>
         </td>
       </tr>

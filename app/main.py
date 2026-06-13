@@ -183,6 +183,30 @@ def display_status_text(text: str | None) -> str:
     return value
 
 
+def job_filter_where(view: str) -> str:
+    if view == "all":
+        return "1 = 1"
+    if view == "archived":
+        return "j.archived_at IS NOT NULL AND j.deleted_at IS NULL"
+    if view == "deleted":
+        return "j.deleted_at IS NOT NULL"
+    if view in {"draft", "running", "completed", "failed"}:
+        return f"j.status = '{view}' AND j.archived_at IS NULL AND j.deleted_at IS NULL"
+    if view == "prepared":
+        return "j.status IN ('prepared', 'prepared_dirty') AND j.archived_at IS NULL AND j.deleted_at IS NULL"
+    return "j.archived_at IS NULL AND j.deleted_at IS NULL"
+
+
+def project_filter_where(view: str) -> str:
+    if view == "all":
+        return "1 = 1"
+    if view == "archived":
+        return "p.archived_at IS NOT NULL AND p.deleted_at IS NULL"
+    if view == "deleted":
+        return "p.deleted_at IS NOT NULL"
+    return "p.archived_at IS NULL AND p.deleted_at IS NULL"
+
+
 def validate_sample_prompt_template_id(template_id: str) -> str:
     value = template_id.strip()
     if not re.fullmatch(r"[A-Za-z0-9_-]{3,80}", value):
@@ -358,6 +382,17 @@ def is_windows() -> bool:
     return sys.platform == "win32"
 
 
+def row_value(row: Any, key: str, default: Any = None) -> Any:
+    if row is None:
+        return default
+    if isinstance(row, dict):
+        return row.get(key, default)
+    try:
+        return row[key] if key in row.keys() else default
+    except AttributeError:
+        return getattr(row, key, default)
+
+
 STATUS_LABELS = {
     "draft": "下書き",
     "prepared": "準備済み",
@@ -369,24 +404,41 @@ STATUS_LABELS = {
 }
 
 EDITABLE_JOB_STATUSES = {"draft", "prepared", "prepared_dirty", "failed", "stopped"}
+DELETABLE_JOB_STATUSES = {"draft", "prepared", "prepared_dirty"}
+JOB_FILTERS = [
+    ("active", "有効"),
+    ("draft", "下書き"),
+    ("prepared", "準備済み"),
+    ("running", "実行中"),
+    ("completed", "完了"),
+    ("failed", "失敗"),
+    ("archived", "アーカイブ"),
+    ("deleted", "削除済み"),
+    ("all", "すべて"),
+]
 
 
 def job_action_state(job: Any, selected_output: Any | None = None) -> dict[str, Any]:
     status = job["status"]
     dirty = bool(job["config_dirty"] if "config_dirty" in job.keys() else 0)
+    archived = bool(row_value(job, "archived_at"))
+    deleted = bool(row_value(job, "deleted_at"))
     return {
-        "edit": status in EDITABLE_JOB_STATUSES,
-        "prepare": status in {"draft", "prepared", "prepared_dirty", "failed", "stopped"},
+        "edit": status in EDITABLE_JOB_STATUSES and not archived and not deleted,
+        "prepare": status in {"draft", "prepared", "prepared_dirty", "failed", "stopped"} and not archived and not deleted,
         "preflight": status == "prepared" and not dirty,
-        "run": status in {"prepared", "failed", "stopped"} and not dirty,
+        "run": status in {"prepared", "failed", "stopped"} and not dirty and not archived and not deleted,
         "stop": status == "running",
         "reimport": status in {"completed", "failed", "stopped"},
         "select": status == "completed",
-        "clone": status != "running",
-        "revised": status in {"running", "completed"},
+        "clone": status != "running" and not deleted,
+        "revised": status in {"running", "completed"} and not deleted,
         "compare": status == "completed",
         "export": status == "completed" and selected_output is not None,
         "contact_sheet": status == "completed",
+        "archive": status != "running" and not archived and not deleted,
+        "restore": archived and not deleted,
+        "delete": status in DELETABLE_JOB_STATUSES and not deleted,
         "dirty": dirty,
     }
 
@@ -499,9 +551,10 @@ def create_lora_project(data: dict[str, Any]) -> int:
         return int(cur.lastrowid)
 
 
-def recent_projects(limit: int = 8) -> list[dict[str, Any]]:
+def recent_projects(limit: int = 8, view: str = "active") -> list[dict[str, Any]]:
+    where = project_filter_where(view)
     rows = fetch_all(
-        """
+        f"""
         SELECT p.*, d.name AS dataset_name, sj.name AS selected_job_name,
                so.epoch AS selected_epoch, vr.status AS latest_validation_status
         FROM lora_projects p
@@ -511,6 +564,7 @@ def recent_projects(limit: int = 8) -> list[dict[str, Any]]:
         LEFT JOIN validation_runs vr ON vr.id = (
             SELECT id FROM validation_runs WHERE project_id = p.id ORDER BY id DESC LIMIT 1
         )
+        WHERE {where}
         ORDER BY p.updated_at DESC, p.id DESC
         LIMIT ?
         """,
@@ -701,7 +755,7 @@ def project_training_jobs(project_id: int) -> list[dict[str, Any]]:
         LEFT JOIN presets p ON p.id = j.preset_id
         LEFT JOIN training_metric_summaries s ON s.job_id = j.id
         LEFT JOIN training_outputs o ON o.job_id = j.id AND o.selected = 1
-        WHERE j.project_id = ?
+        WHERE j.project_id = ? AND j.deleted_at IS NULL
         ORDER BY j.id
         """,
         (project_id,),
@@ -716,6 +770,143 @@ def project_training_jobs(project_id: int) -> list[dict[str, Any]]:
         item["max_train_epochs"] = params.get("max_train_epochs") or params.get("max_train_steps") or "-"
         jobs.append(item)
     return jobs
+
+
+def folder_size(path_value: str | None) -> int:
+    if not path_value:
+        return 0
+    root = Path(path_value)
+    if not root.exists():
+        return 0
+    total = 0
+    for path in root.rglob("*"):
+        if path.is_file():
+            try:
+                total += path.stat().st_size
+            except OSError:
+                pass
+    return total
+
+
+def format_bytes(size: int) -> str:
+    value = float(size)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if value < 1024 or unit == "TB":
+            return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
+        value /= 1024
+    return f"{size} B"
+
+
+def job_delete_preview(job_id: int) -> dict[str, Any]:
+    job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    counts = {
+        "outputs": fetch_one("SELECT COUNT(*) AS count FROM training_outputs WHERE job_id = ?", (job_id,))["count"],
+        "samples": fetch_one("SELECT COUNT(*) AS count FROM sample_images WHERE job_id = ?", (job_id,))["count"],
+        "metrics": fetch_one("SELECT COUNT(*) AS count FROM training_metrics WHERE job_id = ?", (job_id,))["count"],
+        "validation_images": fetch_one("SELECT COUNT(*) AS count FROM validation_images WHERE job_id = ?", (job_id,))["count"],
+        "validation_runs": fetch_one("SELECT COUNT(*) AS count FROM validation_runs WHERE job_id = ?", (job_id,))["count"],
+        "recommendations": fetch_one("SELECT COUNT(*) AS count FROM experiment_recommendations WHERE source_job_id = ? OR created_job_id = ?", (job_id, job_id))["count"],
+        "profiles": fetch_one("SELECT COUNT(*) AS count FROM selected_lora_profiles WHERE job_id = ?", (job_id,))["count"],
+        "exports": 0,
+    }
+    export_dirs = [
+        settings.EXPORTS_DIR / "selected_loras" / f"job_{job_id:06d}",
+        settings.EXPORTS_DIR / "contact_sheets" / f"job_{job_id:06d}",
+        settings.EXPORTS_DIR / "validation_packs" / f"job_{job_id:06d}",
+        settings.EXPORTS_DIR / "recommendations" / f"job_{job_id:06d}",
+    ]
+    counts["exports"] = sum(1 for directory in export_dirs if directory.exists())
+    selected_links = (
+        int(counts["profiles"] or 0) > 0
+        or bool(job["adopted_model_path"])
+        or bool(fetch_one("SELECT 1 FROM training_outputs WHERE job_id = ? AND selected = 1 LIMIT 1", (job_id,)))
+        or bool(fetch_one("SELECT 1 FROM lora_projects WHERE selected_job_id = ? OR selected_output_id IN (SELECT id FROM training_outputs WHERE job_id = ?) LIMIT 1", (job_id, job_id)))
+    )
+    status = job["status"]
+    can_delete_db = status in DELETABLE_JOB_STATUSES and not selected_links and not row_value(job, "deleted_at")
+    warnings = []
+    if status == "completed":
+        warnings.append("完了済み学習ジョブは再現性維持のため、削除ではなくアーカイブ推奨です。")
+    if selected_links:
+        warnings.append("採用LoRAまたはLoRAライブラリに紐づいているため、完全削除は拒否します。")
+    if counts["outputs"] or counts["samples"] or counts["metrics"]:
+        warnings.append("成果物・sample・metricsがあります。削除すると後から比較しづらくなります。")
+    size = folder_size(job["run_dir"])
+    return {
+        "job": job,
+        "counts": counts,
+        "run_dir": job["run_dir"],
+        "folder_size": size,
+        "folder_size_label": format_bytes(size),
+        "selected_links": selected_links,
+        "can_delete_db": can_delete_db,
+        "warnings": warnings,
+    }
+
+
+def project_delete_preview(project_id: int) -> dict[str, Any]:
+    project = fetch_one("SELECT * FROM lora_projects WHERE id = ?", (project_id,))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    counts = {
+        "jobs": fetch_one("SELECT COUNT(*) AS count FROM training_jobs WHERE project_id = ? AND deleted_at IS NULL", (project_id,))["count"],
+        "completed_jobs": fetch_one("SELECT COUNT(*) AS count FROM training_jobs WHERE project_id = ? AND status = 'completed' AND deleted_at IS NULL", (project_id,))["count"],
+        "draft_jobs": fetch_one("SELECT COUNT(*) AS count FROM training_jobs WHERE project_id = ? AND status IN ('draft','prepared','prepared_dirty') AND deleted_at IS NULL", (project_id,))["count"],
+        "profiles": fetch_one("SELECT COUNT(*) AS count FROM selected_lora_profiles WHERE project_id = ?", (project_id,))["count"],
+        "validation_runs": fetch_one("SELECT COUNT(*) AS count FROM validation_runs WHERE project_id = ?", (project_id,))["count"],
+        "recommendations": fetch_one("SELECT COUNT(*) AS count FROM experiment_recommendations WHERE project_id = ?", (project_id,))["count"],
+    }
+    job_dirs = fetch_all("SELECT run_dir FROM training_jobs WHERE project_id = ?", (project_id,))
+    runs_size = sum(folder_size(row["run_dir"]) for row in job_dirs)
+    exports_size = folder_size(str(settings.EXPORTS_DIR / "selected_loras"))
+    selected_links = bool(project["selected_job_id"] or project["selected_output_id"] or project["selected_lora_profile_id"] or counts["profiles"])
+    return {
+        "project": project,
+        "counts": counts,
+        "runs_size": runs_size,
+        "runs_size_label": format_bytes(runs_size),
+        "exports_size": exports_size,
+        "exports_size_label": format_bytes(exports_size),
+        "selected_links": selected_links,
+    }
+
+
+def cleanup_job_candidates(limit: int = 30) -> list[dict[str, Any]]:
+    rows = fetch_all(
+        """
+        SELECT j.*, p.name AS preset_name,
+               (SELECT COUNT(*) FROM training_outputs o WHERE o.job_id = j.id) AS output_count
+        FROM training_jobs j
+        LEFT JOIN presets p ON p.id = j.preset_id
+        WHERE j.archived_at IS NULL
+          AND j.deleted_at IS NULL
+          AND (
+              j.status IN ('draft', 'prepared', 'prepared_dirty')
+              OR (j.status IN ('failed', 'stopped') AND COALESCE(j.output_model_count, 0) = 0)
+              OR j.preset_id = ?
+              OR (LOWER(COALESCE(j.name, '') || ' ' || COALESCE(j.preset_id, '')) LIKE '%pilot%' AND j.adopted_model_path IS NULL)
+              OR LOWER(COALESCE(j.name, '')) LIKE '%test%'
+          )
+        ORDER BY j.updated_at ASC, j.id ASC
+        LIMIT ?
+        """,
+        (INTEGRATION_SMOKE_PRESET_ID, limit),
+    )
+    candidates = []
+    for row in rows:
+        reason = "整理候補"
+        if row["status"] in {"draft", "prepared", "prepared_dirty"}:
+            reason = "未実行の下書き/準備済みです。不要なら削除できます。"
+        elif row["status"] in {"failed", "stopped"} and int(row["output_count"] or 0) == 0:
+            reason = "成果物がない失敗/停止ジョブです。"
+        elif row["preset_id"] == INTEGRATION_SMOKE_PRESET_ID:
+            reason = "結合確認ジョブです。完了後はアーカイブ候補です。"
+        elif "pilot" in ((row["preset_id"] or "") + " " + (row["name"] or "")).lower():
+            reason = "未採用の軽量確認ジョブです。"
+        candidates.append({**dict(row), "cleanup_reason": reason, "actions": job_action_state(row, None)})
+    return candidates
 
 
 def update_project_selected_from_job(project_id: int, job_id: int) -> None:
@@ -756,18 +947,25 @@ def dashboard(request: Request) -> HTMLResponse:
     stats = {
         "presets": fetch_one("SELECT COUNT(*) AS count FROM presets")["count"],
         "datasets": fetch_one("SELECT COUNT(*) AS count FROM datasets")["count"],
-        "jobs": fetch_one("SELECT COUNT(*) AS count FROM training_jobs")["count"],
-        "running": fetch_one("SELECT COUNT(*) AS count FROM training_jobs WHERE status = 'running'")["count"],
-        "completed": fetch_one("SELECT COUNT(*) AS count FROM training_jobs WHERE status = 'completed'")["count"],
-        "failed": fetch_one("SELECT COUNT(*) AS count FROM training_jobs WHERE status = 'failed'")["count"],
-        "stopped": fetch_one("SELECT COUNT(*) AS count FROM training_jobs WHERE status = 'stopped'")["count"],
+        "jobs": fetch_one("SELECT COUNT(*) AS count FROM training_jobs WHERE archived_at IS NULL AND deleted_at IS NULL")["count"],
+        "running": fetch_one("SELECT COUNT(*) AS count FROM training_jobs WHERE status = 'running' AND archived_at IS NULL AND deleted_at IS NULL")["count"],
+        "completed": fetch_one("SELECT COUNT(*) AS count FROM training_jobs WHERE status = 'completed' AND archived_at IS NULL AND deleted_at IS NULL")["count"],
+        "failed": fetch_one("SELECT COUNT(*) AS count FROM training_jobs WHERE status = 'failed' AND archived_at IS NULL AND deleted_at IS NULL")["count"],
+        "stopped": fetch_one("SELECT COUNT(*) AS count FROM training_jobs WHERE status = 'stopped' AND archived_at IS NULL AND deleted_at IS NULL")["count"],
+        "active_projects": fetch_one("SELECT COUNT(*) AS count FROM lora_projects WHERE archived_at IS NULL AND deleted_at IS NULL")["count"],
+        "archived_projects": fetch_one("SELECT COUNT(*) AS count FROM lora_projects WHERE archived_at IS NOT NULL AND deleted_at IS NULL")["count"],
+        "archived_jobs": fetch_one("SELECT COUNT(*) AS count FROM training_jobs WHERE archived_at IS NOT NULL AND deleted_at IS NULL")["count"],
+        "draft_jobs": fetch_one("SELECT COUNT(*) AS count FROM training_jobs WHERE status = 'draft' AND archived_at IS NULL AND deleted_at IS NULL")["count"],
     }
-    jobs = fetch_all("SELECT * FROM training_jobs ORDER BY id DESC LIMIT 8")
+    jobs = fetch_all("SELECT * FROM training_jobs WHERE archived_at IS NULL AND deleted_at IS NULL ORDER BY id DESC LIMIT 8")
     attention_jobs = fetch_all(
         """
         SELECT * FROM training_jobs
-        WHERE status IN ('draft', 'prepared', 'prepared_dirty', 'failed', 'running')
+        WHERE archived_at IS NULL
+          AND deleted_at IS NULL
+          AND (status IN ('draft', 'prepared', 'prepared_dirty', 'failed', 'running')
            OR COALESCE(config_dirty, 0) = 1
+          )
         ORDER BY
             CASE status
                 WHEN 'running' THEN 1
@@ -783,6 +981,7 @@ def dashboard(request: Request) -> HTMLResponse:
     )
     validation_profiles = lora_library_profiles(limit=6)
     projects = recent_projects(limit=6)
+    cleanup_candidates = cleanup_job_candidates(limit=8)
     return render(
         request,
         "dashboard.html",
@@ -791,17 +990,21 @@ def dashboard(request: Request) -> HTMLResponse:
         attention_jobs=attention_jobs,
         validation_profiles=validation_profiles,
         projects=projects,
+        cleanup_candidates=cleanup_candidates,
         status_labels=STATUS_LABELS,
         project_status_labels=PROJECT_STATUS_LABELS,
     )
 
 
 @app.get("/projects", response_class=HTMLResponse)
-def projects_list(request: Request) -> HTMLResponse:
+def projects_list(request: Request, view: str = Query("active")) -> HTMLResponse:
+    if view not in {"active", "archived", "deleted", "all"}:
+        view = "active"
     return render(
         request,
         "projects.html",
-        projects=recent_projects(limit=100),
+        projects=recent_projects(limit=100, view=view),
+        view=view,
         project_status_labels=PROJECT_STATUS_LABELS,
     )
 
@@ -889,6 +1092,70 @@ def project_select_job(project_id: int, job_id: int) -> RedirectResponse:
     return RedirectResponse(f"/projects/{project_id}", status_code=303)
 
 
+@app.post("/projects/{project_id}/archive")
+def project_archive(
+    project_id: int,
+    archive_reason: str = Form(""),
+    archive_jobs: str = Form(""),
+) -> RedirectResponse:
+    project = fetch_one("SELECT * FROM lora_projects WHERE id = ?", (project_id,))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    now = settings_now()
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE lora_projects
+            SET archived_at = COALESCE(archived_at, ?), archive_reason = ?, updated_at = ?
+            WHERE id = ? AND deleted_at IS NULL
+            """,
+            (now, archive_reason.strip(), now, project_id),
+        )
+        if archive_jobs == "1":
+            conn.execute(
+                """
+                UPDATE training_jobs
+                SET archived_at = COALESCE(archived_at, ?), archived_reason = ?, updated_at = ?
+                WHERE project_id = ? AND deleted_at IS NULL AND status != 'running'
+                """,
+                (now, f"Project #{project_id} のアーカイブに合わせて整理", now, project_id),
+            )
+    return RedirectResponse("/projects?view=archived", status_code=303)
+
+
+@app.post("/projects/{project_id}/restore")
+def project_restore(project_id: int) -> RedirectResponse:
+    with connect() as conn:
+        conn.execute(
+            "UPDATE lora_projects SET archived_at = NULL, archive_reason = NULL, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
+            (settings_now(), project_id),
+        )
+    return RedirectResponse(f"/projects/{project_id}", status_code=303)
+
+
+@app.get("/projects/{project_id}/delete-preview", response_class=HTMLResponse)
+def project_delete_preview_page(request: Request, project_id: int) -> HTMLResponse:
+    return render(request, "project_delete_preview.html", preview=project_delete_preview(project_id))
+
+
+@app.post("/projects/{project_id}/delete")
+def project_delete(project_id: int, delete_reason: str = Form("")) -> RedirectResponse:
+    preview = project_delete_preview(project_id)
+    if preview["selected_links"]:
+        raise HTTPException(status_code=400, detail="採用LoRAに紐づくProjectは削除できません。先に採用状態を見直すか、アーカイブしてください。")
+    now = settings_now()
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE lora_projects
+            SET deleted_at = COALESCE(deleted_at, ?), delete_reason = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (now, delete_reason.strip(), now, project_id),
+        )
+    return RedirectResponse("/projects?view=deleted", status_code=303)
+
+
 @app.post("/jobs/{job_id}/sync-project-selection")
 def job_sync_project_selection(job_id: int) -> RedirectResponse:
     job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
@@ -904,6 +1171,7 @@ def maintenance(request: Request, backup_path: str = "", diagnostics_path: str =
         request,
         "maintenance.html",
         summary=maintenance_summary(),
+        cleanup_candidates=cleanup_job_candidates(limit=20),
         backup_path=backup_path,
         diagnostics_path=diagnostics_path,
     )
@@ -1395,9 +1663,12 @@ def decode_analysis(row: Any) -> dict[str, Any]:
 
 
 @app.get("/jobs", response_class=HTMLResponse)
-def jobs_list(request: Request) -> HTMLResponse:
+def jobs_list(request: Request, view: str = Query("active")) -> HTMLResponse:
+    if view not in {key for key, _ in JOB_FILTERS}:
+        view = "active"
+    where = job_filter_where(view)
     rows = fetch_all(
-        """
+        f"""
         SELECT
             j.*,
             d.name AS dataset_name,
@@ -1408,6 +1679,7 @@ def jobs_list(request: Request) -> HTMLResponse:
         LEFT JOIN datasets d ON d.id = j.dataset_id
         LEFT JOIN presets p ON p.id = j.preset_id
         LEFT JOIN training_metric_summaries s ON s.job_id = j.id
+        WHERE {where}
         ORDER BY j.id DESC
         """
     )
@@ -1417,7 +1689,68 @@ def jobs_list(request: Request) -> HTMLResponse:
         item["latest_action"] = job_latest_action(row)
         item["actions"] = job_action_state(row, None)
         jobs.append(item)
-    return render(request, "jobs.html", jobs=jobs, status_labels=STATUS_LABELS)
+    return render(
+        request,
+        "jobs.html",
+        jobs=jobs,
+        view=view,
+        job_filters=JOB_FILTERS,
+        cleanup_candidates=cleanup_job_candidates(limit=12),
+        status_labels=STATUS_LABELS,
+    )
+
+
+@app.post("/jobs/{job_id}/archive")
+def job_archive(job_id: int, archived_reason: str = Form("")) -> RedirectResponse:
+    job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job["status"] == "running":
+        raise HTTPException(status_code=400, detail="実行中の学習ジョブはアーカイブできません。先に停止してください。")
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE training_jobs
+            SET archived_at = COALESCE(archived_at, ?), archived_reason = ?, updated_at = ?
+            WHERE id = ? AND deleted_at IS NULL
+            """,
+            (settings_now(), archived_reason.strip(), settings_now(), job_id),
+        )
+    return RedirectResponse("/jobs?view=archived", status_code=303)
+
+
+@app.post("/jobs/{job_id}/restore")
+def job_restore(job_id: int) -> RedirectResponse:
+    with connect() as conn:
+        conn.execute(
+            "UPDATE training_jobs SET archived_at = NULL, archived_reason = NULL, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
+            (settings_now(), job_id),
+        )
+    return RedirectResponse(f"/jobs/{job_id}", status_code=303)
+
+
+@app.get("/jobs/{job_id}/delete-preview", response_class=HTMLResponse)
+def job_delete_preview_page(request: Request, job_id: int) -> HTMLResponse:
+    return render(request, "job_delete_preview.html", preview=job_delete_preview(job_id), status_labels=STATUS_LABELS)
+
+
+@app.post("/jobs/{job_id}/delete")
+def job_delete(job_id: int, delete_reason: str = Form(""), delete_mode: str = Form("db_only")) -> RedirectResponse:
+    preview = job_delete_preview(job_id)
+    if delete_mode != "db_only":
+        raise HTTPException(status_code=400, detail="ファイル削除は初期版では未実装です。DBのみ削除を選んでください。")
+    if not preview["can_delete_db"]:
+        raise HTTPException(status_code=400, detail="この学習ジョブは削除できません。アーカイブを使ってください。")
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE training_jobs
+            SET deleted_at = COALESCE(deleted_at, ?), delete_reason = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (settings_now(), delete_reason.strip(), settings_now(), job_id),
+        )
+    return RedirectResponse("/jobs?view=deleted", status_code=303)
 
 
 @app.get("/jobs/new", response_class=HTMLResponse)

@@ -132,11 +132,94 @@ class Phase107StabilizationTests(IsolatedDbTest):
             )
             return int(cur.lastrowid)
 
+    def add_job_with_status(self, status: str, project_id: int | None = None, name: str = "cleanup test") -> int:
+        _, dataset_id, version_id = self.create_project_fixture() if project_id is None else (project_id, 1, 1)
+        now = utc_now()
+        with connect() as conn:
+            if project_id is not None:
+                dataset_row = conn.execute("SELECT dataset_id, current_dataset_version_id FROM lora_projects WHERE id = ?", (project_id,)).fetchone()
+                dataset_id = dataset_row["dataset_id"]
+                version_id = dataset_row["current_dataset_version_id"]
+            cur = conn.execute(
+                """
+                INSERT INTO training_jobs(
+                    project_id, name, dataset_id, preset_id, status, model_family, training_script,
+                    base_model_path, output_name, output_dir, run_dir, params_json,
+                    dataset_version_id, created_at, updated_at
+                )
+                VALUES (?, ?, ?, 'sdxl_2d_face_adamw8bit_standard', ?, 'SDXL', 'sdxl_train_network.py',
+                    'D:/models/base.safetensors', 'out', 'outdir', ?, '{}', ?, ?, ?)
+                """,
+                (project_id, name, dataset_id, status, str(self.root / "runs" / name), version_id, now, now),
+            )
+            return int(cur.lastrowid)
+
     def test_init_db_and_validation_presets(self) -> None:
         count = fetch_one("SELECT COUNT(*) AS count FROM validation_presets")["count"]
         standard = fetch_one("SELECT expected_image_count FROM validation_presets WHERE id = 'standard_validation_v1'")
         self.assertGreaterEqual(count, 3)
         self.assertEqual(standard["expected_image_count"], 45)
+
+    def test_job_archive_restore_and_delete_draft(self) -> None:
+        from app.main import job_archive, job_delete, job_restore
+
+        job_id = self.add_job_with_status("draft", name="draft cleanup")
+        job_archive(job_id, "整理")
+        archived = fetch_one("SELECT archived_at, archived_reason FROM training_jobs WHERE id = ?", (job_id,))
+        self.assertTrue(archived["archived_at"])
+        self.assertEqual(archived["archived_reason"], "整理")
+
+        job_restore(job_id)
+        restored = fetch_one("SELECT archived_at FROM training_jobs WHERE id = ?", (job_id,))
+        self.assertIsNone(restored["archived_at"])
+
+        job_delete(job_id, "未実行のため削除", "db_only")
+        deleted = fetch_one("SELECT deleted_at, delete_reason FROM training_jobs WHERE id = ?", (job_id,))
+        self.assertTrue(deleted["deleted_at"])
+        self.assertEqual(deleted["delete_reason"], "未実行のため削除")
+
+    def test_selected_completed_job_delete_is_rejected(self) -> None:
+        project_id, dataset_id, version_id = self.create_project_fixture()
+        job_id = self.add_completed_job(dataset_id, version_id, "sdxl_2d_face_standard_6epoch", project_id=project_id)
+        now = utc_now()
+        with connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO training_outputs(job_id, file_path, file_type, selected, created_at)
+                VALUES (?, 'D:/runs/job/model.safetensors', 'model', 1, ?)
+                """,
+                (job_id, now),
+            )
+        from app.main import job_delete, job_delete_preview
+
+        preview = job_delete_preview(job_id)
+        self.assertTrue(preview["selected_links"])
+        self.assertFalse(preview["can_delete_db"])
+        with self.assertRaises(HTTPException):
+            job_delete(job_id, "danger", "db_only")
+
+    def test_project_archive_restore_with_jobs(self) -> None:
+        project_id, _, _ = self.create_project_fixture()
+        job_id = self.add_job_with_status("draft", project_id=project_id, name="project child")
+        from app.main import project_archive, project_restore
+
+        project_archive(project_id, "Project整理", "1")
+        project = fetch_one("SELECT archived_at, archive_reason FROM lora_projects WHERE id = ?", (project_id,))
+        job = fetch_one("SELECT archived_at FROM training_jobs WHERE id = ?", (job_id,))
+        self.assertTrue(project["archived_at"])
+        self.assertEqual(project["archive_reason"], "Project整理")
+        self.assertTrue(job["archived_at"])
+
+        project_restore(project_id)
+        restored = fetch_one("SELECT archived_at FROM lora_projects WHERE id = ?", (project_id,))
+        self.assertIsNone(restored["archived_at"])
+
+    def test_cleanup_candidates_include_unexecuted_jobs(self) -> None:
+        job_id = self.add_job_with_status("prepared", name="old prepared")
+        from app.main import cleanup_job_candidates
+
+        ids = {row["id"] for row in cleanup_job_candidates(limit=20)}
+        self.assertIn(job_id, ids)
 
     def test_pilot_recommendation_required_without_real_completed_job(self) -> None:
         project_id, _, _ = self.create_project_fixture()

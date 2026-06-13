@@ -54,6 +54,8 @@
     {% if action_state.compare %}<a class="button" href="/compare?job_a={{ job.id }}">比較</a>{% else %}<span class="button disabled">比較</span>{% endif %}
     {% if action_state.export %}<form method="post" action="/jobs/{{ job.id }}/export-selected-lora"><button type="submit">採用LoRA出力</button></form>{% else %}<span class="button disabled">採用LoRA出力</span>{% endif %}
     {% if action_state.contact_sheet %}<form method="post" action="/jobs/{{ job.id }}/export-contact-sheet"><button type="submit">コンタクトシート出力</button></form>{% else %}<span class="button disabled">コンタクトシート出力</span>{% endif %}
+    {% if action_state.archive %}<form method="post" action="/jobs/{{ job.id }}/archive"><button type="submit">アーカイブ</button></form>{% endif %}
+    {% if action_state.restore %}<form method="post" action="/jobs/{{ job.id }}/restore"><button type="submit">アーカイブから復元</button></form>{% endif %}
   </div>
 </section>
 {% if project and job.status == 'prepared' and pilot_guidance %}
@@ -98,6 +100,8 @@
       <dt>Step確認</dt><dd><span class="label {{ (job.step_consistency_label or 'unknown')|lower }}">{{ job.step_consistency_label or '-' }}</span> {{ job.step_consistency_message or '' }}</dd>
       <dt>no_metadata</dt><dd>{{ '有効' if no_metadata_enabled else '無効' }}</dd>
       <dt>実行フォルダ</dt><dd>{{ job.run_dir }}</dd>
+      <dt>アーカイブ</dt><dd>{% if job.archived_at %}{{ job.archived_at }}{% if job.archived_reason %} / {{ job.archived_reason }}{% endif %}{% else %}-{% endif %}</dd>
+      <dt>削除</dt><dd>{% if job.deleted_at %}{{ job.deleted_at }}{% if job.delete_reason %} / {{ job.delete_reason }}{% endif %}{% else %}-{% endif %}</dd>
     </dl>
   </div>
   <div>
@@ -116,6 +120,16 @@
       </label>
       <button type="submit">epochを選択</button>
     </form>
+  </div>
+</section>
+
+<section>
+  <h2>整理 / 削除</h2>
+  <p class="muted">実行済み学習ジョブは再現性維持のため、通常は削除ではなくアーカイブ推奨です。下書き・準備済みの未実行ジョブだけ安全に論理削除できます。</p>
+  <div class="actions">
+    {% if action_state.archive %}<form method="post" action="/jobs/{{ job.id }}/archive" class="inline-form"><input name="archived_reason" placeholder="理由（任意）"><button type="submit">アーカイブ</button></form>{% endif %}
+    {% if action_state.restore %}<form method="post" action="/jobs/{{ job.id }}/restore"><button type="submit">復元</button></form>{% endif %}
+    <a class="button danger" href="/jobs/{{ job.id }}/delete-preview">削除Previewを開く</a>
   </div>
 </section>
 <section>

@@ -263,6 +263,18 @@ exports/selected_loras/
 
 `selected_lora_info.json` にはJob ID、Job名、Dataset ID/version、trigger、preset、params、selected epoch、元ファイルパス、export先、file size、sha256、health、export時刻、人間評価メモを保存します。`selected_lora_notes.md` は人間が読むための概要、trigger、Dataset version、選択epoch、loss summary、メモ、注意点です。
 
+## 学習ジョブ / Projectの整理
+
+学習ジョブは1回の学習実行履歴です。実行済みジョブは再現性や比較のため、原則として削除ではなくアーカイブ推奨です。アーカイブすると通常一覧からは消えますが、DB、runsフォルダ、出力LoRA、sample画像、metricsは残ります。
+
+- `Archive`: 通常一覧から非表示にします。実行済み、比較済み、採用候補だったジョブの整理に使います。
+- `Delete`: `draft` / `prepared` / `prepared_dirty` など未実行の学習ジョブ向けです。初期版では `deleted_at` を入れる論理削除で、runsファイルは削除しません。
+- `Restore`: アーカイブ済みの学習ジョブやProjectを通常表示に戻します。
+
+完了済みジョブ、selected LoRA、LoRA Libraryプロファイル、外部検証、Recommendationに紐づくジョブは削除に注意してください。採用LoRAに紐づく完了ジョブは、安全のため削除を拒否する設計です。ProjectはLoRA作成の作業単位なので、標準操作はProject Archiveです。Projectを整理してもDataset画像、caption、base model、sd-scripts環境は削除されません。
+
+`/jobs` のフィルタで `有効`、`下書き`、`準備済み`、`実行中`、`完了`、`失敗`、`アーカイブ`、`削除済み`、`すべて` を切り替えられます。`整理候補` には古い下書き、準備済み未実行、成果物なしの失敗/停止、結合確認、未採用の軽量確認などを表示します。不要なものはアーカイブ、未実行で不要なものは削除PreviewからDBのみ削除を選びます。
+
 ## Validation Packと実生成環境での手動検証
 
 Job詳細の `Validation Pack出力` は、採用済みLoRAをreForge / WebUIで検証するためのファイル一式を `exports/validation_packs/job_xxxxxx/` に出力します。Packには以下が含まれます。
