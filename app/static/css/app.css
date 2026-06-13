@@ -166,9 +166,13 @@ textarea { min-height: 84px; }
 .danger { background: var(--accent-2); }
 .sample-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; }
 .sample-grid figure { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px; min-width: 0; overflow: hidden; }
-.sample-grid img { width: 100%; height: auto; display: block; border-radius: 6px; }
+.sample-grid img { width: 100%; height: auto; display: block; border-radius: 6px; cursor: zoom-in; }
 .sample-grid figcaption { color: var(--muted); font-size: 12px; margin-top: 8px; word-break: break-word; }
 .sample-grid.compare { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); align-items: start; }
+.sample-candidate { border-color: #8fb0a4 !important; background: #fbfdfb !important; }
+.sample-selected { border-color: var(--accent) !important; box-shadow: inset 4px 0 0 var(--accent); }
+.review-saved { outline: 2px solid #b8ded0; }
+.save-status { color: var(--accent); font-size: 12px; font-weight: 700; }
 .review-form { display: grid; gap: 8px; margin-top: 10px; }
 .review-form label { min-width: 0; }
 .review-form textarea { min-height: 58px; width: 100%; resize: vertical; }
@@ -176,7 +180,7 @@ textarea { min-height: 84px; }
 .inline-form { display: grid; gap: 8px; margin-top: 10px; }
 .rating-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .rating-grid label { min-width: 0; }
-.rating-grid input { width: 100%; min-width: 0; }
+.rating-grid input, .rating-grid select { width: 100%; min-width: 0; }
 .checkbox-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 6px 10px; }
 .checkbox-grid label { display: flex; align-items: center; gap: 6px; color: var(--ink); }
 .checkbox-grid input { width: auto; }
@@ -185,6 +189,10 @@ textarea { min-height: 84px; }
 .label.high { background: #cfe9dd; color: #18543e; }
 .label.medium { background: #f5e4c3; color: #73521a; }
 .label.low { background: #dde1e5; color: #4b5560; }
+.label.primary { background: #bfe4d7; color: #0b513f; }
+.label.secondary, .label.check { background: #d6e6f7; color: #1f4d78; }
+.label.low_priority { background: #dde1e5; color: #4b5560; }
+.label.avoid { background: #efcaca; color: #7d2525; }
 .label.warning { background: #f5e4c3; color: #73521a; }
 .label.danger, .label.error { background: #efcaca; color: #7d2525; }
 .label.unknown { background: #dde1e5; color: #4b5560; }
@@ -209,11 +217,27 @@ code { background: #eef2eb; border: 1px solid var(--line); border-radius: 5px; p
 tr.changed td { background: #fff8e8; }
 tr.emphasis td:first-child { font-weight: 700; color: var(--accent-2); }
 tr.epoch-rated td { background: #f2f7ef; }
+tr.epoch-candidate td { background: #fbfdfb; }
 tr.epoch-selected td { background: #e3f2ea; border-top: 2px solid var(--accent); border-bottom: 2px solid var(--accent); }
 tr.epoch-selected td:first-child { font-weight: 700; color: var(--accent); }
 .sample-compare-table figure { margin: 0; }
 .sample-compare-table img { width: min(100%, 260px); height: auto; display: block; border-radius: 6px; border: 1px solid var(--line); }
 .sample-compare-table figcaption { margin-top: 6px; color: var(--muted); font-size: 12px; word-break: break-word; }
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(9, 13, 11, .82);
+  padding: 24px;
+}
+.lightbox.open { display: flex; }
+.lightbox-inner { max-width: min(96vw, 1400px); max-height: 96vh; display: grid; gap: 10px; }
+.lightbox-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; color: white; }
+.lightbox-title { margin-right: auto; font-weight: 700; overflow-wrap: anywhere; }
+.lightbox img { max-width: 100%; max-height: calc(96vh - 58px); object-fit: contain; background: white; border-radius: 8px; }
 @media (max-width: 900px) {
   body { overflow-x: hidden; }
   .sidebar { position: static; width: auto; min-width: 0; max-height: none; gap: 14px; }

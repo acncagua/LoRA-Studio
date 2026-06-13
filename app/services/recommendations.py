@@ -64,6 +64,7 @@ def build_context(job_id: int) -> dict[str, Any]:
     summary = fetch_one("SELECT * FROM training_metric_summaries WHERE job_id = ?", (job_id,))
     epochs = fetch_all("SELECT * FROM training_epoch_summaries WHERE job_id = ? ORDER BY epoch", (job_id,))
     samples = fetch_all("SELECT * FROM sample_images WHERE job_id = ?", (job_id,))
+    candidates = fetch_all("SELECT * FROM training_epoch_candidate_summaries WHERE job_id = ? ORDER BY candidate_rank", (job_id,))
     weight_reviews = fetch_all(
         """
         SELECT w.*, p.validation_level
@@ -93,6 +94,7 @@ def build_context(job_id: int) -> dict[str, Any]:
         "summary": summary,
         "epochs": epochs,
         "sample_ratings": sample_rating_summary(samples),
+        "epoch_candidates": {int(row["epoch"]): dict(row) for row in candidates if row["epoch"] is not None},
         "weight_reviews": weight_reviews,
         "validation_run": validation_run,
         "validation_counts": validation_counts,
@@ -118,7 +120,7 @@ def build_recommendations(context: dict[str, Any]) -> list[dict[str, Any]]:
     validation_completeness_note = validation_completeness_warning(context)
     epoch_label = summary["epoch_trend_label"] if summary else "UNKNOWN"
     health_label = summary["health_label"] if summary else "UNKNOWN"
-    visual_good = selected_epoch_has_good_rating(context, selected_epoch)
+    visual_good = selected_epoch_has_good_rating(context, selected_epoch) or selected_epoch_is_candidate(context, selected_epoch)
     later_lower = later_epoch_rating_declines(context, selected_epoch)
     recs: list[dict[str, Any]] = []
 
@@ -323,6 +325,13 @@ def later_epoch_rating_declines(context: dict[str, Any], selected_epoch: int) ->
         return False
     later = [row["avg_overall"] for epoch, row in context["sample_ratings"].items() if epoch > selected_epoch and row["avg_overall"] is not None]
     return bool(later and max(later) < selected["avg_overall"])
+
+
+def selected_epoch_is_candidate(context: dict[str, Any], selected_epoch: int) -> bool:
+    if not selected_epoch:
+        return False
+    row = context.get("epoch_candidates", {}).get(selected_epoch)
+    return bool(row and row.get("candidate_label") in {"primary", "secondary", "check"})
 
 
 def contains_strong_warning(text: str | None) -> bool:

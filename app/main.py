@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import quote
 
 from fastapi import FastAPI, Form, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -31,6 +31,7 @@ from app.services.image_store import (
 from app.services.maintenance import create_app_backup, export_diagnostics, maintenance_summary
 from app.services.output_collector import collect_job_results
 from app.services.recommendations import create_draft_job_from_recommendation, list_recommendations, regenerate_recommendations, set_recommendation_status, write_recommendation_report
+from app.services.review_candidates import ensure_epoch_candidates, regenerate_epoch_candidates
 from app.services.storage_cleanup import (
     cleanup_outputs,
     cleanup_project_outputs,
@@ -1892,6 +1893,7 @@ def job_detail(
     exported: str | None = None,
     created: str | None = None,
     preflight: str | None = None,
+    review_filter: str = Query("candidates"),
 ) -> HTMLResponse:
     reconcile_stale_running_jobs()
     job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
@@ -1908,6 +1910,9 @@ def job_detail(
     decorated_epochs = decorate_epoch_summaries(epoch_summaries, outputs, samples)
     log_tail = read_log_tail(dict(job))
     selected_output = fetch_one("SELECT * FROM training_outputs WHERE job_id = ? AND selected = 1", (job_id,))
+    review_candidates = ensure_epoch_candidates(job_id)
+    candidate_map = {int(row["epoch"]): row for row in review_candidates}
+    candidate_epochs = {int(row["epoch"]) for row in review_candidates if row["candidate_label"] in {"primary", "secondary", "check"}}
     validation_results = fetch_all("SELECT * FROM validation_results WHERE job_id = ? ORDER BY created_at DESC, id DESC", (job_id,))
     validation_images = fetch_all("SELECT * FROM validation_images WHERE job_id = ? ORDER BY created_at DESC, id DESC", (job_id,))
     validation_weight_reviews = fetch_all("SELECT * FROM validation_weight_reviews WHERE job_id = ? ORDER BY lora_weight, id", (job_id,))
@@ -1929,13 +1934,17 @@ def job_detail(
         outputs=outputs,
         samples=samples,
         sample_prompts=sample_prompts,
-        sample_groups=group_samples(sample_prompts, samples),
+        sample_groups=group_samples(sample_prompts, samples, candidate_map, review_filter),
         metrics=metrics,
         metric_rows=metric_table["rows"],
         metric_table=metric_table,
         metric_summary=metric_summary,
         epoch_summaries=decorated_epochs,
-        epoch_visual_summaries=build_epoch_visual_summaries(decorated_epochs, samples),
+        epoch_visual_summaries=build_epoch_visual_summaries(decorated_epochs, samples, candidate_map),
+        review_candidates=review_candidates,
+        candidate_map=candidate_map,
+        candidate_epochs=candidate_epochs,
+        review_filter=review_filter if review_filter in {"candidates", "all", "unrated"} else "candidates",
         health_details=health_details(metric_summary, len(metrics)),
         trigger_status=job_trigger_status(job, dataset, sample_prompts),
         loss_chart=build_loss_chart(metrics),
@@ -2272,45 +2281,51 @@ def job_select_epoch(job_id: int, epoch: int = Form(...)) -> RedirectResponse:
 
 @app.post("/jobs/{job_id}/samples/{image_id}/review")
 def job_review_sample(
+    request: Request,
     job_id: int,
     image_id: int,
-    rating_face: int = Form(0),
-    rating_costume: int = Form(0),
-    rating_style: int = Form(0),
-    rating_stability: int = Form(0),
-    rating_overall: int = Form(0),
-    rating: int = Form(0),
+    rating_face: str = Form(""),
+    rating_costume: str = Form(""),
+    rating_style: str = Form(""),
+    rating_stability: str = Form(""),
+    rating_flexibility: str = Form(""),
+    rating_overall: str = Form(""),
+    rating: str = Form(""),
     strength_label: str = Form(""),
     overfit_level: str = Form(""),
     adoption_label: str = Form(""),
     failure_tags: list[str] = Form([]),
     memo: str = Form(""),
-) -> RedirectResponse:
+):
     sample = fetch_one("SELECT * FROM sample_images WHERE id = ? AND job_id = ?", (image_id, job_id))
     if sample is None:
         raise HTTPException(status_code=404, detail="Sample image not found")
-    rating_face = clamp_rating(rating_face)
-    rating_costume = clamp_rating(rating_costume)
-    rating_style = clamp_rating(rating_style)
-    rating_stability = clamp_rating(rating_stability)
-    rating_overall = clamp_rating(rating_overall if rating_overall is not None else rating)
+    values = {
+        "rating_face": nullable_rating(rating_face),
+        "rating_costume": nullable_rating(rating_costume),
+        "rating_style": nullable_rating(rating_style),
+        "rating_stability": nullable_rating(rating_stability),
+        "rating_flexibility": nullable_rating(rating_flexibility),
+        "rating_overall": nullable_rating(rating_overall if rating_overall != "" else rating),
+    }
     with connect() as conn:
         conn.execute(
             """
             UPDATE sample_images
             SET rating = ?, rating_face = ?, rating_costume = ?, rating_style = ?,
-                rating_stability = ?, rating_overall = ?, strength_label = ?,
+                rating_stability = ?, rating_flexibility = ?, rating_overall = ?, strength_label = ?,
                 overfit_level = ?, adoption_label = ?, failure_tags_json = ?,
                 rubric_version = ?, memo = ?
             WHERE id = ? AND job_id = ?
             """,
             (
-                rating_overall,
-                rating_face,
-                rating_costume,
-                rating_style,
-                rating_stability,
-                rating_overall,
+                values["rating_overall"],
+                values["rating_face"],
+                values["rating_costume"],
+                values["rating_style"],
+                values["rating_stability"],
+                values["rating_flexibility"],
+                values["rating_overall"],
                 clean_choice(strength_label, {key for key, _ in STRENGTH_LABELS}),
                 clean_choice(overfit_level, {key for key, _ in OVERFIT_LEVELS}),
                 clean_choice(adoption_label, {key for key, _ in ADOPTION_LABELS}),
@@ -2321,7 +2336,69 @@ def job_review_sample(
                 job_id,
             ),
         )
-    return RedirectResponse(f"/jobs/{job_id}", status_code=303)
+    if request.headers.get("x-requested-with") == "fetch" or "application/json" in request.headers.get("accept", ""):
+        return JSONResponse({"ok": True, "image_id": image_id, "ratings": values})
+    return RedirectResponse(f"/jobs/{job_id}#sample-{image_id}", status_code=303)
+
+
+@app.post("/jobs/{job_id}/samples/review-bulk")
+async def job_review_samples_bulk(request: Request, job_id: int) -> JSONResponse:
+    payload = await request.json()
+    items = payload.get("items") if isinstance(payload, dict) else None
+    if not isinstance(items, list):
+        raise HTTPException(status_code=400, detail="items is required")
+    updated = 0
+    with connect() as conn:
+        for item in items:
+            if not isinstance(item, dict) or not item.get("id"):
+                continue
+            image_id = int(item["id"])
+            sample = conn.execute("SELECT id FROM sample_images WHERE id = ? AND job_id = ?", (image_id, job_id)).fetchone()
+            if sample is None:
+                continue
+            values = {
+                "rating_face": nullable_rating(item.get("rating_face")),
+                "rating_costume": nullable_rating(item.get("rating_costume")),
+                "rating_style": nullable_rating(item.get("rating_style")),
+                "rating_stability": nullable_rating(item.get("rating_stability")),
+                "rating_flexibility": nullable_rating(item.get("rating_flexibility")),
+                "rating_overall": nullable_rating(item.get("rating_overall")),
+            }
+            conn.execute(
+                """
+                UPDATE sample_images
+                SET rating = ?, rating_face = ?, rating_costume = ?, rating_style = ?,
+                    rating_stability = ?, rating_flexibility = ?, rating_overall = ?,
+                    strength_label = ?, overfit_level = ?, adoption_label = ?,
+                    failure_tags_json = ?, rubric_version = ?, memo = ?
+                WHERE id = ? AND job_id = ?
+                """,
+                (
+                    values["rating_overall"],
+                    values["rating_face"],
+                    values["rating_costume"],
+                    values["rating_style"],
+                    values["rating_stability"],
+                    values["rating_flexibility"],
+                    values["rating_overall"],
+                    clean_choice(str(item.get("strength_label") or ""), {key for key, _ in STRENGTH_LABELS}),
+                    clean_choice(str(item.get("overfit_level") or ""), {key for key, _ in OVERFIT_LEVELS}),
+                    clean_choice(str(item.get("adoption_label") or ""), {key for key, _ in ADOPTION_LABELS}),
+                    json.dumps(clean_failure_tags(item.get("failure_tags")), ensure_ascii=False),
+                    RUBRIC_VERSION,
+                    item.get("memo") or "",
+                    image_id,
+                    job_id,
+                ),
+            )
+            updated += 1
+    return JSONResponse({"ok": True, "updated": updated})
+
+
+@app.post("/jobs/{job_id}/review-candidates/regenerate")
+def job_regenerate_review_candidates(job_id: int) -> RedirectResponse:
+    regenerate_epoch_candidates(job_id)
+    return RedirectResponse(f"/jobs/{job_id}?review_filter=candidates#review-queue", status_code=303)
 
 
 @app.post("/jobs/{job_id}/export-contact-sheet")
@@ -3623,6 +3700,14 @@ def clamp_rating(value: Any) -> int:
         return 0
 
 
+def nullable_rating(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip() == "":
+        return None
+    return clamp_rating(value)
+
+
 def rubric_options() -> dict[str, Any]:
     return {
         "version": RUBRIC_VERSION,
@@ -3893,7 +3978,8 @@ def base_model_label(path_value: str) -> str:
     return Path(path_value).stem
 
 
-def build_epoch_visual_summaries(epoch_rows: list[dict[str, Any]], samples: list[Any]) -> list[dict[str, Any]]:
+def build_epoch_visual_summaries(epoch_rows: list[dict[str, Any]], samples: list[Any], candidate_map: dict[int, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    candidate_map = candidate_map or {}
     samples_by_epoch: dict[int, list[Any]] = {}
     for sample in samples:
         if sample["epoch"] is not None:
@@ -3906,6 +3992,9 @@ def build_epoch_visual_summaries(epoch_rows: list[dict[str, Any]], samples: list
         rows.append(
             {
                 "epoch": epoch,
+                "candidate_label": candidate_map.get(epoch, {}).get("candidate_label"),
+                "candidate_rank": candidate_map.get(epoch, {}).get("candidate_rank"),
+                "candidate_reason": candidate_map.get(epoch, {}).get("reason_text"),
                 "avg_loss": loss_row.get("avg_loss"),
                 "moving_avg_final_loss": loss_row.get("moving_avg_final_loss"),
                 "sample_count": len(epoch_samples),
@@ -3913,7 +4002,10 @@ def build_epoch_visual_summaries(epoch_rows: list[dict[str, Any]], samples: list
                 "avg_costume": average_rating(epoch_samples, "rating_costume"),
                 "avg_style": average_rating(epoch_samples, "rating_style"),
                 "avg_stability": average_rating(epoch_samples, "rating_stability"),
+                "avg_flexibility": average_rating(epoch_samples, "rating_flexibility"),
                 "avg_overall": average_rating(epoch_samples, "rating_overall"),
+                "rating_count": sum(1 for sample in epoch_samples if sample_has_rating(sample)),
+                "na_count": count_na_ratings(epoch_samples),
                 "memo_count": sum(1 for sample in epoch_samples if sample["memo"]),
                 "has_rating": has_rating,
                 "output_file": loss_row.get("output_file") or "-",
@@ -3924,8 +4016,18 @@ def build_epoch_visual_summaries(epoch_rows: list[dict[str, Any]], samples: list
 
 
 def sample_has_rating(sample: Any) -> bool:
-    keys = ["rating", "rating_face", "rating_costume", "rating_style", "rating_stability", "rating_overall"]
+    keys = ["rating", "rating_face", "rating_costume", "rating_style", "rating_stability", "rating_flexibility", "rating_overall"]
     return any((rating_value(sample, key) or 0) > 0 for key in keys)
+
+
+def count_na_ratings(samples: list[Any]) -> int:
+    keys = ["rating_face", "rating_costume", "rating_style", "rating_stability", "rating_flexibility", "rating_overall"]
+    total = 0
+    for sample in samples:
+        for key in keys:
+            if key in sample.keys() and sample[key] is None:
+                total += 1
+    return total
 
 
 def compare_warnings(left: dict[str, Any], right: dict[str, Any]) -> list[str]:
@@ -4179,12 +4281,25 @@ def parse_json_list(value: Any) -> list[str]:
     return payload if isinstance(payload, list) else []
 
 
-def group_samples(sample_prompts: list[Any], samples: list[Any]) -> list[dict[str, Any]]:
+def group_samples(sample_prompts: list[Any], samples: list[Any], candidate_map: dict[int, dict[str, Any]] | None = None, review_filter: str = "all") -> list[dict[str, Any]]:
+    candidate_map = candidate_map or {}
+    candidate_epochs = {epoch for epoch, row in candidate_map.items() if row.get("candidate_label") in {"primary", "secondary", "check"}}
     prompt_map = {row["id"]: row for row in sample_prompts}
     groups: dict[int, dict[str, Any]] = {}
     fallback_key = 0
     for sample in samples:
         sample_item = dict(sample)
+        epoch = sample_item["epoch"]
+        candidate = candidate_map.get(int(epoch)) if epoch is not None else None
+        sample_item["candidate_label"] = candidate.get("candidate_label") if candidate else "low_priority"
+        sample_item["candidate_rank"] = candidate.get("candidate_rank") if candidate else None
+        sample_item["is_candidate_epoch"] = bool(epoch is not None and int(epoch) in candidate_epochs)
+        sample_item["is_unrated"] = not sample_has_rating(sample)
+        sample_item["prompt_role"] = prompt_role_value(prompt_map.get(sample["prompt_id"]))
+        if review_filter == "candidates" and not sample_item["is_candidate_epoch"]:
+            continue
+        if review_filter == "unrated" and not sample_item["is_unrated"]:
+            continue
         sample_item["filename"] = Path(sample["image_path"]).name
         sample_item["failure_tags"] = parse_json_list(sample_item.get("failure_tags_json"))
         key = sample["prompt_id"] or fallback_key
@@ -4194,12 +4309,14 @@ def group_samples(sample_prompts: list[Any], samples: list[Any]) -> list[dict[st
             {
                 "prompt": prompt,
                 "title": prompt["name"] if prompt else "Unmatched prompt",
+                "prompt_role": prompt_role_value(prompt),
+                "rubric": prompt_role_rubric(prompt_role_value(prompt)),
                 "samples": [],
             },
         )
         groups[key]["samples"].append(sample_item)
     for prompt in sample_prompts:
-        groups.setdefault(prompt["id"], {"prompt": prompt, "title": prompt["name"], "samples": []})
+        groups.setdefault(prompt["id"], {"prompt": prompt, "title": prompt["name"], "prompt_role": prompt_role_value(prompt), "rubric": prompt_role_rubric(prompt_role_value(prompt)), "samples": []})
     for group in groups.values():
         group["samples"].sort(key=lambda item: (
             item["epoch"] if item["epoch"] is not None else 999999,
@@ -4208,6 +4325,24 @@ def group_samples(sample_prompts: list[Any], samples: list[Any]) -> list[dict[st
             item["id"],
         ))
     return sorted(groups.values(), key=lambda group: group["prompt"]["sort_order"] if group["prompt"] else 999999)
+
+
+def prompt_role_value(prompt: Any) -> str:
+    if prompt is None:
+        return "other"
+    return prompt["prompt_role"] if "prompt_role" in prompt.keys() and prompt["prompt_role"] else "other"
+
+
+def prompt_role_rubric(role: str | None) -> dict[str, str]:
+    role = role or "other"
+    rubrics = {
+        "face": {"face": "required", "costume": "optional", "style": "required", "stability": "required", "flexibility": "optional"},
+        "full_body": {"face": "optional / N/A可", "costume": "required", "style": "optional", "stability": "required", "flexibility": "required"},
+        "expression_pose": {"face": "required", "costume": "optional", "style": "required", "stability": "required", "flexibility": "required"},
+        "clothes": {"face": "optional", "costume": "required", "style": "required", "stability": "required", "flexibility": "optional"},
+        "background": {"face": "optional", "costume": "optional", "style": "required", "stability": "required", "flexibility": "required"},
+    }
+    return rubrics.get(role, {"face": "optional", "costume": "optional", "style": "optional", "stability": "required", "flexibility": "optional"})
 
 
 def build_loss_chart(metrics: list[Any]) -> dict[str, Any] | None:

@@ -815,6 +815,127 @@ class StorageCleanupTests(IsolatedDbTest):
         self.assertTrue(sample["deleted_at"])
 
 
+class ReviewQueueTests(IsolatedDbTest):
+    def make_review_job(self) -> int:
+        now = utc_now()
+        with connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO datasets(name, path, model_family, trigger_word, image_count, caption_count, created_at, updated_at)
+                VALUES ('dataset', 'D:/datasets/test', 'SDXL', 'testchar', 3, 3, ?, ?)
+                """,
+                (now, now),
+            )
+            dataset_id = int(cur.lastrowid)
+            cur = conn.execute(
+                """
+                INSERT INTO training_jobs(
+                    name, dataset_id, preset_id, status, model_family, training_script,
+                    base_model_path, output_name, output_dir, run_dir, params_json,
+                    adopted_epoch, created_at, updated_at
+                )
+                VALUES ('review job', ?, 'sdxl_2d_face_standard_6epoch', 'completed', 'SDXL', 'sdxl_train_network.py',
+                    'D:/models/base.safetensors', 'out', 'outdir', ?, '{}', 4, ?, ?)
+                """,
+                (dataset_id, str(self.root / "runs" / "job_000001"), now, now),
+            )
+            job_id = int(cur.lastrowid)
+            for epoch, avg, moving in [
+                (1, 0.18, 0.16),
+                (2, 0.14, 0.13),
+                (3, 0.08, 0.08),
+                (4, 0.09, 0.07),
+                (5, 0.12, 0.10),
+                (6, 0.17, 0.15),
+            ]:
+                conn.execute(
+                    """
+                    INSERT INTO training_epoch_summaries(job_id, epoch, avg_loss, moving_avg_final_loss, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (job_id, epoch, avg, moving, now, now),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO training_outputs(job_id, epoch, file_path, file_type, selected, created_at)
+                    VALUES (?, ?, ?, 'model', ?, ?)
+                    """,
+                    (job_id, epoch, f"D:/runs/job/model-{epoch}.safetensors", 1 if epoch == 4 else 0, now),
+                )
+            prompts = [
+                ("basic_face", "face"),
+                ("full_body", "full_body"),
+                ("expression_pose", "expression_pose"),
+            ]
+            prompt_ids = []
+            for order, (name, role) in enumerate(prompts, start=1):
+                cur = conn.execute(
+                    """
+                    INSERT INTO sample_prompts(job_id, name, prompt, sort_order, prompt_role, created_at)
+                    VALUES (?, ?, 'prompt', ?, ?, ?)
+                    """,
+                    (job_id, name, order, role, now),
+                )
+                prompt_ids.append(int(cur.lastrowid))
+            for epoch in range(1, 7):
+                for prompt_id in prompt_ids:
+                    conn.execute(
+                        """
+                        INSERT INTO sample_images(job_id, prompt_id, epoch, image_path, created_at)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (job_id, prompt_id, epoch, f"D:/runs/job/e{epoch}_p{prompt_id}.png", now),
+                    )
+        return job_id
+
+    def test_candidate_epoch_generation_prefers_selected_neighbors(self) -> None:
+        from app.services.review_candidates import regenerate_epoch_candidates
+
+        job_id = self.make_review_job()
+        rows = regenerate_epoch_candidates(job_id)
+        labels = {row["epoch"]: row["candidate_label"] for row in rows}
+        self.assertEqual(labels[4], "primary")
+        self.assertEqual(labels[3], "secondary")
+        self.assertEqual(labels[5], "check")
+        self.assertEqual(labels[1], "low_priority")
+        sample = fetch_one("SELECT review_priority, auto_review_reason FROM sample_images WHERE job_id = ? AND epoch = 4 LIMIT 1", (job_id,))
+        self.assertEqual(sample["review_priority"], "high")
+        self.assertIn("候補epoch", sample["auto_review_reason"])
+
+    def test_group_samples_filters_candidates_and_marks_full_body_role(self) -> None:
+        from app.main import group_samples
+        from app.services.review_candidates import regenerate_epoch_candidates
+
+        job_id = self.make_review_job()
+        candidates = {row["epoch"]: row for row in regenerate_epoch_candidates(job_id)}
+        prompts = fetch_all("SELECT * FROM sample_prompts WHERE job_id = ? ORDER BY sort_order", (job_id,))
+        samples = fetch_all("SELECT * FROM sample_images WHERE job_id = ? ORDER BY id", (job_id,))
+        groups = group_samples(prompts, samples, candidates, "candidates")
+        epochs = {sample["epoch"] for group in groups for sample in group["samples"]}
+        self.assertEqual(epochs, {3, 4, 5})
+        full_body = next(group for group in groups if group["prompt_role"] == "full_body")
+        self.assertIn("N/A", full_body["rubric"]["face"])
+
+    def test_nullable_ratings_and_bulk_save(self) -> None:
+        from app.main import job_review_samples_bulk, nullable_rating
+
+        self.assertIsNone(nullable_rating(""))
+        job_id = self.make_review_job()
+        sample = fetch_one("SELECT id FROM sample_images WHERE job_id = ? LIMIT 1", (job_id,))
+        class DummyRequest:
+            async def json(self):
+                return {"items": [{"id": sample["id"], "rating_face": "", "rating_costume": "4", "rating_style": "3", "rating_stability": "5", "rating_flexibility": "", "rating_overall": "4", "failure_tags": [], "memo": "bulk"}]}
+
+        import asyncio
+        asyncio.run(job_review_samples_bulk(DummyRequest(), job_id))
+        row = fetch_one("SELECT rating_face, rating_costume, rating_flexibility, rating_overall, memo FROM sample_images WHERE id = ?", (sample["id"],))
+        self.assertIsNone(row["rating_face"])
+        self.assertEqual(row["rating_costume"], 4)
+        self.assertIsNone(row["rating_flexibility"])
+        self.assertEqual(row["rating_overall"], 4)
+        self.assertEqual(row["memo"], "bulk")
+
+
 class StartHelperTests(unittest.TestCase):
     def test_start_helper_does_not_release_7865_by_default(self) -> None:
         import start_lora_helper

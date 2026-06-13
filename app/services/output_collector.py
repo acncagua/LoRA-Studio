@@ -88,6 +88,9 @@ def collect_job_results(job_id: int) -> dict[str, int]:
     from app.services.metrics_collector import collect_job_metrics
 
     collect_job_metrics(job_id)
+    from app.services.review_candidates import regenerate_epoch_candidates
+
+    regenerate_epoch_candidates(job_id)
     return {"models": model_count, "samples": sample_count}
 
 

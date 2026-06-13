@@ -51,3 +51,130 @@ document.addEventListener("change", (event) => {
     target.value = select.value;
   }
 });
+
+document.addEventListener("submit", async (event) => {
+  const form = event.target.closest("[data-review-form]");
+  if (!form) {
+    return;
+  }
+  event.preventDefault();
+  await saveReviewForm(form);
+});
+
+async function saveReviewForm(form) {
+  const status = form.querySelector(".save-status");
+  const button = form.querySelector("button[type='submit']");
+  if (status) {
+    status.textContent = "保存中...";
+  }
+  if (button) {
+    button.disabled = true;
+  }
+  try {
+    const response = await fetch(form.action, {
+      method: "POST",
+      body: new FormData(form),
+      headers: { "X-Requested-With": "fetch", "Accept": "application/json" },
+    });
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    if (status) {
+      status.textContent = "保存済み";
+    }
+    form.closest("[data-sample-card]")?.classList.add("review-saved");
+  } catch (error) {
+    if (status) {
+      status.textContent = "保存失敗";
+    }
+    alert(`評価保存に失敗しました: ${error.message}`);
+  } finally {
+    if (button) {
+      button.disabled = false;
+    }
+  }
+}
+
+document.addEventListener("click", async (event) => {
+  const saveAll = event.target.closest("[data-save-all-ratings]");
+  if (!saveAll) {
+    return;
+  }
+  event.preventDefault();
+  const cards = [...document.querySelectorAll("[data-sample-card]")];
+  const items = cards.map((card) => {
+    const form = card.querySelector("[data-review-form]");
+    const data = new FormData(form);
+    const item = { id: card.getAttribute("data-sample-id"), failure_tags: data.getAll("failure_tags") };
+    for (const [key, value] of data.entries()) {
+      if (key !== "failure_tags") {
+        item[key] = value;
+      }
+    }
+    return item;
+  });
+  saveAll.disabled = true;
+  const originalText = saveAll.textContent;
+  saveAll.textContent = "一括保存中...";
+  try {
+    const jobId = location.pathname.match(/\/jobs\/(\d+)/)?.[1];
+    const response = await fetch(`/jobs/${jobId}/samples/review-bulk`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify({ items }),
+    });
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    const payload = await response.json();
+    saveAll.textContent = `${payload.updated}件保存済み`;
+    cards.forEach((card) => card.classList.add("review-saved"));
+    window.setTimeout(() => { saveAll.textContent = originalText; }, 1800);
+  } catch (error) {
+    saveAll.textContent = "保存失敗";
+    alert(`一括保存に失敗しました: ${error.message}`);
+  } finally {
+    window.setTimeout(() => {
+      saveAll.disabled = false;
+      if (saveAll.textContent === "保存失敗") {
+        saveAll.textContent = originalText;
+      }
+    }, 1800);
+  }
+});
+
+document.addEventListener("click", (event) => {
+  const image = event.target.closest("[data-lightbox-src]");
+  if (!image) {
+    return;
+  }
+  event.preventDefault();
+  openLightbox(image.getAttribute("data-lightbox-src"), image.getAttribute("data-lightbox-title") || "");
+});
+
+function openLightbox(src, title) {
+  let box = document.querySelector(".lightbox");
+  if (!box) {
+    box = document.createElement("div");
+    box.className = "lightbox";
+    box.innerHTML = `
+      <div class="lightbox-inner">
+        <div class="lightbox-actions">
+          <span class="lightbox-title"></span>
+          <a class="button" target="_blank" rel="noopener">Open original</a>
+          <button type="button" data-lightbox-close>閉じる</button>
+        </div>
+        <img alt="">
+      </div>`;
+    document.body.appendChild(box);
+    box.addEventListener("click", (event) => {
+      if (event.target === box || event.target.closest("[data-lightbox-close]")) {
+        box.classList.remove("open");
+      }
+    });
+  }
+  box.querySelector("img").src = src;
+  box.querySelector("a").href = src;
+  box.querySelector(".lightbox-title").textContent = title;
+  box.classList.add("open");
+}

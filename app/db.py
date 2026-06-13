@@ -189,8 +189,18 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "memo": "TEXT",
             "deleted_at": "TEXT",
             "cleanup_status": "TEXT",
+            "rating_flexibility": "INTEGER",
+            "review_priority": "TEXT",
+            "auto_review_label": "TEXT",
+            "auto_review_reason": "TEXT",
         },
     )
+    ensure_columns(conn, "sample_prompts", {"prompt_role": "TEXT"})
+    for row in conn.execute("SELECT id, name, prompt FROM sample_prompts WHERE prompt_role IS NULL OR prompt_role = ''").fetchall():
+        conn.execute(
+            "UPDATE sample_prompts SET prompt_role = ? WHERE id = ?",
+            (infer_prompt_role(row["name"], row["prompt"]), row["id"]),
+        )
     ensure_columns(
         conn,
         "validation_images",
@@ -285,6 +295,8 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             ON sample_images(job_id, image_path);
         CREATE INDEX IF NOT EXISTS idx_file_cleanup_history_job
             ON file_cleanup_history(job_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_epoch_candidates_job_epoch
+            ON training_epoch_candidate_summaries(job_id, epoch);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_training_metrics_job_step_tag
             ON training_metrics(job_id, step, raw_tag);
         CREATE INDEX IF NOT EXISTS idx_training_jobs_status
@@ -1232,9 +1244,9 @@ def replace_sample_prompts(job_id: int, prompts: list[dict[str, Any]]) -> None:
             """
             INSERT INTO sample_prompts(
                 job_id, name, prompt, negative_prompt, width, height,
-                seed, cfg_scale, steps, sort_order, created_at
+                seed, cfg_scale, steps, sort_order, prompt_role, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -1248,11 +1260,27 @@ def replace_sample_prompts(job_id: int, prompts: list[dict[str, Any]]) -> None:
                     item.get("cfg_scale"),
                     item.get("steps"),
                     index,
+                    item.get("prompt_role") or infer_prompt_role(item.get("name", ""), item.get("prompt", "")),
                     now,
                 )
                 for index, item in enumerate(prompts, start=1)
             ],
         )
+
+
+def infer_prompt_role(name: str, prompt: str = "") -> str:
+    value = f"{name} {prompt}".lower()
+    if "basic_face" in value or "face" in value or "upper body" in value:
+        return "face"
+    if "full_body" in value or "full body" in value or "standing" in value:
+        return "full_body"
+    if "expression" in value or "pose" in value or "dynamic" in value:
+        return "expression_pose"
+    if "clothes" in value or "costume" in value:
+        return "clothes"
+    if "background" in value:
+        return "background"
+    return "other"
 
 
 SCHEMA_SQL = """
@@ -1340,16 +1368,23 @@ CREATE TABLE IF NOT EXISTS training_epoch_summaries (
 CREATE TABLE IF NOT EXISTS sample_prompts (
     id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER, name TEXT NOT NULL, prompt TEXT NOT NULL,
     negative_prompt TEXT, width INTEGER, height INTEGER, seed INTEGER, cfg_scale REAL, steps INTEGER,
-    sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
+    sort_order INTEGER NOT NULL DEFAULT 0, prompt_role TEXT, created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sample_images (
     id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, prompt_id INTEGER, epoch INTEGER,
     step INTEGER, image_path TEXT NOT NULL, prompt TEXT, negative_prompt TEXT, seed INTEGER,
     width INTEGER, height INTEGER, cfg_scale REAL, steps INTEGER, rating INTEGER,
     rating_face INTEGER, rating_costume INTEGER, rating_style INTEGER,
-    rating_stability INTEGER, rating_overall INTEGER, memo TEXT,
+    rating_stability INTEGER, rating_flexibility INTEGER, rating_overall INTEGER, memo TEXT,
+    review_priority TEXT, auto_review_label TEXT, auto_review_reason TEXT,
     deleted_at TEXT, cleanup_status TEXT,
     created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS training_epoch_candidate_summaries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, epoch INTEGER NOT NULL,
+    candidate_rank INTEGER, candidate_label TEXT NOT NULL, score REAL,
+    reason_json TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    UNIQUE(job_id, epoch)
 );
 CREATE TABLE IF NOT EXISTS training_outputs (
     id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, epoch INTEGER, step INTEGER,

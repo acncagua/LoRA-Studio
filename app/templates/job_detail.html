@@ -316,11 +316,12 @@
   </table>
   <h3>Epoch視覚評価サマリー</h3>
   <table>
-    <thead><tr><th>Epoch</th><th>平均Loss</th><th>移動平均</th><th>サンプル</th><th>顔</th><th>衣装</th><th>スタイル</th><th>安定性</th><th>総合</th><th>メモ数</th><th>出力</th><th>採用</th></tr></thead>
+    <thead><tr><th>Epoch</th><th>候補</th><th>平均Loss</th><th>移動平均</th><th>サンプル</th><th>顔</th><th>衣装</th><th>スタイル</th><th>安定性</th><th>柔軟性</th><th>総合</th><th>評価/N/A</th><th>メモ数</th><th>出力</th><th>採用</th></tr></thead>
     <tbody>
       {% for epoch in epoch_visual_summaries %}
-      <tr class="{{ 'epoch-selected' if epoch.output_selected else 'epoch-rated' if epoch.has_rating else '' }}">
+      <tr class="{{ 'epoch-selected' if epoch.output_selected else 'epoch-candidate' if epoch.candidate_label in ['primary','secondary','check'] else 'epoch-rated' if epoch.has_rating else '' }}">
         <td>{{ epoch.epoch }}</td>
+        <td>{% if epoch.candidate_label %}<span class="label {{ epoch.candidate_label }}">{{ epoch.candidate_label }}</span><br><span class="muted">{{ epoch.candidate_reason or '' }}</span>{% else %}-{% endif %}</td>
         <td>{{ '%.6f'|format(epoch.avg_loss) if epoch.avg_loss is not none else '-' }}</td>
         <td>{{ '%.6f'|format(epoch.moving_avg_final_loss) if epoch.moving_avg_final_loss is not none else '-' }}</td>
         <td>{{ epoch.sample_count }}</td>
@@ -328,18 +329,52 @@
         <td>{{ '%.2f'|format(epoch.avg_costume) if epoch.avg_costume is not none else '-' }}</td>
         <td>{{ '%.2f'|format(epoch.avg_style) if epoch.avg_style is not none else '-' }}</td>
         <td>{{ '%.2f'|format(epoch.avg_stability) if epoch.avg_stability is not none else '-' }}</td>
+        <td>{{ '%.2f'|format(epoch.avg_flexibility) if epoch.avg_flexibility is not none else '-' }}</td>
         <td>{{ '%.2f'|format(epoch.avg_overall) if epoch.avg_overall is not none else '-' }}</td>
+        <td>{{ epoch.rating_count }} / {{ epoch.na_count }}</td>
         <td>{{ epoch.memo_count }}{% if epoch.has_rating %} <span class="label ok">評価済み</span>{% endif %}</td>
         <td>{{ epoch.output_file }}</td>
         <td>{{ '採用中' if epoch.output_selected else '' }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="12" class="muted">視覚評価はまだありません。</td></tr>
+      <tr><td colspan="15" class="muted">視覚評価はまだありません。</td></tr>
       {% endfor %}
     </tbody>
   </table>
 </section>
 <section><h2>train.log末尾</h2><pre>{{ log_tail or 'train.logはまだありません。' }}</pre></section>
+<section id="review-queue">
+  <h2>Review Queue</h2>
+  <p class="muted">lossとepoch summaryから候補epochを先に出します。自動候補は画像内容AI判定ではなく、人間評価の入口を軽くするための補助です。</p>
+  <div class="actions">
+    <a class="button {{ 'active' if review_filter == 'candidates' else '' }}" href="/jobs/{{ job.id }}?review_filter=candidates#review-queue">候補epochのみ</a>
+    <a class="button {{ 'active' if review_filter == 'all' else '' }}" href="/jobs/{{ job.id }}?review_filter=all#review-queue">全epoch</a>
+    <a class="button {{ 'active' if review_filter == 'unrated' else '' }}" href="/jobs/{{ job.id }}?review_filter=unrated#review-queue">未評価のみ</a>
+    <form method="post" action="/jobs/{{ job.id }}/review-candidates/regenerate"><button type="submit">候補epochを再生成</button></form>
+    <button type="button" data-save-all-ratings>表示中の評価を一括保存</button>
+  </div>
+  <table>
+    <thead><tr><th>Rank</th><th>Epoch</th><th>候補</th><th>Score</th><th>理由</th><th>Loss</th><th>Sample</th><th>出力LoRA</th><th>採用</th></tr></thead>
+    <tbody>
+      {% for candidate in review_candidates %}
+      {% set epoch = (epoch_visual_summaries | selectattr('epoch', 'equalto', candidate.epoch) | list | first) %}
+      <tr class="{{ 'epoch-selected' if epoch and epoch.output_selected else 'epoch-candidate' }}">
+        <td>{{ candidate.candidate_rank }}</td>
+        <td>{{ candidate.epoch }}</td>
+        <td><span class="label {{ candidate.candidate_label }}">{{ candidate.candidate_label }}</span></td>
+        <td>{{ '%.2f'|format(candidate.score) if candidate.score is not none else '-' }}</td>
+        <td>{{ candidate.reason_text }}</td>
+        <td>{{ '%.6f'|format(epoch.avg_loss) if epoch and epoch.avg_loss is not none else '-' }}</td>
+        <td>{{ epoch.sample_count if epoch else '-' }}</td>
+        <td>{{ epoch.output_file if epoch else '-' }}</td>
+        <td>{{ '採用中' if epoch and epoch.output_selected else '-' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="9" class="muted">候補epochはまだありません。結果を再取り込み、または候補epochを再生成してください。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
 <section id="outputs">
   <h2>出力LoRA</h2>
   <table>
@@ -359,23 +394,29 @@
 <section>
   <h2>プロンプト別サンプル</h2>
   {% for group in sample_groups %}
-  <h3>{{ group.title }}</h3>
+  <h3>{{ group.title }} <span class="label">{{ group.prompt_role }}</span></h3>
   {% if group.prompt %}<p class="muted">{{ group.prompt.prompt }}</p>{% endif %}
+  <p class="muted">評価目安: 顔 {{ group.rubric.face }} / 衣装 {{ group.rubric.costume }} / スタイル {{ group.rubric.style }} / 安定性 {{ group.rubric.stability }} / 柔軟性 {{ group.rubric.flexibility }}</p>
   <div class="sample-grid compare">
     {% for sample in group.samples %}
-      <figure>
-        <img src="/jobs/{{ job.id }}/samples/{{ sample.id }}" alt="sample {{ sample.id }}">
+      <figure id="sample-{{ sample.id }}" class="{{ 'sample-selected' if sample.epoch == job.adopted_epoch else 'sample-candidate' if sample.is_candidate_epoch else '' }}" data-sample-card data-sample-id="{{ sample.id }}">
+        <img src="/jobs/{{ job.id }}/samples/{{ sample.id }}" alt="sample {{ sample.id }}" data-lightbox-src="/jobs/{{ job.id }}/samples/{{ sample.id }}" data-lightbox-title="epoch {{ sample.epoch or '-' }} / {{ sample.filename }}">
         <figcaption>
+          <span class="label {{ sample.candidate_label }}">{{ sample.candidate_label }}</span>
+          <span class="label {{ sample.review_priority or 'low' }}">{{ sample.review_priority or 'low' }}</span>
+          {% if sample.epoch == job.adopted_epoch %}<span class="label ok">採用epoch</span>{% endif %}<br>
           epoch {{ sample.epoch or '-' }} / step {{ sample.step or '-' }} / prompt {{ sample.prompt_id or '-' }}<br>
-          {{ sample.filename }}
+          {{ sample.filename }}<br>
+          <span class="muted">{{ sample.auto_review_label or '-' }} / {{ sample.auto_review_reason or '' }}</span>
         </figcaption>
-        <form method="post" action="/jobs/{{ job.id }}/samples/{{ sample.id }}/review" class="review-form">
+        <form method="post" action="/jobs/{{ job.id }}/samples/{{ sample.id }}/review" class="review-form" data-review-form>
           <div class="rating-grid">
-            <label>顔 <input type="number" min="0" max="5" name="rating_face" value="{{ sample.rating_face or 0 }}"></label>
-            <label>衣装 <input type="number" min="0" max="5" name="rating_costume" value="{{ sample.rating_costume or 0 }}"></label>
-            <label>スタイル <input type="number" min="0" max="5" name="rating_style" value="{{ sample.rating_style or 0 }}"></label>
-            <label>安定性 <input type="number" min="0" max="5" name="rating_stability" value="{{ sample.rating_stability or 0 }}"></label>
-            <label>総合 <input type="number" min="0" max="5" name="rating_overall" value="{{ sample.rating_overall or sample.rating or 0 }}"></label>
+            <label>顔 <select name="rating_face"><option value="">N/A</option>{% for n in range(0,6) %}<option value="{{ n }}" {{ 'selected' if sample.rating_face is not none and sample.rating_face == n else '' }}>{{ n }}</option>{% endfor %}</select></label>
+            <label>衣装 <select name="rating_costume"><option value="">N/A</option>{% for n in range(0,6) %}<option value="{{ n }}" {{ 'selected' if sample.rating_costume is not none and sample.rating_costume == n else '' }}>{{ n }}</option>{% endfor %}</select></label>
+            <label>スタイル <select name="rating_style"><option value="">N/A</option>{% for n in range(0,6) %}<option value="{{ n }}" {{ 'selected' if sample.rating_style is not none and sample.rating_style == n else '' }}>{{ n }}</option>{% endfor %}</select></label>
+            <label>安定性 <select name="rating_stability"><option value="">N/A</option>{% for n in range(0,6) %}<option value="{{ n }}" {{ 'selected' if sample.rating_stability is not none and sample.rating_stability == n else '' }}>{{ n }}</option>{% endfor %}</select></label>
+            <label>柔軟性 <select name="rating_flexibility"><option value="">N/A</option>{% for n in range(0,6) %}<option value="{{ n }}" {{ 'selected' if sample.rating_flexibility is not none and sample.rating_flexibility == n else '' }}>{{ n }}</option>{% endfor %}</select></label>
+            <label>総合 <select name="rating_overall"><option value="">N/A</option>{% for n in range(0,6) %}<option value="{{ n }}" {{ 'selected' if sample.rating_overall is not none and sample.rating_overall == n else 'selected' if sample.rating_overall is none and sample.rating == n else '' }}>{{ n }}</option>{% endfor %}</select></label>
           </div>
           <label>強さ<select name="strength_label">{% for value, label in rubric_options.strength_labels %}<option value="{{ value }}" {{ 'selected' if sample.strength_label == value else '' }}>{{ label }}</option>{% endfor %}</select></label>
           <label>過学習<select name="overfit_level">{% for value, label in rubric_options.overfit_levels %}<option value="{{ value }}" {{ 'selected' if sample.overfit_level == value else '' }}>{{ label }}</option>{% endfor %}</select></label>
@@ -386,7 +427,7 @@
             {% endfor %}
           </div>
           <label>メモ <textarea name="memo">{{ sample.memo or '' }}</textarea></label>
-          <button type="submit">保存</button>
+          <button type="submit">保存</button><span class="save-status" aria-live="polite"></span>
         </form>
       </figure>
     {% else %}

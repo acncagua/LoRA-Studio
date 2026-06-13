@@ -10,9 +10,9 @@ DEFAULT_NEGATIVE = "low quality, worst quality, blurry, extra fingers, bad anato
 def build_sample_prompts(trigger_word: str, width: int, height: int) -> list[dict[str, object]]:
     trigger = trigger_word.strip() or "trigger_word"
     return [
-        {"name": "basic face", "prompt": f"{trigger}, 1girl, portrait, looking at viewer, simple background", "negative_prompt": DEFAULT_NEGATIVE, "width": width, "height": height, "seed": 10101, "cfg_scale": 7.0, "steps": 28},
-        {"name": "full body", "prompt": f"{trigger}, 1girl, full body, standing, casual clothes, outdoors", "negative_prompt": DEFAULT_NEGATIVE, "width": width, "height": height, "seed": 20202, "cfg_scale": 7.0, "steps": 28},
-        {"name": "expression and pose", "prompt": f"{trigger}, 1girl, smile, dynamic pose, upper body, detailed eyes", "negative_prompt": DEFAULT_NEGATIVE, "width": width, "height": height, "seed": 30303, "cfg_scale": 7.0, "steps": 28},
+        {"name": "basic_face", "prompt": f"{trigger}, 1girl, portrait, looking at viewer, simple background", "negative_prompt": DEFAULT_NEGATIVE, "width": width, "height": height, "seed": 10101, "cfg_scale": 7.0, "steps": 28, "prompt_role": "face"},
+        {"name": "full_body", "prompt": f"{trigger}, 1girl, full body, standing, casual clothes, outdoors", "negative_prompt": DEFAULT_NEGATIVE, "width": width, "height": height, "seed": 20202, "cfg_scale": 7.0, "steps": 28, "prompt_role": "full_body"},
+        {"name": "expression_pose", "prompt": f"{trigger}, 1girl, smile, dynamic pose, upper body, detailed eyes", "negative_prompt": DEFAULT_NEGATIVE, "width": width, "height": height, "seed": 30303, "cfg_scale": 7.0, "steps": 28, "prompt_role": "expression_pose"},
     ]
 
 
@@ -32,6 +32,7 @@ def build_sample_prompts_from_template(template: Any, trigger_word: str, width: 
                 "seed": int(item.get("seed") or 1),
                 "cfg_scale": float(item.get("cfg_scale") or 7.0),
                 "steps": int(item.get("steps") or 28),
+                "prompt_role": item.get("prompt_role"),
             }
         )
     return prompts
