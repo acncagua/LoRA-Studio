@@ -369,22 +369,40 @@ LoRA-Studio側のsha256計算はストリーミング処理で行い、ファイ
 
 ## 実用前チェックの推奨ワークフロー
 
-1. Datasetsでデータセットを登録する。
-2. Rescanする。
-3. Dataset Inspectorで画像、caption、trigger word、タグ傾向、Trigger Consistencyを確認する。
-4. `Captions Missing Trigger` でtrigger欠落captionを確認する。
-5. triggerが0件または不足しているなら、既存タグをtriggerにするか、Preview/Confirm付きでcaptionへtriggerを追加する。
-6. backup_pathとDataset versionが作られたことを確認する。
-7. 必要ならRestore Preview/Confirmでテスト復元する。
-8. 再度Rescanし、Trigger ConsistencyとDataset versionを確認する。
-9. `Integration Smoke - SDXL` で結合確認をする。
-10. Preflight Checkを実行する。
-11. Project詳細のPilot判定を確認する。初回 / 新dataset / 新base model / 新preset / sd-scripts更新後ならPilot推奨、同条件で完走実績があればPilotスキップ可。
-12. 不安があれば `Pilot 3 Epoch`、動作確認済みなら `Standard 6 Epoch` へ進む。
-13. `Standard 6 Epoch` で本番寄り短時間テストを行う。
-14. Compare画面でDataset version差分、raw/smoothed/epoch loss、step整合性、epoch別sample、rating/memo、selected LoRAを比較する。
-15. 良さそうなJobをCloneし、Quick VariantでLRやdimを小さく変えて再確認する。
-16. Standard本学習または長めの実用設定へ進む。
+### まず整える
+
+1. Projectを作成し、作りたいLoRA単位でジョブ、検証、採用LoRAをまとめる。
+2. Datasetsでデータセットを登録する。
+3. Rescanする。
+4. Dataset Inspectorで画像、caption、trigger word、タグ傾向、Trigger Consistencyを確認する。
+5. `Captions Missing Trigger` でtrigger欠落captionを確認する。
+6. triggerが0件または不足しているなら、既存タグをtriggerにするか、Preview/Confirm付きでcaptionへtriggerを追加する。
+7. backup_pathとDataset versionが作られたことを確認する。
+8. 必要ならRestore Preview/Confirmでテスト復元する。
+9. 再度Rescanし、Trigger ConsistencyとDataset versionを確認する。
+
+### 学習に進む
+
+1. 初回環境確認として `Integration Smoke - SDXL` で結合確認をする。
+2. ジョブ詳細でファイル準備を実行する。
+3. Preflight Checkを実行する。
+4. Project詳細のPilot判定を確認する。初回 / 新dataset / 新base model / 新preset / sd-scripts更新後ならPilot推奨、同条件で完走実績があればPilotスキップ可。
+5. 不安があれば `Pilot 3 Epoch`、動作確認済みなら `Standard 6 Epoch` へ進む。
+6. `Standard 6 Epoch` で本番寄り短時間テストを行う。
+
+### 見比べて選ぶ
+
+1. Job詳細でepoch別sampleにrating/memoを保存する。
+2. Compare画面でDataset version差分、raw/smoothed/epoch loss、step整合性、epoch別sample、rating/memo、selected LoRAを比較する。
+3. 採用epochを選び、Project採用LoRAへ反映する。
+4. 良さそうなジョブをCloneし、Quick VariantでLRやdimを小さく変えて再確認する。
+
+### 外で試して仕上げる
+
+1. Validation PresetでreForge/WebUI向けの外部検証プロンプトパックを出力する。
+2. Validation Run Reviewでexpected / registered / reviewedと評価ルーブリックを確認する。
+3. Recommendationを確認し、必要なら提案から下書きジョブを作成する。
+4. Standard本学習または長めの実用設定へ進む。
 
 ## 既知の制限
 

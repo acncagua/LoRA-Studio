@@ -1,25 +1,59 @@
 {% extends "base.html" %}{% block content %}
-<header class="page-head"><h1>推奨ワークフロー</h1><a class="button" href="/datasets">データセットへ</a></header>
+<header class="page-head">
+  <h1>推奨ワークフロー</h1>
+  <a class="button" href="/datasets">データセットへ</a>
+</header>
 
 <section>
-  <p class="notice">運用ベータでは、自動評価よりも再現性のある手順と人間評価を優先します。Projectを1つのLoRA作成作業、ジョブをProject内の1回の学習実行として扱います。</p>
-  <ol class="workflow-list">
-    <li><strong>Project作成</strong><br>作りたいLoRA単位でProjectを作成します。Pilot、Standard、外部検証、採用LoRAはProject詳細でまとめて確認します。</li>
-    <li><strong>データセット登録</strong><br>画像フォルダを登録し、モデル種別、トリガー、class tokenを設定します。</li>
-    <li><strong>再スキャン</strong><br>画像数、caption数、欠損、manifest hashを更新します。</li>
-    <li><strong>トリガー整合性確認</strong><br>トリガーの出現率、captionの揺れ、混入タグを見ます。</li>
-    <li><strong>caption修正</strong><br>必要に応じてprepend、replace、個別編集、restore previewを使います。</li>
-    <li><strong>データセットバージョン作成</strong><br>caption整備後の状態をsnapshotとして残します。</li>
-    <li><strong>Preflight Check</strong><br>ファイル準備後、base model、dataset、caption、設定ファイル、command argvを確認します。</li>
-    <li><strong>Pilot実行判定</strong><br>初回、新dataset、新base model、新preset、sd-scripts更新後はPilot推奨です。既に同条件で完走実績がありPreflightがOKならPilotはスキップできます。</li>
-    <li><strong>Pilot 3 Epoch または Standard 6 Epochへ進む</strong><br>Pilotは任意の軽量確認です。不安がある場合はPilotを挟み、動作確認済みならStandardへ直行します。</li>
-    <li><strong>Standard 6 Epoch</strong><br>同じProject内に新しいジョブを作成し、本番寄り条件で複数epochの変化と採用候補を見ます。</li>
-    <li><strong>サンプル評価</strong><br>顔、衣装、スタイル、安定性、柔軟性、メモを保存します。</li>
-    <li><strong>採用LoRA出力</strong><br>採用epochを選び、Project詳細からProject採用LoRAにも反映します。</li>
-    <li><strong>検証プリセットで外部検証</strong><br>Quick、Standard、Extendedの順でreForge/WebUI生成用プロンプトパックを使います。</li>
-    <li><strong>外部検証レビュー</strong><br>条件カバレッジで予定、登録済み、レビュー済みを確認し、評価ルーブリックを保存します。</li>
-    <li><strong>提案確認</strong><br>loss、サンプル評価、検証結果、データセット整合性を見たルールベース提案を確認します。</li>
-    <li><strong>必要なら下書きジョブ作成</strong><br>提案から下書きだけ作成し、実行は人間が判断して開始します。</li>
-  </ol>
+  <p class="notice">
+    運用ベータでは、いきなり長時間学習へ進まず、データセット確認、短時間テスト、画像評価、外部検証を小さく回す流れをおすすめします。
+    Pilotは毎回必須ではありません。初回や新しい条件で不安があるときの軽量な安全確認として使います。
+  </p>
+</section>
+
+<section class="panel-grid">
+  <div>
+    <h2>まず整える</h2>
+    <ol class="workflow-list">
+      <li><strong>Project作成</strong><br>作りたいLoRA単位でProjectを作ります。Pilot、Standard、外部検証、採用LoRAをProject詳細でまとめて確認します。</li>
+      <li><strong>データセット登録</strong><br>画像フォルダを登録し、モデル種別、トリガー、class tokenを設定します。</li>
+      <li><strong>再スキャン</strong><br>画像数、caption数、欠損、manifest hashを更新します。</li>
+      <li><strong>トリガー整合性確認</strong><br>トリガーの出現率、captionの揺れ、混入タグを見ます。</li>
+      <li><strong>caption調整</strong><br>必要に応じてprepend、replace、個別編集、restore previewを使います。</li>
+      <li><strong>データセットバージョン作成</strong><br>caption整備後の状態をsnapshotとして残します。</li>
+    </ol>
+  </div>
+
+  <div>
+    <h2>学習に進む</h2>
+    <ol class="workflow-list">
+      <li><strong>Integration Smoke</strong><br>初回環境確認用です。sd-scripts起動、LoRA出力、サンプル生成、DB取り込みが通るか短時間で確認します。</li>
+      <li><strong>ファイル準備</strong><br>ジョブ詳細で設定ファイル、sample prompt、command argvを生成します。</li>
+      <li><strong>事前確認</strong><br>base model、dataset、caption、設定ファイル、command argvを確認します。</li>
+      <li><strong>Pilot実行判定</strong><br>初回、新dataset、新base model、新preset、sd-scripts更新後はPilot推奨です。同条件の完走実績があり事前確認がOKならスキップできます。</li>
+      <li><strong>Pilot 3 Epoch または Standard 6 Epochへ進む</strong><br>不安があればPilotを挟み、動作確認済みならStandardへ直行します。</li>
+      <li><strong>Standard 6 Epoch</strong><br>本番寄りの短時間テストとして、複数epochの変化と採用候補を見ます。</li>
+    </ol>
+  </div>
+
+  <div>
+    <h2>見比べて選ぶ</h2>
+    <ol class="workflow-list">
+      <li><strong>サンプル評価</strong><br>顔、衣装、スタイル、安定性、柔軟性、メモを保存します。</li>
+      <li><strong>ジョブ比較</strong><br>Dataset version差分、loss、step整合性、epoch別sample、rating/memoを見比べます。</li>
+      <li><strong>採用LoRA選択</strong><br>採用epochを選び、Project詳細からProject採用LoRAにも反映します。</li>
+      <li><strong>必要なら派生ジョブ作成</strong><br>良さそうなジョブをCloneし、Quick VariantでLRやdimを小さく変えて再確認します。</li>
+    </ol>
+  </div>
+
+  <div>
+    <h2>外で試して仕上げる</h2>
+    <ol class="workflow-list">
+      <li><strong>検証プリセットで外部検証</strong><br>Quick、Standard、Extendedの順でreForge/WebUI生成用プロンプトパックを使います。</li>
+      <li><strong>Validation Run Review</strong><br>条件カバレッジ、登録済み、レビュー済みを確認し、評価ルーブリックを保存します。</li>
+      <li><strong>提案確認</strong><br>loss、サンプル評価、検証結果、データセット整合性を見たルールベース提案を確認します。</li>
+      <li><strong>次の一手へ</strong><br>必要なら提案から下書きジョブを作成し、実行するかどうかは人間が判断します。</li>
+    </ol>
+  </div>
 </section>
 {% endblock %}
