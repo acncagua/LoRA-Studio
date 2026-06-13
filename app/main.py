@@ -54,6 +54,8 @@ app.mount("/static", StaticFiles(directory=settings.ROOT_DIR / "app" / "static")
 
 RUBRIC_VERSION = "1.0"
 DEFAULT_JOB_PRESET_ID = "sdxl_2d_face_adamw8bit_standard"
+INTEGRATION_SMOKE_PRESET_ID = "integration_smoke_sdxl"
+SMOKE_STEP_LIMIT_KEYS = {"max_train_steps", "save_every_n_steps", "sample_every_n_steps"}
 STRENGTH_LABELS = [
     ("", "未評価"),
     ("too_weak", "弱すぎ"),
@@ -627,6 +629,21 @@ def pilot_recommendation(project: Any) -> dict[str, Any]:
         "reason": "この環境では実モデル学習が完走済みです。Dataset/triggerを確認し、事前確認がOKなら軽量確認は任意です。",
         "button_prefix": "",
     }
+
+
+def should_reset_params_to_selected_preset(current_preset_id: str | None, selected_preset_id: str, params: dict[str, Any]) -> bool:
+    if current_preset_id != selected_preset_id:
+        return True
+    if selected_preset_id != INTEGRATION_SMOKE_PRESET_ID and any(key in params for key in SMOKE_STEP_LIMIT_KEYS):
+        return True
+    return False
+
+
+def params_for_selected_preset(current_preset_id: str | None, selected_preset: Any, submitted_params: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    selected_preset_id = selected_preset["id"]
+    if should_reset_params_to_selected_preset(current_preset_id, selected_preset_id, submitted_params):
+        return json.loads(selected_preset["params_json"]), True
+    return submitted_params, False
 
 
 def create_project_preset_job(project_id: int, preset_id: str, skip_reason: str = "", source_job_id: int | None = None) -> int:
@@ -1649,28 +1666,30 @@ def job_edit_save(
             raise ValueError("params_json must be an object")
     except (json.JSONDecodeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=f"Advanced JSONを読み込めません: {exc}") from exc
-    try:
-        update_params_from_form(
-            params,
-            {
-                "max_train_epochs": max_train_epochs,
-                "repeats": repeats,
-                "train_batch_size": train_batch_size,
-                "learning_rate": learning_rate,
-                "unet_lr": unet_lr,
-                "text_encoder_lr": text_encoder_lr,
-                "network_dim": network_dim,
-                "network_alpha": network_alpha,
-                "resolution": resolution,
-                "save_every_n_epochs": save_every_n_epochs,
-                "sample_every_n_epochs": sample_every_n_epochs,
-                "optimizer_type": optimizer_type,
-                "lr_scheduler": lr_scheduler,
-            },
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f"主要パラメータの値が不正です: {exc}") from exc
-    params["no_metadata"] = bool(no_metadata)
+    params, reset_to_preset = params_for_selected_preset(job["preset_id"], preset, params)
+    if not reset_to_preset:
+        try:
+            update_params_from_form(
+                params,
+                {
+                    "max_train_epochs": max_train_epochs,
+                    "repeats": repeats,
+                    "train_batch_size": train_batch_size,
+                    "learning_rate": learning_rate,
+                    "unet_lr": unet_lr,
+                    "text_encoder_lr": text_encoder_lr,
+                    "network_dim": network_dim,
+                    "network_alpha": network_alpha,
+                    "resolution": resolution,
+                    "save_every_n_epochs": save_every_n_epochs,
+                    "sample_every_n_epochs": sample_every_n_epochs,
+                    "optimizer_type": optimizer_type,
+                    "lr_scheduler": lr_scheduler,
+                },
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"主要パラメータの値が不正です: {exc}") from exc
+        params["no_metadata"] = bool(no_metadata)
     selected_version_id = optional_int(dataset_version_id)
     if selected_version_id is None:
         version = fetch_one("SELECT id FROM dataset_versions WHERE dataset_id = ? ORDER BY version_no DESC LIMIT 1", (dataset_id,))
