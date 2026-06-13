@@ -31,13 +31,14 @@ def regenerate_recommendations(job_id: int) -> list[dict[str, Any]]:
             conn.execute(
                 """
                 INSERT INTO experiment_recommendations(
-                    source_job_id, source_profile_id, recommendation_type, priority,
+                    project_id, source_job_id, source_profile_id, recommendation_type, priority,
                     title, summary, reason, suggested_params_json, expected_effect,
                     risk_note, status, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?)
                 """,
                 (
+                    context["job"]["project_id"] if "project_id" in context["job"].keys() else None,
                     job_id,
                     context["profile"]["id"] if context["profile"] else None,
                     item["recommendation_type"],
@@ -473,6 +474,7 @@ def create_draft_job_from_recommendation(recommendation_id: int) -> int:
             "memo": f"Created from recommendation #{recommendation_id}: {recommendation['title']}",
             "sample_prompt_template_id": source["sample_prompt_template_id"] or "",
             "parent_job_id": source["id"],
+            "project_id": source["project_id"] if "project_id" in source.keys() else None,
             "params": params,
         }
     )
@@ -483,8 +485,8 @@ def create_draft_job_from_recommendation(recommendation_id: int) -> int:
             (source["dataset_version_id"], now, job_id),
         )
         conn.execute(
-            "UPDATE experiment_recommendations SET created_job_id = ?, status = 'job_created', updated_at = ? WHERE id = ?",
-            (job_id, now, recommendation_id),
+            "UPDATE experiment_recommendations SET created_job_id = ?, project_id = COALESCE(project_id, ?), status = 'job_created', updated_at = ? WHERE id = ?",
+            (job_id, source["project_id"] if "project_id" in source.keys() else None, now, recommendation_id),
         )
     return job_id
 

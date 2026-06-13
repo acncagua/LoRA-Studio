@@ -1,0 +1,43 @@
+{% extends "base.html" %}{% block content %}
+<header class="page-head">
+  <h1>Project一覧</h1>
+  <div class="actions"><a class="button" href="/jobs/new">新規Project / ジョブ作成</a></div>
+</header>
+
+<section>
+  <p class="muted">Projectは1つのLoRA作成作業です。学習ジョブ、採用LoRA、外部検証、次回実験提案をまとめて確認できます。</p>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th><th>Project名</th><th>状態</th><th>データセット</th><th>トリガー</th>
+        <th>採用ジョブ</th><th>採用epoch</th><th>推奨weight</th><th>最新検証</th><th>更新日時</th><th>操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for project in projects %}
+      <tr>
+        <td>#{{ project.id }}</td>
+        <td><a href="/projects/{{ project.id }}">{{ project.name }}</a></td>
+        <td><span class="label {{ project.status }}">{{ project_status_labels.get(project.status, project.status) }}</span></td>
+        <td>{{ project.dataset_name or '-' }}</td>
+        <td>{{ project.trigger_word or '-' }}</td>
+        <td>{% if project.selected_job_id %}<a href="/jobs/{{ project.selected_job_id }}">#{{ project.selected_job_id }} {{ project.selected_job_name or '' }}</a>{% else %}-{% endif %}</td>
+        <td>{{ project.selected_epoch if project.selected_epoch is not none else '-' }}</td>
+        <td>{{ project.recommended_weight_min if project.recommended_weight_min is not none else '-' }} - {{ project.recommended_weight_max if project.recommended_weight_max is not none else '-' }}</td>
+        <td>{{ project.latest_validation_status or '-' }}</td>
+        <td>{{ project.updated_at }}</td>
+        <td>
+          <div class="actions compact-actions">
+            <a class="button small-button" href="/projects/{{ project.id }}">Projectを開く</a>
+            {% if project.selected_job_id %}<a class="button small-button" href="/jobs/{{ project.selected_job_id }}">採用ジョブ</a>{% endif %}
+            {% if project.selected_lora_profile_id %}<a class="button small-button" href="/lora-library/{{ project.selected_lora_profile_id }}/edit">プロファイル</a>{% endif %}
+          </div>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="11" class="muted">Projectはまだありません。新規ジョブ作成からProjectを作成してください。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

@@ -16,6 +16,29 @@
   <div><span>{{ stats.stopped }}</span><small>停止</small></div>
 </section>
 <section>
+  <h2>最近のProject</h2>
+  <table>
+    <thead><tr><th>ID</th><th>Project名</th><th>状態</th><th>データセット</th><th>採用ジョブ</th><th>推奨weight</th><th>最新検証</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for project in projects %}
+      <tr>
+        <td><a href="/projects/{{ project.id }}">#{{ project.id }}</a></td>
+        <td>{{ project.name }}</td>
+        <td><span class="label {{ project.status }}">{{ project_status_labels.get(project.status, project.status) }}</span></td>
+        <td>{{ project.dataset_name or '-' }}</td>
+        <td>{% if project.selected_job_id %}<a href="/jobs/{{ project.selected_job_id }}">#{{ project.selected_job_id }}</a>{% else %}-{% endif %}</td>
+        <td>{{ project.recommended_weight_min if project.recommended_weight_min is not none else '-' }} - {{ project.recommended_weight_max if project.recommended_weight_max is not none else '-' }}</td>
+        <td>{{ project.latest_validation_status or '-' }}</td>
+        <td><a class="button small-button" href="/projects/{{ project.id }}">Projectを開く</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="muted">Projectはまだありません。新規ジョブ作成からProjectを作成してください。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p><a class="button" href="/projects">Project一覧を開く</a></p>
+</section>
+<section>
   <h2>操作が必要なジョブ</h2>
   <table>
     <thead><tr><th>ID</th><th>ジョブ名</th><th>状態</th><th>次の操作</th><th>操作</th></tr></thead>

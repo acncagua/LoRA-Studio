@@ -75,9 +75,18 @@ Set-Content -Encoding UTF8 .\data\python_cmd.txt "C:\path\to\python.exe"
 2. Datasets画面で画像フォルダを登録する。Windowsでは `参照` ボタンからフォルダ選択ダイアログを開けます。
 3. Dataset詳細画面で画像、caption、trigger word、タグ傾向を検査する。
 4. Presets画面で初期プリセットを確認する。
-5. New Job画面でデータセット、プリセット、使用モデル、必要ならSample Prompt Templateを指定してdraftを作る。
-6. Job詳細画面で `Prepare Files` を押し、設定ファイルと実行コマンドを生成する。
-7. `Run` を押して学習を開始する。必要なら `Stop` で停止する。
+5. New Job画面で新しいProjectを作成し、データセット、プリセット、使用モデル、必要ならSample Prompt Templateを指定して最初のdraft Jobを作る。
+6. Job詳細画面で `ファイル準備` を押し、設定ファイルと実行コマンドを生成する。
+7. `実行` を押して学習を開始する。必要なら `停止` で停止する。
+
+## ProjectとJob
+
+- Projectは、1つのLoRA作成作業全体を表します。
+- Jobは、Project内の1回の学習実行を表します。
+- PilotからStandardへ進む時は、同じProject内に新しいdraft Jobを作成します。
+- 実行済みJobは履歴保護のため直接編集せず、複製または派生draftを作成します。
+- Project詳細を見ると、Training Jobs、採用LoRA、LoRA Profile、外部検証、次回実験提案をまとめて確認できます。
+- 過去Jobを開いた場合も、Job詳細上部にProjectと現在の採用Jobへのリンクが表示されます。
 8. 完了後、Job詳細画面でログ、出力LoRA、サンプル画像を確認する。手動で再取り込みしたい場合は `Reimport Results` を押す。
 
 `Prepare Files` では表示用の `command.txt` に加えて、実行用の `command_argv.json` を生成します。実行時はshell文字列ではなくargv配列を `subprocess.Popen` に渡すため、Windowsのスペース入りパスでも壊れにくくしています。`dataset_config.toml` の `batch_size` はプリセットの `train_batch_size` から生成し、コマンドライン側では `--train_batch_size` を重複指定しません。学習時のbatch sizeは `dataset_config.toml` を正とします。

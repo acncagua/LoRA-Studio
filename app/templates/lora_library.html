@@ -5,7 +5,7 @@
   <table class="wide-table lora-library-table">
     <thead>
       <tr>
-        <th>ID</th><th>プロファイル</th><th>ジョブ</th><th>トリガー</th><th>epoch</th>
+        <th>ID</th><th>プロファイル</th><th>Project</th><th>ジョブ</th><th>トリガー</th><th>epoch</th>
         <th>推奨weight</th><th>検証プリセット</th><th>最新の外部検証</th>
         <th>予定 / 登録 / レビュー済み</th><th>カバー率</th><th>警告</th><th>ベースモデル</th><th>操作</th>
       </tr>
@@ -15,6 +15,7 @@
       <tr>
         <td class="nowrap">#{{ profile.id }}</td>
         <td class="wrap-text">{{ profile.profile_name }}</td>
+        <td class="wrap-text">{% if profile.project_id %}<a href="/projects/{{ profile.project_id }}">#{{ profile.project_id }} {{ profile.project_name or '' }}</a>{% else %}-{% endif %}</td>
         <td class="wrap-text"><a href="/jobs/{{ profile.job_id }}">#{{ profile.job_id }} {{ profile.job_name or '' }}</a></td>
         <td>{{ profile.trigger_word or '-' }}</td>
         <td>{{ profile.selected_epoch or '-' }}</td>
@@ -28,7 +29,7 @@
         <td class="nowrap"><a class="button small-button" href="/lora-library/{{ profile.id }}/edit">編集</a></td>
       </tr>
       {% else %}
-      <tr><td colspan="13" class="muted">LoRAプロファイルはまだありません。ジョブ詳細で採用LoRAを選択すると作成されます。</td></tr>
+      <tr><td colspan="14" class="muted">LoRAプロファイルはまだありません。ジョブ詳細で採用LoRAを選択すると作成されます。</td></tr>
       {% endfor %}
     </tbody>
   </table>

@@ -62,6 +62,16 @@ def init_db() -> None:
 def run_migrations(conn: sqlite3.Connection) -> None:
     ensure_columns(
         conn,
+        "lora_projects",
+        {
+            "selected_lora_profile_id": "INTEGER",
+            "recommended_weight_min": "REAL",
+            "recommended_weight_max": "REAL",
+            "memo": "TEXT",
+        },
+    )
+    ensure_columns(
+        conn,
         "environments",
         {
             "venv_accelerate_path": "TEXT",
@@ -107,6 +117,7 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "trigger_occurrence_rate_at_creation": "REAL",
             "trigger_consistency_label_at_creation": "TEXT",
             "dataset_version_id": "INTEGER",
+            "project_id": "INTEGER",
             "updated_at": "TEXT",
         },
     )
@@ -198,6 +209,7 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "last_validation_preset_id": "TEXT",
             "validation_policy_memo": "TEXT",
             "reference_set_id": "INTEGER",
+            "project_id": "INTEGER",
         },
     )
     ensure_columns(
@@ -211,8 +223,10 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "suggested_weight_reason": "TEXT",
             "profile_applied_at": "TEXT",
             "preset_snapshot_json": "TEXT",
+            "project_id": "INTEGER",
         },
     )
+    ensure_columns(conn, "experiment_recommendations", {"project_id": "INTEGER"})
     ensure_columns(
         conn,
         "validation_expected_conditions",
@@ -245,6 +259,10 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             ON training_metrics(job_id, step, raw_tag);
         CREATE INDEX IF NOT EXISTS idx_training_jobs_status
             ON training_jobs(status);
+        CREATE INDEX IF NOT EXISTS idx_training_jobs_project
+            ON training_jobs(project_id);
+        CREATE INDEX IF NOT EXISTS idx_lora_projects_status
+            ON lora_projects(status);
         CREATE INDEX IF NOT EXISTS idx_validation_results_job
             ON validation_results(job_id);
         CREATE INDEX IF NOT EXISTS idx_validation_images_job
@@ -263,14 +281,21 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             ON validation_weight_reviews(validation_run_id);
         CREATE INDEX IF NOT EXISTS idx_validation_runs_job
             ON validation_runs(job_id);
+        CREATE INDEX IF NOT EXISTS idx_validation_runs_project
+            ON validation_runs(project_id);
         CREATE INDEX IF NOT EXISTS idx_reference_images_set
             ON reference_images(reference_set_id);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_selected_lora_profiles_job_output
             ON selected_lora_profiles(job_id, selected_output_id);
+        CREATE INDEX IF NOT EXISTS idx_selected_lora_profiles_project
+            ON selected_lora_profiles(project_id);
         CREATE INDEX IF NOT EXISTS idx_experiment_recommendations_job
             ON experiment_recommendations(source_job_id, status);
+        CREATE INDEX IF NOT EXISTS idx_experiment_recommendations_project
+            ON experiment_recommendations(project_id);
         """
     )
+    backfill_project_ids(conn)
 
 
 def ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
@@ -278,6 +303,185 @@ def ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]
     for name, definition in columns.items():
         if name not in existing:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+
+
+def backfill_project_ids(conn: sqlite3.Connection) -> None:
+    """Best-effort migration for existing beta data without changing user-owned rows destructively."""
+    now = utc_now()
+    rows = conn.execute("SELECT id FROM training_jobs WHERE project_id IS NULL ORDER BY id").fetchall()
+    for row in rows:
+        job_id = int(row["id"])
+        project_id = infer_project_id_for_job(conn, job_id)
+        if project_id is not None:
+            conn.execute("UPDATE training_jobs SET project_id = ?, updated_at = ? WHERE id = ?", (project_id, now, job_id))
+
+    for table, job_column in (
+        ("selected_lora_profiles", "job_id"),
+        ("validation_runs", "job_id"),
+        ("experiment_recommendations", "source_job_id"),
+    ):
+        rows = conn.execute(
+            f"""
+            SELECT t.id, j.project_id
+            FROM {table} t
+            LEFT JOIN training_jobs j ON j.id = t.{job_column}
+            WHERE t.project_id IS NULL AND j.project_id IS NOT NULL
+            """
+        ).fetchall()
+        for row in rows:
+            conn.execute(f"UPDATE {table} SET project_id = ? WHERE id = ?", (row["project_id"], row["id"]))
+
+    seed_zuihou_project(conn)
+
+
+def infer_project_id_for_job(conn: sqlite3.Connection, job_id: int) -> int | None:
+    job = conn.execute("SELECT * FROM training_jobs WHERE id = ?", (job_id,)).fetchone()
+    if job is None:
+        return None
+    parent_id = job["parent_job_id"] if "parent_job_id" in job.keys() else None
+    if parent_id:
+        parent = conn.execute("SELECT project_id FROM training_jobs WHERE id = ?", (parent_id,)).fetchone()
+        if parent and parent["project_id"]:
+            return int(parent["project_id"])
+
+    dataset_id = job["dataset_id"]
+    trigger_word = job["trigger_word_at_creation"] or ""
+    base_model_path = job["base_model_path"] or ""
+    existing = conn.execute(
+        """
+        SELECT id FROM lora_projects
+        WHERE dataset_id IS ? AND COALESCE(trigger_word, '') = ? AND COALESCE(base_model_path, '') = ?
+        ORDER BY id LIMIT 1
+        """,
+        (dataset_id, trigger_word, base_model_path),
+    ).fetchone()
+    if existing:
+        return int(existing["id"])
+
+    dataset = conn.execute("SELECT name, trigger_word FROM datasets WHERE id = ?", (dataset_id,)).fetchone() if dataset_id else None
+    selected_output = conn.execute("SELECT id, epoch FROM training_outputs WHERE job_id = ? AND selected = 1 ORDER BY id DESC LIMIT 1", (job_id,)).fetchone()
+    selected_profile = conn.execute("SELECT id, recommended_weight_min, recommended_weight_max FROM selected_lora_profiles WHERE job_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1", (job_id,)).fetchone()
+    name_parts = []
+    if dataset:
+        name_parts.append(f"Dataset #{dataset_id} {dataset['name']}")
+    else:
+        name_parts.append(f"Job #{job_id}")
+    if trigger_word:
+        name_parts.append(trigger_word)
+    name = " ".join(name_parts).strip()[:160]
+    cur = conn.execute(
+        """
+        INSERT INTO lora_projects(
+            name, description, dataset_id, current_dataset_version_id, trigger_word,
+            base_model_path, status, selected_job_id, selected_output_id,
+            selected_lora_profile_id, recommended_weight_min, recommended_weight_max,
+            created_at, updated_at, memo
+        )
+        VALUES (?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '')
+        """,
+        (
+            name,
+            dataset_id,
+            job["dataset_version_id"] if "dataset_version_id" in job.keys() else None,
+            trigger_word or (dataset["trigger_word"] if dataset else ""),
+            base_model_path,
+            "selected" if selected_output else "draft",
+            job_id if selected_output else None,
+            selected_output["id"] if selected_output else None,
+            selected_profile["id"] if selected_profile else None,
+            selected_profile["recommended_weight_min"] if selected_profile else None,
+            selected_profile["recommended_weight_max"] if selected_profile else None,
+            utc_now(),
+            utc_now(),
+        ),
+    )
+    return int(cur.lastrowid)
+
+
+def seed_zuihou_project(conn: sqlite3.Connection) -> None:
+    job_ids = [10, 12, 13]
+    jobs = conn.execute(
+        f"SELECT * FROM training_jobs WHERE id IN ({','.join('?' for _ in job_ids)}) ORDER BY id",
+        tuple(job_ids),
+    ).fetchall()
+    if not jobs:
+        return
+    selected_job = conn.execute("SELECT * FROM training_jobs WHERE id = 12").fetchone() or jobs[-1]
+    selected_output = conn.execute("SELECT * FROM training_outputs WHERE job_id = ? AND selected = 1 ORDER BY id DESC LIMIT 1", (selected_job["id"],)).fetchone()
+    selected_profile = conn.execute("SELECT * FROM selected_lora_profiles WHERE id = 1").fetchone()
+    dataset_id = 4
+    version_id = 2
+    dataset = conn.execute("SELECT id, name, trigger_word FROM datasets WHERE id = ?", (dataset_id,)).fetchone()
+    existing = conn.execute(
+        "SELECT id FROM lora_projects WHERE selected_job_id = 12 OR name IN ('zuihou_v1', 'Dataset #4 zuihou LoRA') ORDER BY id LIMIT 1"
+    ).fetchone()
+    now = utc_now()
+    if existing:
+        project_id = int(existing["id"])
+        conn.execute(
+            """
+            UPDATE lora_projects
+            SET name = COALESCE(NULLIF(name, ''), 'zuihou_v1'),
+                dataset_id = COALESCE(dataset_id, ?),
+                current_dataset_version_id = COALESCE(current_dataset_version_id, ?),
+                trigger_word = COALESCE(NULLIF(trigger_word, ''), 'zuihou'),
+                base_model_path = COALESCE(NULLIF(base_model_path, ''), ?),
+                status = CASE WHEN status = 'draft' THEN 'selected' ELSE status END,
+                selected_job_id = COALESCE(selected_job_id, ?),
+                selected_output_id = COALESCE(selected_output_id, ?),
+                selected_lora_profile_id = COALESCE(selected_lora_profile_id, ?),
+                recommended_weight_min = COALESCE(recommended_weight_min, ?),
+                recommended_weight_max = COALESCE(recommended_weight_max, ?),
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                dataset_id,
+                version_id,
+                selected_job["base_model_path"] or "",
+                selected_job["id"],
+                selected_output["id"] if selected_output else None,
+                selected_profile["id"] if selected_profile else None,
+                selected_profile["recommended_weight_min"] if selected_profile else 0.6,
+                selected_profile["recommended_weight_max"] if selected_profile else 0.8,
+                now,
+                project_id,
+            ),
+        )
+    else:
+        cur = conn.execute(
+            """
+            INSERT INTO lora_projects(
+                name, description, dataset_id, current_dataset_version_id, trigger_word,
+                base_model_path, status, selected_job_id, selected_output_id,
+                selected_lora_profile_id, recommended_weight_min, recommended_weight_max,
+                created_at, updated_at, memo
+            )
+            VALUES (?, ?, ?, ?, ?, ?, 'selected', ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "zuihou_v1" if dataset else "Dataset #4 zuihou LoRA",
+                "既存のPilot/Standard/Validationをまとめた移行Project",
+                dataset_id,
+                version_id,
+                "zuihou",
+                selected_job["base_model_path"] or "",
+                selected_job["id"],
+                selected_output["id"] if selected_output else None,
+                selected_profile["id"] if selected_profile else None,
+                selected_profile["recommended_weight_min"] if selected_profile else 0.6,
+                selected_profile["recommended_weight_max"] if selected_profile else 0.8,
+                now,
+                now,
+                "Phase 10.9 migration",
+            ),
+        )
+        project_id = int(cur.lastrowid)
+    for jid in job_ids:
+        conn.execute("UPDATE training_jobs SET project_id = ?, updated_at = ? WHERE id = ?", (project_id, now, jid))
+    conn.execute("UPDATE selected_lora_profiles SET project_id = ? WHERE id = 1", (project_id,))
+    conn.execute("UPDATE validation_runs SET project_id = ? WHERE id = 2", (project_id,))
+    conn.execute("UPDATE experiment_recommendations SET project_id = ? WHERE source_job_id IN (10, 12, 13)", (project_id,))
 
 
 def seed_app_settings(conn: sqlite3.Connection) -> None:
@@ -676,17 +880,17 @@ def create_job(data: dict[str, Any]) -> int:
         cur = conn.execute(
             """
             INSERT INTO training_jobs(
-                name, dataset_id, preset_id, environment_id, status, model_family,
+                project_id, name, dataset_id, preset_id, environment_id, status, model_family,
                 training_script, base_model_path, vae_path, output_name, output_dir,
                 run_dir, params_json, memo, created_at, updated_at
                 , parent_job_id, sample_prompt_template_id
                 , trigger_word_at_creation, trigger_occurrence_count_at_creation,
                 trigger_occurrence_rate_at_creation, trigger_consistency_label_at_creation,
                 dataset_version_id
-            ) VALUES (?, ?, ?, NULL, 'draft', ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, NULL, 'draft', ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                data["name"], int(data["dataset_id"]), data["preset_id"],
+                data.get("project_id"), data["name"], int(data["dataset_id"]), data["preset_id"],
                 preset["model_family"], preset["training_script"], data["base_model_path"],
                 data.get("vae_path") or None, output_name,
                 json.dumps(params, ensure_ascii=False, indent=2), data.get("memo") or "", now, now,
@@ -1050,8 +1254,16 @@ CREATE TABLE IF NOT EXISTS sample_prompt_templates (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, purpose TEXT, prompts_json TEXT NOT NULL,
     is_builtin INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS lora_projects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, description TEXT,
+    dataset_id INTEGER, current_dataset_version_id INTEGER, trigger_word TEXT,
+    base_model_path TEXT, status TEXT NOT NULL DEFAULT 'draft',
+    selected_job_id INTEGER, selected_output_id INTEGER, selected_lora_profile_id INTEGER,
+    recommended_weight_min REAL, recommended_weight_max REAL,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, memo TEXT
+);
 CREATE TABLE IF NOT EXISTS training_jobs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, dataset_id INTEGER, preset_id TEXT,
+    id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER, name TEXT NOT NULL, dataset_id INTEGER, preset_id TEXT,
     environment_id INTEGER, status TEXT NOT NULL, model_family TEXT NOT NULL, training_script TEXT NOT NULL,
     base_model_path TEXT NOT NULL, vae_path TEXT, output_name TEXT NOT NULL, output_dir TEXT NOT NULL,
     run_dir TEXT NOT NULL, params_json TEXT NOT NULL, command_line TEXT, process_id INTEGER,
@@ -1122,7 +1334,7 @@ CREATE TABLE IF NOT EXISTS validation_presets (
     updated_at TEXT NOT NULL, memo TEXT
 );
 CREATE TABLE IF NOT EXISTS validation_runs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL,
+    id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER, job_id INTEGER NOT NULL,
     selected_output_id INTEGER, selected_lora_profile_id INTEGER,
     validation_preset_id TEXT, name TEXT NOT NULL, validation_level TEXT,
     base_model TEXT, trigger_word TEXT, lora_filename TEXT,
@@ -1170,7 +1382,7 @@ CREATE TABLE IF NOT EXISTS validation_weight_reviews (
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS selected_lora_profiles (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, selected_output_id INTEGER,
+    id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER, job_id INTEGER NOT NULL, selected_output_id INTEGER,
     profile_name TEXT NOT NULL, trigger_word TEXT, selected_epoch INTEGER, selected_model_path TEXT,
     exported_model_path TEXT, base_model TEXT, recommended_weight_min REAL,
     recommended_weight_max REAL, light_weight REAL, strong_weight REAL,
@@ -1194,7 +1406,7 @@ CREATE TABLE IF NOT EXISTS recommendation_rules (
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS experiment_recommendations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, source_job_id INTEGER NOT NULL,
+    id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER, source_job_id INTEGER NOT NULL,
     source_profile_id INTEGER, recommendation_type TEXT NOT NULL, priority TEXT NOT NULL,
     title TEXT NOT NULL, summary TEXT, reason TEXT, suggested_params_json TEXT,
     expected_effect TEXT, risk_note TEXT, created_job_id INTEGER,

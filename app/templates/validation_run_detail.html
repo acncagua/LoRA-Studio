@@ -3,6 +3,7 @@
   <h1>外部検証 #{{ run.id }}</h1>
   <div class="actions">
     <a class="button" href="/jobs/{{ run.job_id }}">ジョブへ戻る</a>
+    {% if run.project_id %}<a class="button" href="/projects/{{ run.project_id }}">Projectへ戻る</a>{% endif %}
     {% if run.selected_lora_profile_id %}<a class="button" href="/lora-library/{{ run.selected_lora_profile_id }}/edit">プロファイルへ戻る</a>{% endif %}
     <form method="post" action="/validation-runs/{{ run.id }}/export"><button type="submit">プロンプトパック再出力</button></form>
     <form method="post" action="/validation-runs/{{ run.id }}/export-report"><button type="submit">検証レポート出力</button></form>

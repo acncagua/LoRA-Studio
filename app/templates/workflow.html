@@ -2,17 +2,18 @@
 <header class="page-head"><h1>推奨ワークフロー</h1><a class="button" href="/datasets">データセットへ</a></header>
 
 <section>
-  <p class="notice">運用ベータでは、自動評価よりも再現性のある手順と人間評価を優先します。各ステップを小さく進め、データセット状態、ジョブ条件、検証結果を残してください。</p>
+  <p class="notice">運用ベータでは、自動評価よりも再現性のある手順と人間評価を優先します。Projectを1つのLoRA作成作業、ジョブをProject内の1回の学習実行として扱います。</p>
   <ol class="workflow-list">
+    <li><strong>Project作成</strong><br>作りたいLoRA単位でProjectを作成します。Pilot、Standard、外部検証、採用LoRAはProject詳細でまとめて確認します。</li>
     <li><strong>データセット登録</strong><br>画像フォルダを登録し、モデル種別、トリガー、class tokenを設定します。</li>
     <li><strong>再スキャン</strong><br>画像数、caption数、欠損、manifest hashを更新します。</li>
     <li><strong>トリガー整合性確認</strong><br>トリガーの出現率、captionの揺れ、混入タグを見ます。</li>
     <li><strong>caption修正</strong><br>必要に応じてprepend、replace、個別編集、restore previewを使います。</li>
     <li><strong>データセットバージョン作成</strong><br>caption整備後の状態をsnapshotとして残します。</li>
-    <li><strong>Pilot 3 Epoch</strong><br>短時間でloss推移、epoch差、sample比較の導線を確認します。</li>
-    <li><strong>Standard 6 Epoch</strong><br>本番寄り条件で複数epochの変化と採用候補を見ます。</li>
+    <li><strong>Pilot 3 Epoch</strong><br>Project内の最初の短時間ジョブとしてloss推移、epoch差、sample比較の導線を確認します。</li>
+    <li><strong>Standard 6 Epoch</strong><br>Pilotから同じProject内に新しいジョブを作成し、本番寄り条件で複数epochの変化と採用候補を見ます。</li>
     <li><strong>サンプル評価</strong><br>顔、衣装、スタイル、安定性、柔軟性、メモを保存します。</li>
-    <li><strong>採用LoRA出力</strong><br>採用epochを選び、LoRAライブラリプロファイルへ移します。</li>
+    <li><strong>採用LoRA出力</strong><br>採用epochを選び、Project詳細からProject採用LoRAにも反映します。</li>
     <li><strong>検証プリセットで外部検証</strong><br>Quick、Standard、Extendedの順でreForge/WebUI生成用プロンプトパックを使います。</li>
     <li><strong>外部検証レビュー</strong><br>条件カバレッジで予定、登録済み、レビュー済みを確認し、評価ルーブリックを保存します。</li>
     <li><strong>提案確認</strong><br>loss、サンプル評価、検証結果、データセット整合性を見たルールベース提案を確認します。</li>

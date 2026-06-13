@@ -1,8 +1,15 @@
 {% extends "base.html" %}{% block content %}
-<header class="page-head"><h1>LoRAプロファイル編集</h1><a class="button" href="/lora-library">ライブラリへ戻る</a></header>
+<header class="page-head">
+  <h1>LoRAプロファイル編集</h1>
+  <div class="actions">
+    <a class="button" href="/lora-library">ライブラリへ戻る</a>
+    {% if profile.project_id %}<a class="button" href="/projects/{{ profile.project_id }}">Projectへ戻る</a>{% endif %}
+  </div>
+</header>
 <section>
   <dl>
     <dt>ジョブ</dt><dd><a href="/jobs/{{ profile.job_id }}">#{{ profile.job_id }} {{ profile.job_name or '' }}</a></dd>
+    <dt>Project</dt><dd>{% if profile.project_id %}<a href="/projects/{{ profile.project_id }}">#{{ profile.project_id }} {{ profile.project_name or '' }}</a>{% else %}-{% endif %}</dd>
     <dt>採用LoRA</dt><dd>{{ profile.selected_model_path or '-' }}</dd>
     <dt>出力済み</dt><dd>{{ profile.exported_model_path or '-' }}</dd>
   </dl>

@@ -155,15 +155,16 @@ def create_validation_run(
         cur = conn.execute(
             """
             INSERT INTO validation_runs(
-                job_id, selected_output_id, selected_lora_profile_id,
+                project_id, job_id, selected_output_id, selected_lora_profile_id,
                 validation_preset_id, name, validation_level, base_model,
                 trigger_word, lora_filename, recommended_weight_min,
                 recommended_weight_max, expected_image_count, actual_image_count,
                 status, preset_snapshot_json, created_at, updated_at, memo
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'planned', ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'planned', ?, ?, ?, ?)
             """,
             (
+                job["project_id"] if "project_id" in job.keys() else None,
                 job_id,
                 selected_output["id"] if selected_output else profile["selected_output_id"] if profile else None,
                 profile["id"] if profile else profile_id,

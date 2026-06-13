@@ -4,6 +4,19 @@
 <header class="page-head">
   <h1>#{{ job.id }} {{ job.name }}</h1>
 </header>
+{% if project %}
+<section class="notice">
+  <h2>Project: {{ project.name }}</h2>
+  <p>
+    <a class="button" href="/projects/{{ project.id }}">Projectへ戻る</a>
+    {% if project.selected_job_id %}<a class="button" href="/jobs/{{ project.selected_job_id }}">現在の採用ジョブを開く</a>{% endif %}
+    <a class="button" href="/projects/{{ project.id }}#training-jobs">Project内のジョブ一覧</a>
+  </p>
+  {% if project.selected_job_id and project.selected_job_id != job.id %}
+  <p class="warning">このジョブはProject内の過去/派生ジョブです。現在の採用ジョブは <a href="/jobs/{{ project.selected_job_id }}">Job #{{ project.selected_job_id }}{% if project_selected_job %} {{ project_selected_job.name }}{% endif %}</a> です。</p>
+  {% endif %}
+</section>
+{% endif %}
 {% if created %}<p class="notice">ジョブを作成しました。次はファイル準備を実行してください。</p>{% endif %}
 {% if exported %}<p class="notice">出力しました: {{ exported }}</p>{% endif %}
 {% if preflight == 'edited' %}<p class="notice warning">編集内容を保存しました。実行前にファイル準備を再実行してください。</p>{% elif preflight %}<p class="notice {{ 'warning' if preflight.startswith('NG:') else '' }}">{{ preflight }}</p>{% endif %}

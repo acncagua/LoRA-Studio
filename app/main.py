@@ -325,6 +325,144 @@ def job_latest_action(job: Any) -> str:
     return "詳細確認"
 
 
+PROJECT_STATUS_LABELS = {
+    "draft": "下書き",
+    "training": "学習中",
+    "reviewing": "評価中",
+    "selected": "採用済み",
+    "validating": "検証中",
+    "completed": "完了",
+    "archived": "アーカイブ",
+}
+
+
+def create_lora_project(data: dict[str, Any]) -> int:
+    now = settings_now()
+    with connect() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO lora_projects(
+                name, description, dataset_id, current_dataset_version_id, trigger_word,
+                base_model_path, status, created_at, updated_at, memo
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                data["name"],
+                data.get("description") or "",
+                data.get("dataset_id"),
+                data.get("dataset_version_id"),
+                data.get("trigger_word") or "",
+                data.get("base_model_path") or "",
+                data.get("status") or "draft",
+                now,
+                now,
+                data.get("memo") or "",
+            ),
+        )
+        return int(cur.lastrowid)
+
+
+def recent_projects(limit: int = 8) -> list[dict[str, Any]]:
+    rows = fetch_all(
+        """
+        SELECT p.*, d.name AS dataset_name, sj.name AS selected_job_name,
+               so.epoch AS selected_epoch, vr.status AS latest_validation_status
+        FROM lora_projects p
+        LEFT JOIN datasets d ON d.id = p.dataset_id
+        LEFT JOIN training_jobs sj ON sj.id = p.selected_job_id
+        LEFT JOIN training_outputs so ON so.id = p.selected_output_id
+        LEFT JOIN validation_runs vr ON vr.id = (
+            SELECT id FROM validation_runs WHERE project_id = p.id ORDER BY id DESC LIMIT 1
+        )
+        ORDER BY p.updated_at DESC, p.id DESC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    return [dict(row) for row in rows]
+
+
+def project_workflow_status(project: Any, jobs: list[dict[str, Any]], validation_runs: list[Any], recommendations: list[Any]) -> list[dict[str, str]]:
+    has_dataset = bool(project["dataset_id"])
+    has_pilot = any("pilot" in (job.get("preset_name") or job.get("name") or "").lower() for job in jobs)
+    has_standard = any("standard" in (job.get("preset_name") or job.get("name") or "").lower() for job in jobs)
+    has_completed = any(job.get("status") == "completed" for job in jobs)
+    has_selected = bool(project["selected_job_id"] or project["selected_output_id"])
+    has_export = bool(project["selected_lora_profile_id"])
+    has_validation = bool(validation_runs)
+    has_recommendation = bool(recommendations)
+    return [
+        {"name": "データセット整備", "status": "OK" if has_dataset else "未設定"},
+        {"name": "Pilot Job", "status": "OK" if has_pilot else "未実施"},
+        {"name": "Standard Job", "status": "OK" if has_standard else "未実施"},
+        {"name": "Sample評価", "status": "OK" if has_completed else "未実施"},
+        {"name": "採用LoRA", "status": "OK" if has_selected else "未選択"},
+        {"name": "Export", "status": "OK" if has_export else "未出力"},
+        {"name": "Validation", "status": "OK" if has_validation else "未実施"},
+        {"name": "Recommendation", "status": "OK" if has_recommendation else "未生成"},
+    ]
+
+
+def project_training_jobs(project_id: int) -> list[dict[str, Any]]:
+    rows = fetch_all(
+        """
+        SELECT j.*, p.name AS preset_name, s.health_label,
+               o.id AS selected_output_id, o.epoch AS selected_epoch
+        FROM training_jobs j
+        LEFT JOIN presets p ON p.id = j.preset_id
+        LEFT JOIN training_metric_summaries s ON s.job_id = j.id
+        LEFT JOIN training_outputs o ON o.job_id = j.id AND o.selected = 1
+        WHERE j.project_id = ?
+        ORDER BY j.id
+        """,
+        (project_id,),
+    )
+    jobs = []
+    for row in rows:
+        item = dict(row)
+        try:
+            params = json.loads(item.get("params_json") or "{}")
+        except json.JSONDecodeError:
+            params = {}
+        item["max_train_epochs"] = params.get("max_train_epochs") or params.get("max_train_steps") or "-"
+        jobs.append(item)
+    return jobs
+
+
+def update_project_selected_from_job(project_id: int, job_id: int) -> None:
+    project = fetch_one("SELECT * FROM lora_projects WHERE id = ?", (project_id,))
+    job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
+    output = fetch_one("SELECT * FROM training_outputs WHERE job_id = ? AND selected = 1", (job_id,))
+    if project is None or job is None or output is None:
+        raise HTTPException(status_code=400, detail="Project採用に反映できる選択済みLoRAがありません。")
+    profile = ensure_selected_lora_profile(job_id)
+    now = settings_now()
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE lora_projects
+            SET selected_job_id = ?, selected_output_id = ?, selected_lora_profile_id = ?,
+                recommended_weight_min = COALESCE(?, recommended_weight_min),
+                recommended_weight_max = COALESCE(?, recommended_weight_max),
+                status = CASE WHEN status IN ('draft', 'training', 'reviewing') THEN 'selected' ELSE status END,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                job_id,
+                output["id"],
+                profile["id"] if profile else None,
+                profile["recommended_weight_min"] if profile else None,
+                profile["recommended_weight_max"] if profile else None,
+                now,
+                project_id,
+            ),
+        )
+        if profile:
+            conn.execute("UPDATE selected_lora_profiles SET project_id = ?, updated_at = ? WHERE id = ?", (project_id, now, profile["id"]))
+
+
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request) -> HTMLResponse:
     stats = {
@@ -356,6 +494,7 @@ def dashboard(request: Request) -> HTMLResponse:
         """
     )
     validation_profiles = lora_library_profiles(limit=6)
+    projects = recent_projects(limit=6)
     return render(
         request,
         "dashboard.html",
@@ -363,8 +502,91 @@ def dashboard(request: Request) -> HTMLResponse:
         jobs=jobs,
         attention_jobs=attention_jobs,
         validation_profiles=validation_profiles,
+        projects=projects,
+        status_labels=STATUS_LABELS,
+        project_status_labels=PROJECT_STATUS_LABELS,
+    )
+
+
+@app.get("/projects", response_class=HTMLResponse)
+def projects_list(request: Request) -> HTMLResponse:
+    return render(
+        request,
+        "projects.html",
+        projects=recent_projects(limit=100),
+        project_status_labels=PROJECT_STATUS_LABELS,
+    )
+
+
+@app.get("/projects/{project_id}", response_class=HTMLResponse)
+def project_detail(request: Request, project_id: int) -> HTMLResponse:
+    project = fetch_one(
+        """
+        SELECT p.*, d.name AS dataset_name, dv.version_no AS dataset_version_no,
+               sj.name AS selected_job_name, so.file_path AS selected_model_path,
+               so.epoch AS selected_epoch, sp.profile_name AS selected_profile_name,
+               sp.validation_policy_memo
+        FROM lora_projects p
+        LEFT JOIN datasets d ON d.id = p.dataset_id
+        LEFT JOIN dataset_versions dv ON dv.id = p.current_dataset_version_id
+        LEFT JOIN training_jobs sj ON sj.id = p.selected_job_id
+        LEFT JOIN training_outputs so ON so.id = p.selected_output_id
+        LEFT JOIN selected_lora_profiles sp ON sp.id = p.selected_lora_profile_id
+        WHERE p.id = ?
+        """,
+        (project_id,),
+    )
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    jobs = project_training_jobs(project_id)
+    validation_runs = fetch_all(
+        """
+        SELECT vr.*, vp.name AS preset_name,
+               (
+                   SELECT COUNT(*) FROM validation_images vi
+                   WHERE vi.validation_run_id = vr.id
+                     AND COALESCE(vi.ignored, 0) = 0
+                     AND (
+                         COALESCE(vi.rating_overall, 0) > 0
+                         OR COALESCE(vi.rating_face, 0) > 0
+                         OR COALESCE(vi.rating_costume, 0) > 0
+                         OR COALESCE(vi.rating_style, 0) > 0
+                         OR COALESCE(vi.rating_stability, 0) > 0
+                         OR COALESCE(vi.rating_flexibility, 0) > 0
+                     )
+               ) AS reviewed_count
+        FROM validation_runs vr
+        LEFT JOIN validation_presets vp ON vp.id = vr.validation_preset_id
+        WHERE vr.project_id = ?
+        ORDER BY vr.id DESC
+        """,
+        (project_id,),
+    )
+    recommendations = fetch_all(
+        """
+        SELECT * FROM experiment_recommendations
+        WHERE project_id = ? AND status != 'dismissed'
+        ORDER BY CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, id
+        """,
+        (project_id,),
+    )
+    return render(
+        request,
+        "project_detail.html",
+        project=project,
+        jobs=jobs,
+        validation_runs=validation_runs,
+        recommendations=recommendations,
+        workflow_status=project_workflow_status(project, jobs, validation_runs, recommendations),
+        project_status_labels=PROJECT_STATUS_LABELS,
         status_labels=STATUS_LABELS,
     )
+
+
+@app.post("/projects/{project_id}/select-job/{job_id}")
+def project_select_job(project_id: int, job_id: int) -> RedirectResponse:
+    update_project_selected_from_job(project_id, job_id)
+    return RedirectResponse(f"/projects/{project_id}", status_code=303)
 
 
 @app.get("/maintenance", response_class=HTMLResponse)
@@ -821,6 +1043,8 @@ def jobs_list(request: Request) -> HTMLResponse:
 def job_new(request: Request) -> HTMLResponse:
     datasets = fetch_all("SELECT * FROM datasets ORDER BY id DESC")
     presets = preset_option_rows(fetch_all("SELECT * FROM presets ORDER BY model_family DESC, name"))
+    projects = fetch_all("SELECT * FROM lora_projects WHERE status != 'archived' ORDER BY updated_at DESC, id DESC")
+    dataset_versions = fetch_all("SELECT * FROM dataset_versions ORDER BY dataset_id, version_no DESC")
     sample_prompt_templates = fetch_all("SELECT * FROM sample_prompt_templates ORDER BY is_builtin DESC, name")
     trigger_infos = {row["dataset_id"]: row for row in fetch_all("SELECT * FROM dataset_analysis")}
     return render(
@@ -828,6 +1052,8 @@ def job_new(request: Request) -> HTMLResponse:
         "job_create.html",
         datasets=datasets,
         presets=presets,
+        projects=projects,
+        dataset_versions=dataset_versions,
         default_preset_id=DEFAULT_JOB_PRESET_ID,
         sample_prompt_templates=sample_prompt_templates,
         trigger_infos=trigger_infos,
@@ -838,8 +1064,60 @@ def job_new(request: Request) -> HTMLResponse:
 
 
 @app.post("/jobs")
-def job_create(name: str = Form(...), dataset_id: int = Form(...), preset_id: str = Form(...), base_model_path: str = Form(...), vae_path: str = Form(""), output_name: str = Form(""), memo: str = Form(""), sample_prompt_template_id: str = Form("")) -> RedirectResponse:
-    job_id = create_job({"name": name, "dataset_id": dataset_id, "preset_id": preset_id, "base_model_path": base_model_path, "vae_path": vae_path, "output_name": output_name, "memo": memo, "sample_prompt_template_id": sample_prompt_template_id})
+def job_create(
+    name: str = Form(...),
+    dataset_id: int = Form(...),
+    preset_id: str = Form(...),
+    base_model_path: str = Form(...),
+    vae_path: str = Form(""),
+    output_name: str = Form(""),
+    memo: str = Form(""),
+    sample_prompt_template_id: str = Form(""),
+    project_mode: str = Form("new"),
+    project_id: str = Form(""),
+    project_name: str = Form(""),
+    project_description: str = Form(""),
+    project_trigger_word: str = Form(""),
+    dataset_version_id: str = Form(""),
+) -> RedirectResponse:
+    selected_project_id: int | None = None
+    if project_mode == "existing" and project_id.strip():
+        project = fetch_one("SELECT * FROM lora_projects WHERE id = ?", (int(project_id),))
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        selected_project_id = int(project["id"])
+        dataset_id = int(project["dataset_id"] or dataset_id)
+        base_model_path = project["base_model_path"] or base_model_path
+        dataset_version_id = str(project["current_dataset_version_id"] or dataset_version_id or "")
+    else:
+        dataset = fetch_one("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
+        latest_version = fetch_one("SELECT id FROM dataset_versions WHERE dataset_id = ? ORDER BY version_no DESC LIMIT 1", (dataset_id,))
+        selected_project_id = create_lora_project(
+            {
+                "name": project_name.strip() or name,
+                "description": project_description.strip(),
+                "dataset_id": dataset_id,
+                "dataset_version_id": int(dataset_version_id) if dataset_version_id.strip() else (latest_version["id"] if latest_version else None),
+                "trigger_word": project_trigger_word.strip() or (dataset["trigger_word"] if dataset else ""),
+                "base_model_path": base_model_path,
+                "status": "draft",
+                "memo": memo,
+            }
+        )
+    job_id = create_job({
+        "project_id": selected_project_id,
+        "name": name,
+        "dataset_id": dataset_id,
+        "preset_id": preset_id,
+        "base_model_path": base_model_path,
+        "vae_path": vae_path,
+        "output_name": output_name,
+        "memo": memo,
+        "sample_prompt_template_id": sample_prompt_template_id,
+    })
+    if dataset_version_id.strip():
+        with connect() as conn:
+            conn.execute("UPDATE training_jobs SET dataset_version_id = ?, updated_at = ? WHERE id = ?", (int(dataset_version_id), settings_now(), job_id))
     return RedirectResponse(f"/jobs/{job_id}?created=1", status_code=303)
 
 
@@ -884,6 +1162,9 @@ def job_detail(
     recommendations = list_recommendations(job_id)
     dataset_version = fetch_one("SELECT * FROM dataset_versions WHERE id = ?", (job["dataset_version_id"],)) if job["dataset_version_id"] else None
     params = json.loads(job["params_json"])
+    project = fetch_one("SELECT * FROM lora_projects WHERE id = ?", (job["project_id"],)) if "project_id" in job.keys() and job["project_id"] else None
+    project_jobs = fetch_all("SELECT id, name, status FROM training_jobs WHERE project_id = ? ORDER BY id", (project["id"],)) if project else []
+    project_selected_job = fetch_one("SELECT id, name FROM training_jobs WHERE id = ?", (project["selected_job_id"],)) if project and project["selected_job_id"] else None
     return render(
         request,
         "job_detail.html",
@@ -915,6 +1196,9 @@ def job_detail(
         default_project_path=str(settings.ROOT_DIR),
         dataset_version=dataset_version,
         no_metadata_enabled=bool(params.get("no_metadata")),
+        project=project,
+        project_jobs=project_jobs,
+        project_selected_job=project_selected_job,
         action_state=job_action_state(job, selected_output),
         next_action=recommended_next_action(job, selected_output),
         status_labels=STATUS_LABELS,
@@ -1138,6 +1422,7 @@ def job_clone(job_id: int, name: str = Form("")) -> RedirectResponse:
             "memo": f"Cloned from Job #{job_id}",
             "params": json.loads(source["params_json"]),
             "parent_job_id": job_id,
+            "project_id": source["project_id"] if "project_id" in source.keys() else None,
             "sample_prompt_template_id": source["sample_prompt_template_id"] or "",
         }
     )
@@ -1163,6 +1448,7 @@ def job_variant(job_id: int, variant: str = Form(...)) -> RedirectResponse:
             "memo": f"Quick Variant from Job #{job_id}: {label}",
             "params": params,
             "parent_job_id": job_id,
+            "project_id": source["project_id"] if "project_id" in source.keys() else None,
             "sample_prompt_template_id": source["sample_prompt_template_id"] or "",
         }
     )
@@ -1884,9 +2170,11 @@ def lora_library_profiles(limit: int | None = None) -> list[dict[str, Any]]:
     limit_clause = f"LIMIT {int(limit)}" if limit else ""
     rows = fetch_all(
         f"""
-        SELECT p.*, j.name AS job_name, j.status AS job_status, o.file_size, o.sha256
+        SELECT p.*, j.name AS job_name, j.status AS job_status, lp.name AS project_name,
+               o.file_size, o.sha256
         FROM selected_lora_profiles p
         LEFT JOIN training_jobs j ON j.id = p.job_id
+        LEFT JOIN lora_projects lp ON lp.id = p.project_id
         LEFT JOIN training_outputs o ON o.id = p.selected_output_id
         ORDER BY p.updated_at DESC, p.id DESC
         {limit_clause}
@@ -1926,9 +2214,10 @@ def lora_library_profiles(limit: int | None = None) -> list[dict[str, Any]]:
 def lora_profile_edit(request: Request, profile_id: int) -> HTMLResponse:
     profile = fetch_one(
         """
-        SELECT p.*, j.name AS job_name, j.status AS job_status
+        SELECT p.*, j.name AS job_name, j.status AS job_status, lp.name AS project_name
         FROM selected_lora_profiles p
         LEFT JOIN training_jobs j ON j.id = p.job_id
+        LEFT JOIN lora_projects lp ON lp.id = p.project_id
         WHERE p.id = ?
         """,
         (profile_id,),
@@ -2213,6 +2502,7 @@ def create_revised_draft(source_job_id: int) -> int:
             "memo": f"派生ドラフト from ジョブ #{source_job_id}",
             "params": json.loads(source["params_json"]),
             "parent_job_id": source_job_id,
+            "project_id": source["project_id"] if "project_id" in source.keys() else None,
             "sample_prompt_template_id": source["sample_prompt_template_id"] or "",
         }
     )
@@ -2629,15 +2919,16 @@ def ensure_selected_lora_profile(job_id: int) -> Any:
         cur = conn.execute(
             """
             INSERT INTO selected_lora_profiles(
-                job_id, selected_output_id, profile_name, trigger_word, selected_epoch,
+                project_id, job_id, selected_output_id, profile_name, trigger_word, selected_epoch,
                 selected_model_path, exported_model_path, base_model,
                 recommended_weight_min, recommended_weight_max, light_weight, strong_weight,
                 validation_memo, library_memo, default_validation_preset_id,
                 validation_policy_memo, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, '', '', ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, '', '', ?, ?, ?, ?)
             """,
             (
+                job["project_id"] if "project_id" in job.keys() else None,
                 job_id,
                 output["id"],
                 profile_name,
@@ -2666,6 +2957,7 @@ def sync_profile_selected_fields(job: Any, output: Any, profile_id: int) -> None
             SET selected_epoch = ?, selected_model_path = ?, exported_model_path = ?,
                 trigger_word = COALESCE(NULLIF(trigger_word, ''), ?),
                 base_model = COALESCE(NULLIF(base_model, ''), ?),
+                project_id = COALESCE(project_id, ?),
                 updated_at = ?
             WHERE id = ?
             """,
@@ -2675,6 +2967,7 @@ def sync_profile_selected_fields(job: Any, output: Any, profile_id: int) -> None
                 exported_model_path(int(job["id"])),
                 job["trigger_word_at_creation"] or "",
                 base_model_label(job["base_model_path"]),
+                job["project_id"] if "project_id" in job.keys() else None,
                 now,
                 profile_id,
             ),
