@@ -192,10 +192,6 @@ def stop_job(job_id: int) -> None:
     job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
     if job is None:
         raise ValueError(f"Job not found: {job_id}")
-    pid = job["process_id"]
-    if pid:
-        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, check=False)
-    kill_job_processes(dict(job))
     end_time = utc_now()
     elapsed = elapsed_seconds(job["start_time"], end_time) if job["start_time"] else None
     with connect() as conn:
@@ -208,6 +204,10 @@ def stop_job(job_id: int) -> None:
             """,
             (end_time, elapsed, end_time, job_id),
         )
+    pid = job["process_id"]
+    if pid:
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, check=False)
+    kill_job_processes(dict(job))
 
 
 def kill_job_processes(job: dict) -> None:
