@@ -91,6 +91,24 @@ textarea { min-height: 84px; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
 .actions form { padding: 0; border: 0; background: transparent; }
 .compact-actions { justify-content: flex-start; align-items: center; }
+.next-job-actions {
+  justify-content: flex-start;
+  align-items: end;
+  gap: 12px;
+}
+.next-job-actions form {
+  display: grid;
+  gap: 8px;
+  min-width: 260px;
+  max-width: 420px;
+}
+.next-job-actions .inline-form {
+  margin-top: 0;
+  flex: 1 1 360px;
+}
+.next-job-actions button {
+  width: 100%;
+}
 .button.disabled, button:disabled {
   background: #d5ddd8;
   color: #6d7972;

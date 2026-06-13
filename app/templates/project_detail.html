@@ -41,7 +41,7 @@
   <h2>軽量確認の実行判定</h2>
   <p><span class="label {{ pilot_guidance.label|lower }}">{{ pilot_guidance.label }}</span></p>
   <p>{{ pilot_guidance.reason }}</p>
-  <div class="actions">
+  <div class="actions next-job-actions">
     <form method="post" action="/projects/{{ project.id }}/create-preset-job">
       <input type="hidden" name="preset_id" value="sdxl_2d_face_pilot_3epoch">
       <button type="submit">{{ pilot_guidance.button_prefix }}軽量確認3Epochの学習ジョブを作成</button>

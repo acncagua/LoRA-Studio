@@ -61,7 +61,7 @@
   <h2>次に進む判断</h2>
   <p>軽量確認判定: <span class="label {{ pilot_guidance.label|lower }}">{{ pilot_guidance.label }}</span></p>
   <p>{{ pilot_guidance.reason }}</p>
-  <div class="actions">
+  <div class="actions next-job-actions">
     <form method="post" action="/projects/{{ project.id }}/create-preset-job">
       <input type="hidden" name="preset_id" value="{{ pilot_preset_id }}">
       <input type="hidden" name="source_job_id" value="{{ job.id }}">
