@@ -1532,6 +1532,7 @@ def job_detail(
     samples = fetch_all("SELECT * FROM sample_images WHERE job_id = ? ORDER BY epoch, id", (job_id,))
     sample_prompts = fetch_all("SELECT * FROM sample_prompts WHERE job_id = ? ORDER BY sort_order, id", (job_id,))
     metrics = fetch_all("SELECT * FROM training_metrics WHERE job_id = ? ORDER BY step, id", (job_id,))
+    metric_table = build_metric_table(metrics)
     metric_summary = fetch_one("SELECT * FROM training_metric_summaries WHERE job_id = ?", (job_id,))
     epoch_summaries = fetch_all("SELECT * FROM training_epoch_summaries WHERE job_id = ? ORDER BY epoch", (job_id,))
     decorated_epochs = decorate_epoch_summaries(epoch_summaries, outputs, samples)
@@ -1560,6 +1561,8 @@ def job_detail(
         sample_prompts=sample_prompts,
         sample_groups=group_samples(sample_prompts, samples),
         metrics=metrics,
+        metric_rows=metric_table["rows"],
+        metric_table=metric_table,
         metric_summary=metric_summary,
         epoch_summaries=decorated_epochs,
         epoch_visual_summaries=build_epoch_visual_summaries(decorated_epochs, samples),
@@ -3772,6 +3775,8 @@ def build_loss_chart(metrics: list[Any]) -> dict[str, Any] | None:
     loss_rows = [row for row in metrics if row["loss"] is not None and row["step"] is not None]
     if len(loss_rows) < 2:
         return None
+    source_count = len(loss_rows)
+    loss_rows = downsample_rows(loss_rows, 1200)
     width = 720
     height = 220
     pad = 28
@@ -3800,6 +3805,8 @@ def build_loss_chart(metrics: list[Any]) -> dict[str, Any] | None:
         "max_loss": max_loss,
         "min_step": min_step,
         "max_step": max_step,
+        "source_count": source_count,
+        "point_count": len(loss_rows),
     }
 
 
@@ -3809,3 +3816,35 @@ def moving_average(values: list[float], window: int) -> list[float]:
         start = max(0, index - window + 1)
         result.append(sum(values[start:index + 1]) / (index - start + 1))
     return result
+
+
+def downsample_rows(rows: list[Any], max_points: int) -> list[Any]:
+    if len(rows) <= max_points:
+        return rows
+    last_index = len(rows) - 1
+    indexes = {round(index * last_index / (max_points - 1)) for index in range(max_points)}
+    return [rows[index] for index in sorted(indexes)]
+
+
+def build_metric_table(metrics: list[Any], head: int = 5, tail: int = 200) -> dict[str, Any]:
+    total = len(metrics)
+    if total <= head + tail:
+        return {
+            "rows": metrics,
+            "total": total,
+            "shown": total,
+            "head": min(head, total),
+            "tail": max(0, total - head),
+            "omitted": 0,
+            "limited": False,
+        }
+    rows = metrics[:head] + metrics[-tail:]
+    return {
+        "rows": rows,
+        "total": total,
+        "shown": len(rows),
+        "head": head,
+        "tail": tail,
+        "omitted": total - len(rows),
+        "limited": True,
+    }

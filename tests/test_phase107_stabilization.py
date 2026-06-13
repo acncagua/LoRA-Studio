@@ -12,6 +12,7 @@ from PIL import Image
 
 from app import settings
 from app.db import connect, fetch_all, fetch_one, init_db, utc_now
+from app.main import build_loss_chart, build_metric_table
 
 
 class IsolatedDbTest(unittest.TestCase):
@@ -34,6 +35,40 @@ class IsolatedDbTest(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (8, 8), color=(20, 120, 80)).save(path)
         return path
+
+
+class MetricDisplayTests(unittest.TestCase):
+    def make_metrics(self, count: int) -> list[dict[str, object]]:
+        return [
+            {
+                "step": index + 1,
+                "loss": 0.1 + (index % 17) * 0.001,
+                "learning_rate": None,
+                "source": "tensorboard",
+                "raw_tag": "loss/current",
+            }
+            for index in range(count)
+        ]
+
+    def test_metric_table_limits_large_runs(self) -> None:
+        table = build_metric_table(self.make_metrics(18900))
+        self.assertTrue(table["limited"])
+        self.assertEqual(table["total"], 18900)
+        self.assertEqual(table["shown"], 205)
+        self.assertEqual(table["omitted"], 18695)
+        self.assertEqual(table["rows"][0]["step"], 1)
+        self.assertEqual(table["rows"][4]["step"], 5)
+        self.assertEqual(table["rows"][5]["step"], 18701)
+        self.assertEqual(table["rows"][-1]["step"], 18900)
+
+    def test_loss_chart_downsamples_large_runs(self) -> None:
+        chart = build_loss_chart(self.make_metrics(18900))
+        self.assertIsNotNone(chart)
+        assert chart is not None
+        self.assertEqual(chart["source_count"], 18900)
+        self.assertLessEqual(chart["point_count"], 1200)
+        self.assertEqual(chart["min_step"], 1)
+        self.assertEqual(chart["max_step"], 18900)
 
 
 class Phase107StabilizationTests(IsolatedDbTest):

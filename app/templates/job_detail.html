@@ -240,14 +240,20 @@
     <polyline class="raw" points="{{ loss_chart.raw_points }}"></polyline>
     <polyline class="avg" points="{{ loss_chart.ma_points }}"></polyline>
   </svg>
-  <p class="muted">Raw lossと10点移動平均。Step {{ loss_chart.min_step }} から {{ loss_chart.max_step }}。</p>
+  <p class="muted">Raw lossと10点移動平均。Step {{ loss_chart.min_step }} から {{ loss_chart.max_step }}。{% if loss_chart.source_count > loss_chart.point_count %}グラフは全{{ loss_chart.source_count }}点から{{ loss_chart.point_count }}点に間引いて表示しています。{% endif %}</p>
   {% else %}
   <p class="muted">Lossグラフのデータはまだありません。結果を再取り込みするとTensorBoard、次にtrain.logから読み込みます。</p>
   {% endif %}
+  <p class="muted">
+    メトリクス表は画面を軽くするため、{% if metric_table.limited %}全{{ metric_table.total }}件のうち先頭{{ metric_table.head }}件と末尾{{ metric_table.tail }}件を表示しています。省略: {{ metric_table.omitted }}件。{% else %}全{{ metric_table.total }}件を表示しています。{% endif %}
+  </p>
   <table>
     <thead><tr><th>Step</th><th>Loss</th><th>学習率</th><th>取得元</th><th>タグ</th></tr></thead>
     <tbody>
-      {% for metric in metrics %}
+      {% for metric in metric_rows %}
+      {% if metric_table.limited and loop.index == metric_table.head + 1 %}
+      <tr><td colspan="5" class="muted">... {{ metric_table.omitted }}件を省略 ...</td></tr>
+      {% endif %}
       <tr><td>{{ metric.step }}</td><td>{{ '%.6f'|format(metric.loss) if metric.loss is not none else '-' }}</td><td>{{ metric.learning_rate if metric.learning_rate is not none else '-' }}</td><td>{{ metric.source or '-' }}</td><td>{{ metric.raw_tag or '-' }}</td></tr>
       {% else %}
       <tr><td colspan="5" class="muted">メトリクスはまだ取り込まれていません。</td></tr>
