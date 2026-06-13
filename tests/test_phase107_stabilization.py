@@ -158,6 +158,42 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertEqual(params["train_batch_size"], 2)
         self.assertEqual(params["max_train_epochs"], 10)
 
+    def test_create_job_resets_smoke_step_limit_for_normal_preset(self) -> None:
+        import json
+
+        from app.db import create_job
+
+        _, dataset_id, _ = self.create_project_fixture()
+        job_id = create_job(
+            {
+                "name": "from smoke clone",
+                "dataset_id": dataset_id,
+                "preset_id": "sdxl_2d_face_adamw8bit_generalize",
+                "base_model_path": "D:/models/base.safetensors",
+                "output_name": "from_smoke_clone",
+                "params": {
+                    "network_dim": 4,
+                    "network_alpha": 2,
+                    "train_batch_size": 1,
+                    "repeats": 1,
+                    "max_train_steps": 2,
+                    "save_every_n_steps": 1,
+                    "sample_every_n_steps": 1,
+                    "resolution": [512, 512],
+                },
+            }
+        )
+        job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
+        params = json.loads(job["params_json"])
+
+        self.assertNotIn("max_train_steps", params)
+        self.assertNotIn("save_every_n_steps", params)
+        self.assertNotIn("sample_every_n_steps", params)
+        self.assertEqual(params["network_dim"], 16)
+        self.assertEqual(params["network_alpha"], 8)
+        self.assertEqual(params["train_batch_size"], 2)
+        self.assertEqual(params["max_train_epochs"], 8)
+
     def test_validation_image_outside_allowed_root_is_403(self) -> None:
         outside = self.make_png(self.root / "outside.png")
         now = utc_now()

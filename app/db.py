@@ -15,6 +15,10 @@ from app import settings
 from app.services.preset_seed import preset_rows
 
 
+INTEGRATION_SMOKE_PRESET_ID = "integration_smoke_sdxl"
+SMOKE_STEP_LIMIT_KEYS = {"max_train_steps", "save_every_n_steps", "sample_every_n_steps"}
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -833,6 +837,19 @@ def fetch_one(query: str, params: tuple[Any, ...] = ()) -> sqlite3.Row | None:
         return conn.execute(query, params).fetchone()
 
 
+def has_smoke_step_limit(params: dict[str, Any]) -> bool:
+    return any(key in params for key in SMOKE_STEP_LIMIT_KEYS)
+
+
+def normalize_job_params_for_preset(preset: sqlite3.Row, params: dict[str, Any] | None) -> dict[str, Any]:
+    preset_params = json.loads(preset["params_json"])
+    if params is None:
+        return preset_params
+    if preset["id"] != INTEGRATION_SMOKE_PRESET_ID and has_smoke_step_limit(params):
+        return preset_params
+    return params
+
+
 def insert_dataset(name: str, path: str, model_family: str, trigger_word: str, class_token: str, memo: str) -> int:
     from app.services.dataset_scanner import scan_dataset
 
@@ -868,7 +885,7 @@ def create_job(data: dict[str, Any]) -> int:
         raise ValueError(f"Preset not found: {data['preset_id']}")
     dataset = fetch_one("SELECT * FROM datasets WHERE id = ?", (int(data["dataset_id"]),))
     analysis = fetch_one("SELECT * FROM dataset_analysis WHERE dataset_id = ?", (int(data["dataset_id"]),))
-    params = data.get("params") or json.loads(preset["params_json"])
+    params = normalize_job_params_for_preset(preset, data.get("params"))
     output_name = data.get("output_name") or data["name"].replace(" ", "_")
     trigger_word = dataset["trigger_word"] if dataset else None
     trigger_count = analysis["trigger_word_count"] if analysis else None
