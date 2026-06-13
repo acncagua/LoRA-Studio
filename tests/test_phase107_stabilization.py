@@ -194,6 +194,19 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertEqual(params["train_batch_size"], 2)
         self.assertEqual(params["max_train_epochs"], 8)
 
+    def test_train_log_tail_decodes_cp932_logs(self) -> None:
+        from app.services.training_runner import read_log_tail
+
+        run_dir = self.root / "runs" / "job_000001"
+        log_path = run_dir / "logs" / "train.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_bytes("エラー: メモリ不足\nRuntimeError: bad allocation\n".encode("cp932"))
+
+        tail = read_log_tail({"run_dir": str(run_dir)})
+
+        self.assertIn("エラー: メモリ不足", tail)
+        self.assertIn("RuntimeError: bad allocation", tail)
+
     def test_validation_image_outside_allowed_root_is_403(self) -> None:
         outside = self.make_png(self.root / "outside.png")
         now = utc_now()

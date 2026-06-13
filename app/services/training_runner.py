@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import threading
 from datetime import datetime, timezone
@@ -48,12 +49,16 @@ def start_job(job_id: int, acknowledge_trigger_mismatch: bool = False) -> int:
 
     start_time = utc_now()
     log_handle = log_path.open("ab")
+    env = os.environ.copy()
+    env.setdefault("PYTHONUTF8", "1")
+    env.setdefault("PYTHONIOENCODING", "utf-8")
     process = subprocess.Popen(
         argv,
         cwd=str(sd_scripts_path),
         stdout=log_handle,
         stderr=subprocess.STDOUT,
         shell=False,
+        env=env,
     )
     with connect() as conn:
         conn.execute(
@@ -228,7 +233,17 @@ def read_log_tail(job: dict, max_lines: int = 200) -> str:
     if not log_path.exists():
         return ""
     try:
-        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        data = log_path.read_bytes()
     except OSError:
         return ""
+    lines = decode_log_bytes(data).splitlines()
     return "\n".join(lines[-max_lines:])
+
+
+def decode_log_bytes(data: bytes) -> str:
+    for encoding in ("utf-8", "cp932", "shift_jis"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", errors="replace")
