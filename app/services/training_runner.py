@@ -46,6 +46,7 @@ def start_job(job_id: int, acknowledge_trigger_mismatch: bool = False) -> int:
     sd_scripts_path = Path(environment["sd_scripts_path"])
     log_path = Path(job["run_dir"]) / "logs" / "train.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    archive_existing_log(log_path)
 
     start_time = utc_now()
     log_handle = log_path.open("ab")
@@ -194,6 +195,7 @@ def stop_job(job_id: int) -> None:
     pid = job["process_id"]
     if pid:
         subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, check=False)
+    kill_job_processes(dict(job))
     end_time = utc_now()
     elapsed = elapsed_seconds(job["start_time"], end_time) if job["start_time"] else None
     with connect() as conn:
@@ -206,6 +208,33 @@ def stop_job(job_id: int) -> None:
             """,
             (end_time, elapsed, end_time, job_id),
         )
+
+
+def kill_job_processes(job: dict) -> None:
+    run_dir = str(job.get("run_dir") or "")
+    if not run_dir:
+        return
+    marker = Path(run_dir).name
+    if not marker.startswith("job_"):
+        return
+    script = (
+        "$marker = " + json.dumps(marker) + "; "
+        "Get-CimInstance Win32_Process -Filter \"name = 'python.exe'\" | "
+        "Where-Object { $_.CommandLine -like ('*' + $marker + '*') } | "
+        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+    )
+    subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, check=False)
+
+
+def archive_existing_log(log_path: Path) -> None:
+    if not log_path.exists() or log_path.stat().st_size == 0:
+        return
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    archive_path = log_path.with_name(f"train_{stamp}.log")
+    try:
+        log_path.replace(archive_path)
+    except OSError:
+        pass
 
 
 def has_model_outputs(job_id: int) -> bool:
