@@ -58,6 +58,55 @@
   </div>
 </section>
 
+<section>
+  <h2>sd-scripts画像生成</h2>
+  <p class="muted">検証条件からsd-scripts gen_img.py用のpromptファイルを作成し、Hiresなし条件を自動生成します。weight 0はLoRAなしの基準画像として扱います。Hiresあり条件は初期版では生成対象外です。</p>
+  <div class="actions compact-actions">
+    <form method="post" action="/validation-runs/{{ run.id }}/generation/prepare"><button type="submit">生成ファイルを作成</button></form>
+    <form method="post" action="/validation-runs/{{ run.id }}/generation/run"><button type="submit" {% if generation and generation.status == 'running' %}disabled{% endif %}>画像生成を実行</button></form>
+    <form method="post" action="/validation-runs/{{ run.id }}/generation/stop"><button type="submit" class="danger" {% if not generation or generation.status != 'running' %}disabled{% endif %}>画像生成を停止</button></form>
+    <form method="post" action="/validation-runs/{{ run.id }}/generation/import"><button type="submit">生成画像を再取り込み</button></form>
+    {% if matrix_exists %}<a class="button" href="/validation-runs/{{ run.id }}/matrix" target="_blank" rel="noopener">比較Matrixを開く</a>{% endif %}
+  </div>
+  <div class="panel-grid">
+    <div>
+      <h3>画像生成ステータス</h3>
+      {% if generation %}
+      <dl>
+        <dt>状態</dt><dd><span class="label {{ generation.status }}">{{ generation.status }}</span></dd>
+        <dt>生成数</dt><dd>{{ generation.generated_image_count }}</dd>
+        <dt>取り込み数</dt><dd>{{ generation.imported_image_count }}</dd>
+        <dt>終了コード</dt><dd>{{ generation.return_code if generation.return_code is not none else '-' }}</dd>
+        <dt>経過秒数</dt><dd>{{ generation.elapsed_seconds if generation.elapsed_seconds is not none else '-' }}</dd>
+        <dt>promptファイル</dt><dd>{{ generation.prompt_file_path or '-' }}</dd>
+        <dt>出力フォルダ</dt><dd>{{ generation.output_dir or '-' }}</dd>
+        <dt>比較Matrix</dt><dd>{{ matrix_path or '-' }}</dd>
+        <dt>メッセージ</dt><dd>{{ generation.error_message or '-' }}</dd>
+      </dl>
+      {% else %}
+      <p class="muted">まだ生成ファイルは作成されていません。</p>
+      {% endif %}
+    </div>
+    <div>
+      <h3>画像生成ログ</h3>
+      {% if generation_log_tail %}
+      <pre>{{ generation_log_tail }}</pre>
+      {% else %}
+      <p class="muted">ログはまだありません。</p>
+      {% endif %}
+    </div>
+  </div>
+  {% if generation and generation.command_argv_json %}
+  <details>
+    <summary>実行コマンド確認</summary>
+    <pre>{{ generation.command_argv_json }}</pre>
+  </details>
+  {% endif %}
+  {% if missing %}
+  <p class="notice warning">未登録の検証条件: {{ missing|length }} 件</p>
+  {% endif %}
+</section>
+
 <section class="panel-grid">
   <div>
     <h2>推奨weight</h2>

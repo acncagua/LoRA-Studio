@@ -5,6 +5,7 @@ import tempfile
 import types
 import unittest
 import hashlib
+import json
 from pathlib import Path
 from unittest import mock
 
@@ -692,6 +693,124 @@ class Phase107StabilizationTests(IsolatedDbTest):
         with self.assertRaises(HTTPException) as raised:
             reference_image_file(image_id)
         self.assertEqual(raised.exception.status_code, 404)
+
+    def create_validation_generation_fixture(self, preset_id: str = "standard_validation_v1") -> tuple[int, int]:
+        base_model = self.root / "models" / "base.safetensors"
+        lora_model = self.root / "runs" / "job_000001" / "models" / "selected.safetensors"
+        sd_scripts = self.root / "external" / "sd-scripts"
+        for path in (base_model, lora_model, sd_scripts / "gen_img.py"):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("stub", encoding="utf-8")
+        project_id, dataset_id, version_id = self.create_project_fixture(str(base_model))
+        job_id = self.add_completed_job(
+            dataset_id,
+            version_id,
+            "sdxl_2d_face_standard_6epoch",
+            base_model=str(base_model),
+            project_id=project_id,
+        )
+        now = utc_now()
+        with connect() as conn:
+            output = conn.execute(
+                """
+                INSERT INTO training_outputs(job_id, epoch, file_path, file_type, selected, file_size, sha256, created_at)
+                VALUES (?, 4, ?, 'model', 1, ?, 'abc123', ?)
+                """,
+                (job_id, str(lora_model), lora_model.stat().st_size, now),
+            )
+            selected_output_id = int(output.lastrowid)
+            conn.execute(
+                """
+                INSERT INTO environments(
+                    name, sd_scripts_path, venv_python_path, mixed_precision,
+                    sd_scripts_commit_hash, status, created_at, updated_at
+                )
+                VALUES ('default', ?, ?, 'bf16', 'test', 'ok', ?, ?)
+                """,
+                (str(sd_scripts), sys.executable, now, now),
+            )
+        from app.services.validation_runs import create_validation_run
+
+        run_id = create_validation_run(job_id, preset_id, str(base_model), "testchar", "")
+        with connect() as conn:
+            conn.execute(
+                "UPDATE validation_runs SET selected_output_id = ? WHERE id = ?",
+                (selected_output_id, run_id),
+            )
+        return run_id, selected_output_id
+
+    def test_sd_scripts_generation_prepare_splits_baseline_and_lora_commands(self) -> None:
+        from app.services.validation_generation import prepare_validation_generation
+
+        run_id, _ = self.create_validation_generation_fixture()
+        result = prepare_validation_generation(run_id)
+
+        command_path = Path(result["command_argv"])
+        payload = json.loads(command_path.read_text(encoding="utf-8"))
+        self.assertEqual(payload["skipped_hires_count"], 0)
+        self.assertEqual(len(payload["commands"]), 2)
+        baseline, lora = payload["commands"]
+        self.assertEqual(baseline["name"], "baseline_weight_0_no_lora")
+        self.assertNotIn("--network_weights", baseline["argv"])
+        self.assertNotIn("--network_module", baseline["argv"])
+        self.assertIn("--network_weights", lora["argv"])
+        self.assertIn("--network_module", lora["argv"])
+        baseline_prompt = Path(baseline["prompt_file"]).read_text(encoding="utf-8")
+        lora_prompt = Path(lora["prompt_file"]).read_text(encoding="utf-8")
+        self.assertNotIn("--am", baseline_prompt)
+        self.assertIn("--am", lora_prompt)
+        expected = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ?", (run_id,))
+        self.assertEqual(len(Path(payload["all_prompt_file"]).read_text(encoding="utf-8").splitlines()), expected["count"])
+
+    def test_sd_scripts_generated_image_import_links_expected_condition_and_matrix(self) -> None:
+        from app.services.validation_generation import (
+            generation_output_dir,
+            import_generated_images,
+            output_stem,
+            prepare_validation_generation,
+            write_validation_matrix,
+        )
+
+        run_id, _ = self.create_validation_generation_fixture()
+        prepare_validation_generation(run_id)
+        condition = dict(fetch_one("SELECT * FROM validation_expected_conditions WHERE validation_run_id = ? ORDER BY expected_order LIMIT 1", (run_id,)))
+        image_path = generation_output_dir(run_id) / f"{output_stem(run_id, condition)}.png"
+        self.make_png(image_path)
+
+        imported = import_generated_images(run_id)
+
+        self.assertEqual(imported, 1)
+        image = fetch_one("SELECT * FROM validation_images WHERE validation_run_id = ?", (run_id,))
+        self.assertEqual(image["expected_condition_id"], condition["id"])
+        self.assertEqual(image["condition_hash"], condition["condition_hash"])
+        matrix_path = Path(write_validation_matrix(run_id))
+        self.assertTrue(matrix_path.exists())
+        matrix_html = matrix_path.read_text(encoding="utf-8")
+        self.assertIn(image_path.name, matrix_html)
+        self.assertIn(str(condition["id"]), matrix_html)
+
+    def test_sd_scripts_generation_stop_without_process_marks_stopped(self) -> None:
+        from app.services.validation_generation import stop_validation_generation
+
+        run_id, _ = self.create_validation_generation_fixture()
+        now = utc_now()
+        with connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO validation_generation_runs(
+                    validation_run_id, status, process_id, started_at,
+                    created_at, updated_at
+                )
+                VALUES (?, 'running', NULL, ?, ?, ?)
+                """,
+                (run_id, now, now, now),
+            )
+
+        stop_validation_generation(run_id)
+
+        generation = fetch_one("SELECT * FROM validation_generation_runs WHERE validation_run_id = ?", (run_id,))
+        self.assertEqual(generation["status"], "stopped")
+        self.assertIsNone(generation["process_id"])
 
 
 class StorageCleanupTests(IsolatedDbTest):

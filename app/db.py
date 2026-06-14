@@ -325,6 +325,10 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             ON validation_runs(job_id);
         CREATE INDEX IF NOT EXISTS idx_validation_runs_project
             ON validation_runs(project_id);
+        CREATE INDEX IF NOT EXISTS idx_validation_generation_runs_run
+            ON validation_generation_runs(validation_run_id);
+        CREATE INDEX IF NOT EXISTS idx_validation_generation_runs_status
+            ON validation_generation_runs(status);
         CREATE INDEX IF NOT EXISTS idx_reference_images_set
             ON reference_images(reference_set_id);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_selected_lora_profiles_job_output
@@ -1434,6 +1438,15 @@ CREATE TABLE IF NOT EXISTS validation_runs (
     expected_image_count INTEGER, actual_image_count INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'planned', created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL, memo TEXT
+);
+CREATE TABLE IF NOT EXISTS validation_generation_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, validation_run_id INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'planned', process_id INTEGER,
+    command_argv_json TEXT, prompt_file_path TEXT, output_dir TEXT, log_path TEXT,
+    started_at TEXT, ended_at TEXT, elapsed_seconds INTEGER, return_code INTEGER,
+    generated_image_count INTEGER NOT NULL DEFAULT 0,
+    imported_image_count INTEGER NOT NULL DEFAULT 0,
+    error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS validation_expected_conditions (
     id INTEGER PRIMARY KEY AUTOINCREMENT, validation_run_id INTEGER NOT NULL,

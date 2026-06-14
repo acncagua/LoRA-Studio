@@ -47,6 +47,15 @@ from app.services.storage_cleanup import (
     unselected_model_preview,
 )
 from app.services.training_runner import read_log_tail, reconcile_stale_running_jobs, start_job, stop_job, validate_job_ready
+from app.services.validation_generation import (
+    generation_view_state,
+    import_generated_images,
+    prepare_validation_generation,
+    start_validation_generation,
+    stop_validation_generation,
+    validation_run_dir as generation_validation_run_dir,
+    write_validation_matrix,
+)
 from app.services.validation_runs import (
     apply_suggestion_to_profile,
     calculate_suggested_weights,
@@ -2821,6 +2830,7 @@ def validation_run_detail(request: Request, run_id: int) -> HTMLResponse:
         request,
         "validation_run_detail.html",
         **bundle,
+        **generation_view_state(run_id),
         default_project_path=str(settings.ROOT_DIR),
         rubric_options=rubric_options(),
         apply_result=None,
@@ -2848,6 +2858,7 @@ def validation_run_export_report(request: Request, run_id: int) -> HTMLResponse:
         request,
         "validation_run_detail.html",
         **bundle,
+        **generation_view_state(run_id),
         default_project_path=str(settings.ROOT_DIR),
         rubric_options=rubric_options(),
         apply_result=None,
@@ -2875,6 +2886,7 @@ def validation_run_apply_to_profile(request: Request, run_id: int) -> HTMLRespon
         request,
         "validation_run_detail.html",
         **bundle,
+        **generation_view_state(run_id),
         default_project_path=str(settings.ROOT_DIR),
         rubric_options=rubric_options(),
         apply_result=apply_result,
@@ -2889,6 +2901,51 @@ def validation_run_update_status(run_id: int, status: str = Form(...)) -> Redire
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
+
+
+@app.post("/validation-runs/{run_id}/generation/prepare")
+def validation_generation_prepare(run_id: int) -> RedirectResponse:
+    try:
+        prepare_validation_generation(run_id)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
+
+
+@app.post("/validation-runs/{run_id}/generation/run")
+def validation_generation_run(run_id: int) -> RedirectResponse:
+    try:
+        start_validation_generation(run_id)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
+
+
+@app.post("/validation-runs/{run_id}/generation/stop")
+def validation_generation_stop(run_id: int) -> RedirectResponse:
+    stop_validation_generation(run_id)
+    return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
+
+
+@app.post("/validation-runs/{run_id}/generation/import")
+def validation_generation_import(run_id: int) -> RedirectResponse:
+    try:
+        import_generated_images(run_id)
+        write_validation_matrix(run_id)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
+
+
+@app.get("/validation-runs/{run_id}/matrix")
+def validation_generation_matrix(run_id: int) -> FileResponse:
+    path = generation_validation_run_dir(run_id) / "validation_matrix.html"
+    if not path.exists():
+        try:
+            write_validation_matrix(run_id)
+        except Exception as exc:
+            raise HTTPException(status_code=404, detail="validation_matrix.html not found") from exc
+    return FileResponse(path)
 
 
 @app.post("/validation-runs/{run_id}/images/individual")
