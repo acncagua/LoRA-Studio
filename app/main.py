@@ -177,6 +177,10 @@ def display_preset_name(preset: Any) -> str:
     return text
 
 
+def wants_json_response(request: Request) -> bool:
+    return request.headers.get("x-requested-with") == "fetch" or "application/json" in request.headers.get("accept", "")
+
+
 def display_validation_preset_name(preset: Any) -> str:
     preset_id = ""
     name = ""
@@ -1180,11 +1184,13 @@ def project_delete(project_id: int, delete_reason: str = Form("")) -> RedirectRe
 
 
 @app.post("/jobs/{job_id}/sync-project-selection")
-def job_sync_project_selection(job_id: int) -> RedirectResponse:
+def job_sync_project_selection(request: Request, job_id: int):
     job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
     if job is None or not job["project_id"]:
         raise HTTPException(status_code=400, detail="この学習ジョブはProjectに紐づいていません。")
     update_project_selected_from_job(int(job["project_id"]), job_id)
+    if wants_json_response(request):
+        return JSONResponse({"ok": True, "job_id": job_id, "project_id": int(job["project_id"]), "message": "Project採用に反映しました。"})
     return RedirectResponse(f"/jobs/{job_id}", status_code=303)
 
 
@@ -2229,7 +2235,7 @@ def job_variant(job_id: int, variant: str = Form(...)) -> RedirectResponse:
 
 
 @app.post("/jobs/{job_id}/outputs/{output_id}/select")
-def job_select_output(job_id: int, output_id: int) -> RedirectResponse:
+def job_select_output(request: Request, job_id: int, output_id: int):
     output = fetch_one(
         "SELECT * FROM training_outputs WHERE id = ? AND job_id = ? AND file_type = 'model'",
         (output_id, job_id),
@@ -2248,11 +2254,22 @@ def job_select_output(job_id: int, output_id: int) -> RedirectResponse:
             (output["epoch"], output["file_path"], job_id),
         )
     ensure_selected_lora_profile(job_id)
+    if wants_json_response(request):
+        return JSONResponse(
+            {
+                "ok": True,
+                "job_id": job_id,
+                "output_id": output_id,
+                "epoch": output["epoch"],
+                "file_path": output["file_path"],
+                "message": "採用LoRAを更新しました。",
+            }
+        )
     return RedirectResponse(f"/jobs/{job_id}", status_code=303)
 
 
 @app.post("/jobs/{job_id}/select-epoch")
-def job_select_epoch(job_id: int, epoch: int = Form(...)) -> RedirectResponse:
+def job_select_epoch(request: Request, job_id: int, epoch: int = Form(...)):
     output = fetch_one(
         """
         SELECT * FROM training_outputs
@@ -2276,6 +2293,17 @@ def job_select_epoch(job_id: int, epoch: int = Form(...)) -> RedirectResponse:
             (output["epoch"], output["file_path"], job_id),
         )
     ensure_selected_lora_profile(job_id)
+    if wants_json_response(request):
+        return JSONResponse(
+            {
+                "ok": True,
+                "job_id": job_id,
+                "output_id": output["id"],
+                "epoch": output["epoch"],
+                "file_path": output["file_path"],
+                "message": "採用LoRAを更新しました。",
+            }
+        )
     return RedirectResponse(f"/jobs/{job_id}", status_code=303)
 
 

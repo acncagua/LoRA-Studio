@@ -48,7 +48,7 @@
     {% if action_state.stop %}<form method="post" action="/jobs/{{ job.id }}/stop"><button type="submit" class="danger">停止</button></form>{% else %}<span class="button disabled">停止</span>{% endif %}
     {% if action_state.reimport %}<form method="post" action="/jobs/{{ job.id }}/reimport"><button type="submit">結果を再取り込み</button></form>{% else %}<span class="button disabled">結果を再取り込み</span>{% endif %}
     {% if action_state.select %}<a class="button" href="#outputs">LoRAを選択</a>{% else %}<span class="button disabled">LoRAを選択</span>{% endif %}
-    {% if project %}<form method="post" action="/jobs/{{ job.id }}/sync-project-selection"><button type="submit" {% if not selected_output %}disabled{% endif %}>この学習ジョブの選択LoRAをProject採用に反映</button></form>{% endif %}
+    {% if project %}<form method="post" action="/jobs/{{ job.id }}/sync-project-selection" data-adoption-form><button type="submit" {% if not selected_output %}disabled{% endif %}>この学習ジョブの選択LoRAをProject採用に反映</button><span class="save-status" data-adoption-status></span></form>{% endif %}
     {% if action_state.clone %}<form method="post" action="/jobs/{{ job.id }}/clone"><button type="submit">学習ジョブを複製</button></form>{% else %}<span class="button disabled">学習ジョブを複製</span>{% endif %}
     {% if action_state.revised %}<form method="post" action="/jobs/{{ job.id }}/revised-draft"><button type="submit">派生ドラフトを作成</button></form>{% else %}<span class="button disabled">派生ドラフトを作成</span>{% endif %}
     {% if action_state.compare %}<a class="button" href="/compare?job_a={{ job.id }}">比較</a>{% else %}<span class="button disabled">比較</span>{% endif %}
@@ -108,7 +108,7 @@
     <h2>データセット</h2>
     {% if dataset %}<dl><dt>名前</dt><dd>{{ dataset.name }}</dd><dt>画像</dt><dd>{{ dataset.image_count }}</dd><dt>パス</dt><dd>{{ dataset.path }}</dd></dl>{% endif %}
     <h2>採用LoRA</h2>
-    <p>{{ job.adopted_model_path or '未選択' }}</p>
+    <p data-adopted-model-path>{{ job.adopted_model_path or '未選択' }}</p>
     {% if selected_output %}
     <dl>
       <dt>Export済み</dt><dd>{{ 'yes' if selected_output.external_copy_path else 'no' }}</dd>
@@ -117,7 +117,7 @@
     </dl>
     {% endif %}
     {% if validation_pack_path %}<p class="muted">検証パック: {{ validation_pack_path }}</p>{% endif %}
-    <form method="post" action="/jobs/{{ job.id }}/select-epoch" class="inline-form">
+    <form method="post" action="/jobs/{{ job.id }}/select-epoch" class="inline-form" data-adoption-form>
       <label>epochから採用LoRAを選択
         <select name="epoch">
           {% for output in outputs if output.epoch is not none %}
@@ -125,7 +125,7 @@
           {% endfor %}
         </select>
       </label>
-      <button type="submit">epochを選択</button>
+      <button type="submit">epochを選択</button><span class="save-status" data-adoption-status></span>
     </form>
   </div>
 </section>
@@ -381,9 +381,9 @@
     <thead><tr><th>ID</th><th>Epoch</th><th>Step</th><th>サイズ</th><th>SHA256</th><th>採用</th><th>Export</th><th>整理状態</th><th>Metadataエラー</th><th>パス</th><th></th></tr></thead>
     <tbody>
       {% for output in outputs %}
-      <tr>
-        <td>#{{ output.id }}</td><td>{{ output.epoch or '-' }}</td><td>{{ output.step or '-' }}</td><td>{{ output.file_size or '-' }}</td><td>{{ output.sha256[:8] if output.sha256 else '-' }}</td><td>{{ '採用中' if output.selected else '' }}</td><td>{% if output.external_copy_path %}Export済み{% if output.export_verified_at %} / hash一致{% endif %}{% else %}-{% endif %}</td><td>{{ output.cleanup_status or '-' }}{% if output.deleted_at %} / deleted{% endif %}</td><td>{{ output.metadata_error or '-' }}</td><td>{{ output.file_path }}{% if output.external_copy_path %}<br><span class="muted">Export: {{ output.external_copy_path }}</span>{% endif %}</td>
-        <td><form method="post" action="/jobs/{{ job.id }}/outputs/{{ output.id }}/select"><button type="submit">採用</button></form></td>
+      <tr data-output-row="{{ output.id }}">
+        <td>#{{ output.id }}</td><td>{{ output.epoch or '-' }}</td><td>{{ output.step or '-' }}</td><td>{{ output.file_size or '-' }}</td><td>{{ output.sha256[:8] if output.sha256 else '-' }}</td><td data-output-selected>{{ '採用中' if output.selected else '' }}</td><td>{% if output.external_copy_path %}Export済み{% if output.export_verified_at %} / hash一致{% endif %}{% else %}-{% endif %}</td><td>{{ output.cleanup_status or '-' }}{% if output.deleted_at %} / deleted{% endif %}</td><td>{{ output.metadata_error or '-' }}</td><td>{{ output.file_path }}{% if output.external_copy_path %}<br><span class="muted">Export: {{ output.external_copy_path }}</span>{% endif %}</td>
+        <td><form method="post" action="/jobs/{{ job.id }}/outputs/{{ output.id }}/select" data-adoption-form><button type="submit">採用</button><span class="save-status" data-adoption-status></span></form></td>
       </tr>
       {% else %}
       <tr><td colspan="11" class="muted">LoRA出力はまだ取り込まれていません。</td></tr>
