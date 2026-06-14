@@ -22,6 +22,40 @@ from app.services.validation_runs import (
 
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+SD_SCRIPTS_SAMPLER_ALIASES = {
+    "ddim": "ddim",
+    "pndm": "pndm",
+    "lms": "lms",
+    "euler": "euler",
+    "euler a": "euler_a",
+    "euler_a": "euler_a",
+    "heun": "heun",
+    "dpm 2": "dpm_2",
+    "dpm_2": "dpm_2",
+    "dpm 2 a": "dpm_2_a",
+    "dpm_2_a": "dpm_2_a",
+    "dpmsolver": "dpmsolver",
+    "dpmsolver++": "dpmsolver++",
+    "dpmsingle": "dpmsingle",
+    "k lms": "k_lms",
+    "k_lms": "k_lms",
+    "k euler": "k_euler",
+    "k_euler": "k_euler",
+    "k euler a": "k_euler_a",
+    "k_euler_a": "k_euler_a",
+    "k dpm 2": "k_dpm_2",
+    "k_dpm_2": "k_dpm_2",
+    "k dpm 2 a": "k_dpm_2_a",
+    "k_dpm_2_a": "k_dpm_2_a",
+}
+
+
+def normalize_sd_scripts_sampler(value: Any) -> str:
+    sampler = str(value or "").strip()
+    if not sampler:
+        return "euler_a"
+    key = re.sub(r"\s+", " ", sampler.replace("-", " ").replace("_", " ")).lower()
+    return SD_SCRIPTS_SAMPLER_ALIASES.get(key, sampler)
 
 
 def generation_dir(run_id: int) -> Path:
@@ -95,6 +129,7 @@ def prepare_validation_generation(run_id: int) -> dict[str, Any]:
         out_dir=out_dir,
         model_family=str(job["model_family"] or ""),
         mixed_precision=str(environment["mixed_precision"] or ""),
+        condition=supported[0] if supported else None,
     )
     if baseline:
         commands.append(
@@ -187,7 +222,9 @@ def common_gen_img_args(
     out_dir: Path,
     model_family: str,
     mixed_precision: str,
+    condition: dict[str, Any] | None = None,
 ) -> list[str]:
+    condition = condition or {}
     args = [
         str(venv_python),
         str(gen_img),
@@ -196,15 +233,15 @@ def common_gen_img_args(
         "--outdir",
         str(out_dir),
         "--W",
-        "1024",
+        str(int(condition.get("width") or 1024)),
         "--H",
-        "1024",
+        str(int(condition.get("height") or 1024)),
         "--scale",
-        "7",
+        f"{float(condition.get('cfg_scale') or 7):g}",
         "--steps",
-        "28",
+        str(int(condition.get("steps") or 28)),
         "--sampler",
-        "euler_a",
+        normalize_sd_scripts_sampler(condition.get("sampler")),
         "--no_preview",
     ]
     if model_family.upper() == "SDXL":
@@ -502,6 +539,60 @@ def import_generated_images(run_id: int, generation_id: int | None = None) -> in
         imported += 1
     update_validation_run_counts(run_id)
     return imported
+
+
+def reconcile_stale_validation_generations() -> int:
+    rows = fetch_all("SELECT * FROM validation_generation_runs WHERE status = 'running' ORDER BY id")
+    fixed = 0
+    for row in rows:
+        pid = row["process_id"]
+        if pid and process_exists(int(pid)):
+            continue
+        run_id = int(row["validation_run_id"])
+        generation_id = int(row["id"])
+        output_dir = Path(row["output_dir"]) if row["output_dir"] else generation_output_dir(run_id)
+        generated = count_generated_images(output_dir)
+        log_tail = validation_generation_log_tail(run_id, max_lines=20)
+        completed = generated > 0 and "done!" in log_tail.lower()
+        imported = 0
+        return_code = 0 if completed else -1
+        status = "completed" if completed else "failed"
+        now = utc_now()
+        if completed:
+            try:
+                import_generated_images(run_id, generation_id)
+            except Exception as exc:
+                # Keep the generation completed if sd-scripts finished; record import trouble.
+                with connect() as conn:
+                    conn.execute(
+                        """
+                        UPDATE validation_generation_runs
+                        SET error_message = ?, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (f"Import after stale reconcile failed: {exc}", now, generation_id),
+                    )
+            imported_row = fetch_one(
+                "SELECT COUNT(*) AS count FROM validation_images WHERE validation_run_id = ? AND image_role = 'individual'",
+                (run_id,),
+            )
+            imported = int(imported_row["count"] if imported_row else 0)
+        error_message = "" if completed else "Process disappeared before LoRA-Studio could observe completion."
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE validation_generation_runs
+                SET status = ?, process_id = NULL, return_code = ?,
+                    generated_image_count = ?, imported_image_count = ?,
+                    ended_at = COALESCE(ended_at, ?), updated_at = ?,
+                    error_message = COALESCE(NULLIF(error_message, ''), ?)
+                WHERE id = ?
+                """,
+                (status, return_code, generated, imported, now, now, error_message, generation_id),
+            )
+        update_validation_run_counts(run_id)
+        fixed += 1
+    return fixed
 
 
 def condition_for_generated_file(path: Path, conditions: dict[int, dict[str, Any]], hashes: dict[str, dict[str, Any]]) -> dict[str, Any] | None:

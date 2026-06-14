@@ -494,6 +494,10 @@
     </div>
     <div>
       <h3>検証Run一覧</h3>
+      {% if generation_error %}<p class="notice warning">{{ generation_error }}</p>{% endif %}
+      {% if running_generation %}
+      <p class="notice">検証画像生成 #{{ running_generation.id }} が実行中です。他の検証Runの画像生成は、完了または停止後に開始できます。</p>
+      {% endif %}
       <table>
         <thead><tr><th>比較</th><th>ID</th><th>プリセット</th><th>Epoch</th><th>状態</th><th>画像生成</th><th>画像数</th><th>操作</th></tr></thead>
         <tbody>
@@ -514,11 +518,12 @@
             <td><span data-validation-actual>{{ run.actual_image_count }}</span> / <span data-validation-expected>{{ run.expected_image_count }}</span></td>
             <td class="inline-actions">
               <a class="button" href="/validation-runs/{{ run.id }}">詳細</a>
-              {% if run.generation_status == 'running' %}
-              <form method="post" action="/jobs/{{ job.id }}/validation-runs/{{ run.id }}/generation/stop"><button type="submit" class="danger">停止</button></form>
-              {% else %}
-              <form method="post" action="/jobs/{{ job.id }}/validation-runs/{{ run.id }}/generation/run"><button type="submit">画像生成を実行</button></form>
-              {% endif %}
+              <form method="post" action="/jobs/{{ job.id }}/validation-runs/{{ run.id }}/generation/run" data-generation-run-form>
+                <button type="submit" data-generation-run-button {% if run.generation_status == 'running' or running_generation %}disabled{% endif %} {% if run.generation_status == 'running' %}hidden{% endif %} {% if running_generation and run.generation_status != 'running' %}title="他の検証画像生成が実行中です"{% endif %}>画像生成を実行</button>
+              </form>
+              <form method="post" action="/jobs/{{ job.id }}/validation-runs/{{ run.id }}/generation/stop" data-generation-stop-form>
+                <button type="submit" class="danger" data-generation-stop-button {% if run.generation_status != 'running' %}disabled hidden{% endif %}>停止</button>
+              </form>
             </td>
           </tr>
           {% if run.generation_status %}

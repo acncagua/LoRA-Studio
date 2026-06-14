@@ -309,6 +309,40 @@ function generationStatusLabel(status, fallback = "-") {
   return labels[status] || fallback || status || "-";
 }
 
+function syncGenerationButtons(container, status) {
+  const isRunning = status === "running";
+  const runButton = container.querySelector("[data-generation-run-button]");
+  const stopButton = container.querySelector("[data-generation-stop-button]");
+  if (runButton) {
+    runButton.disabled = isRunning;
+    runButton.hidden = isRunning;
+    if (!isRunning) {
+      runButton.removeAttribute("title");
+    }
+  }
+  if (stopButton) {
+    stopButton.disabled = !isRunning;
+    stopButton.hidden = !isRunning;
+  }
+}
+
+function syncAllGenerationRunButtons() {
+  const isAnyRunning = Boolean(document.querySelector('[data-validation-run-row][data-generation-status="running"]'));
+  document.querySelectorAll("[data-validation-run-row]").forEach((row) => {
+    const isThisRunning = row.getAttribute("data-generation-status") === "running";
+    const runButton = row.querySelector("[data-generation-run-button]");
+    if (!runButton || isThisRunning) {
+      return;
+    }
+    runButton.disabled = isAnyRunning;
+    if (isAnyRunning) {
+      runButton.setAttribute("title", "他の検証画像生成が実行中です");
+    } else {
+      runButton.removeAttribute("title");
+    }
+  });
+}
+
 function applyValidationGenerationStatus(row, payload) {
   row.setAttribute("data-generation-status", payload.status || "");
   const label = row.querySelector("[data-generation-status-label]");
@@ -337,6 +371,8 @@ function applyValidationGenerationStatus(row, payload) {
       preview.textContent = payload.log_preview || "ログはまだありません。生成ファイル数が増えていれば処理は進行中です。";
     }
   }
+  syncGenerationButtons(row, payload.status || "");
+  syncAllGenerationRunButtons();
 }
 
 function initValidationGenerationDetailPolling() {
@@ -406,6 +442,7 @@ function applyValidationGenerationDetailStatus(panel, payload) {
     preview.classList.toggle("empty", !payload.log_preview);
     preview.textContent = payload.log_preview || "生成ログはまだありません。生成済みファイル数が増えていれば処理は進行中です。";
   }
+  syncGenerationButtons(panel, payload.status || "");
 }
 
 document.addEventListener("DOMContentLoaded", initValidationGenerationPolling);

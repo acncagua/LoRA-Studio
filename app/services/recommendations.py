@@ -410,7 +410,11 @@ def validation_run_counts(run_id: int) -> dict[str, int]:
         WHERE validation_run_id = ? AND image_role = 'individual'
           AND expected_condition_id IS NOT NULL AND COALESCE(ignored, 0) = 0
           AND (
-            COALESCE(rating_overall, 0) > 0 OR adoption_label IS NOT NULL OR strength_label IS NOT NULL
+            COALESCE(rating_overall, 0) > 0
+            OR NULLIF(adoption_label, '') IS NOT NULL
+            OR NULLIF(strength_label, '') IS NOT NULL
+            OR NULLIF(overfit_level, '') IS NOT NULL
+            OR NULLIF(NULLIF(failure_tags_json, ''), '[]') IS NOT NULL
           )
         """,
         (run_id,),

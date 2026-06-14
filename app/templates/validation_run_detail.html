@@ -10,6 +10,10 @@
 </header>
 
 {% if report_path %}<p class="notice">検証レポートを出力しました: {{ report_path }}</p>{% endif %}
+{% if generation_error %}<p class="notice warning">{{ generation_error }}</p>{% endif %}
+{% if running_generation and (not generation or generation.status != 'running') %}
+<p class="notice warning">別の検証画像生成 #{{ running_generation.id }} が実行中です。完了または停止してから、この検証Runの画像生成を開始してください。</p>
+{% endif %}
 {% if condition_warning %}<p class="notice warning">{{ condition_warning }}</p>{% endif %}
 {% if apply_result %}
 <section class="notice">
@@ -73,8 +77,8 @@
     {% endif %}
     <p class="muted">画像生成の実行時に、sd-scripts用の生成ファイルを最新条件で自動作成します。</p>
     <div class="actions compact-actions">
-      <form method="post" action="/validation-runs/{{ run.id }}/generation/run"><button type="submit" {% if generation and generation.status == 'running' %}disabled{% endif %}>画像生成を実行</button></form>
-      <form method="post" action="/validation-runs/{{ run.id }}/generation/stop"><button type="submit" class="danger" {% if not generation or generation.status != 'running' %}disabled{% endif %}>画像生成を停止</button></form>
+      <form method="post" action="/validation-runs/{{ run.id }}/generation/run" data-generation-run-form><button type="submit" data-generation-run-button {% if (generation and generation.status == 'running') or (running_generation and (not generation or generation.status != 'running')) %}disabled{% endif %}>画像生成を実行</button></form>
+      <form method="post" action="/validation-runs/{{ run.id }}/generation/stop" data-generation-stop-form><button type="submit" class="danger" data-generation-stop-button {% if not generation or generation.status != 'running' %}disabled{% endif %}>画像生成を停止</button></form>
       <form method="post" action="/validation-runs/{{ run.id }}/generation/import"><button type="submit">生成画像を再取り込み</button></form>
       <form method="post" action="/validation-runs/{{ run.id }}/export-report"><button type="submit">検証レポート出力</button></form>
       {% if matrix_exists %}<a class="button" href="/validation-runs/{{ run.id }}/matrix" target="_blank" rel="noopener">検証Matrixを開く</a>{% endif %}
@@ -193,12 +197,16 @@
       </figcaption>
       <form method="post" action="/validation-runs/{{ run.id }}/images/{{ image.id }}/review" class="review-form" data-review-form>
         <div class="rating-grid">
-          <label>顔<input type="number" min="0" max="5" name="rating_face" value="{{ image.rating_face or 0 }}"></label>
-          <label>衣装<input type="number" min="0" max="5" name="rating_costume" value="{{ image.rating_costume or 0 }}"></label>
-          <label>スタイル<input type="number" min="0" max="5" name="rating_style" value="{{ image.rating_style or 0 }}"></label>
-          <label>安定性<input type="number" min="0" max="5" name="rating_stability" value="{{ image.rating_stability or 0 }}"></label>
-          <label>柔軟性<input type="number" min="0" max="5" name="rating_flexibility" value="{{ image.rating_flexibility or 0 }}"></label>
-          <label>総合<input type="number" min="0" max="5" name="rating_overall" value="{{ image.rating_overall or 0 }}"></label>
+          {% for field, label in [('rating_face', '顔'), ('rating_costume', '衣装'), ('rating_style', 'スタイル'), ('rating_stability', '安定性'), ('rating_flexibility', '柔軟性'), ('rating_overall', '総合')] %}
+          <label>{{ label }}
+            <select name="{{ field }}">
+              <option value="">N/A</option>
+              {% for n in range(1,6) %}
+              <option value="{{ n }}" {{ 'selected' if image[field] is not none and image[field] == n else '' }}>{{ n }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          {% endfor %}
         </div>
         <label>強さ<select name="strength_label">{% for value, label in rubric_options.strength_labels %}<option value="{{ value }}" {{ 'selected' if image.strength_label == value else '' }}>{{ label }}</option>{% endfor %}</select></label>
         <label>過学習<select name="overfit_level">{% for value, label in rubric_options.overfit_levels %}<option value="{{ value }}" {{ 'selected' if image.overfit_level == value else '' }}>{{ label }}</option>{% endfor %}</select></label>

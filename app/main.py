@@ -53,6 +53,7 @@ from app.services.validation_generation import (
     generation_view_state,
     import_generated_images,
     prepare_validation_generation,
+    reconcile_stale_validation_generations,
     start_validation_generation,
     stop_validation_generation,
     validation_run_dir as generation_validation_run_dir,
@@ -154,6 +155,7 @@ templates = Environment(
 def on_startup() -> None:
     init_db()
     reconcile_stale_running_jobs()
+    reconcile_stale_validation_generations()
 
 
 def render(request: Request, template: str, **context: Any) -> HTMLResponse:
@@ -654,6 +656,21 @@ def decorate_validation_runs_for_job(validation_runs: list[Any]) -> list[dict[st
         item["generation_log_size"] = log_path.stat().st_size if log_path.exists() else 0
         decorated.append(item)
     return decorated
+
+
+def current_running_validation_generation() -> dict[str, Any] | None:
+    row = fetch_one(
+        """
+        SELECT vg.*, vr.job_id, vr.name AS validation_run_name, o.epoch AS selected_epoch
+        FROM validation_generation_runs vg
+        LEFT JOIN validation_runs vr ON vr.id = vg.validation_run_id
+        LEFT JOIN training_outputs o ON o.id = vr.selected_output_id
+        WHERE vg.status = 'running'
+        ORDER BY vg.id DESC
+        LIMIT 1
+        """
+    )
+    return dict(row) if row else None
 
 
 def pilot_recommendation(project: Any) -> dict[str, Any]:
@@ -1941,9 +1958,11 @@ def job_detail(
     exported: str | None = None,
     created: str | None = None,
     preflight: str | None = None,
+    generation_error: str | None = None,
     review_filter: str = Query("candidates"),
 ) -> HTMLResponse:
     reconcile_stale_running_jobs()
+    reconcile_stale_validation_generations()
     job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -1983,6 +2002,7 @@ def job_detail(
         (job_id,),
     )
     validation_runs = decorate_validation_runs_for_job(validation_runs)
+    running_generation = current_running_validation_generation()
     validation_summary = build_validation_summary(validation_results)
     selected_lora_profile = ensure_selected_lora_profile(job_id) if selected_output else None
     recommendations = list_recommendations(job_id)
@@ -2041,6 +2061,8 @@ def job_detail(
         created=created,
         preflight=preflight,
         exported=exported,
+        generation_error=generation_error,
+        running_generation=running_generation,
     )
 
 
@@ -2902,7 +2924,8 @@ def job_create_validation_runs_for_outputs(
 
 
 @app.get("/validation-runs/{run_id}", response_class=HTMLResponse)
-def validation_run_detail(request: Request, run_id: int) -> HTMLResponse:
+def validation_run_detail(request: Request, run_id: int, generation_error: str | None = None) -> HTMLResponse:
+    reconcile_stale_validation_generations()
     try:
         bundle = load_validation_run_bundle(run_id)
     except ValueError as exc:
@@ -2916,6 +2939,8 @@ def validation_run_detail(request: Request, run_id: int) -> HTMLResponse:
         rubric_options=rubric_options(),
         apply_result=None,
         report_path=None,
+        generation_error=generation_error,
+        running_generation=current_running_validation_generation(),
     )
 
 
@@ -2998,7 +3023,7 @@ def validation_generation_run(run_id: int) -> RedirectResponse:
     try:
         start_validation_generation(run_id)
     except (ValueError, RuntimeError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return RedirectResponse(f"/validation-runs/{run_id}?generation_error={quote(str(exc))}", status_code=303)
     return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
 
 
@@ -3010,7 +3035,7 @@ def job_validation_generation_run(job_id: int, run_id: int) -> RedirectResponse:
     try:
         start_validation_generation(run_id)
     except (ValueError, RuntimeError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return RedirectResponse(f"/jobs/{job_id}?generation_error={quote(str(exc))}#validation-runs", status_code=303)
     return RedirectResponse(f"/jobs/{job_id}#validation-runs", status_code=303)
 
 
@@ -3142,12 +3167,12 @@ def validation_run_review_image(
     request: Request,
     run_id: int,
     image_id: int,
-    rating_face: int = Form(0),
-    rating_costume: int = Form(0),
-    rating_style: int = Form(0),
-    rating_stability: int = Form(0),
-    rating_flexibility: int = Form(0),
-    rating_overall: int = Form(0),
+    rating_face: str = Form(""),
+    rating_costume: str = Form(""),
+    rating_style: str = Form(""),
+    rating_stability: str = Form(""),
+    rating_flexibility: str = Form(""),
+    rating_overall: str = Form(""),
     strength_label: str = Form(""),
     overfit_level: str = Form(""),
     adoption_label: str = Form(""),
@@ -3171,12 +3196,12 @@ def validation_run_review_image(
             WHERE id = ?
             """,
             (
-                clamp_rating(rating_face),
-                clamp_rating(rating_costume),
-                clamp_rating(rating_style),
-                clamp_rating(rating_stability),
-                clamp_rating(rating_flexibility),
-                clamp_rating(rating_overall),
+                nullable_rating(rating_face),
+                nullable_rating(rating_costume),
+                nullable_rating(rating_style),
+                nullable_rating(rating_stability),
+                nullable_rating(rating_flexibility),
+                nullable_rating(rating_overall),
                 clean_choice(strength_label, {key for key, _ in STRENGTH_LABELS}),
                 clean_choice(overfit_level, {key for key, _ in OVERFIT_LEVELS}),
                 clean_choice(adoption_label, {key for key, _ in ADOPTION_LABELS}),

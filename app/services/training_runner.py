@@ -331,7 +331,7 @@ def sd_scripts_subprocess_env() -> dict[str, str]:
     env.pop("PYTHONPATH", None)
     env.pop("PYTHONHOME", None)
     env.setdefault("PYTHONUTF8", "1")
-    env.setdefault("PYTHONIOENCODING", "utf-8")
+    env.setdefault("PYTHONIOENCODING", "utf-8:replace")
     return env
 
 

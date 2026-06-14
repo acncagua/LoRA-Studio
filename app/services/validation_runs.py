@@ -543,9 +543,28 @@ def build_coverage(run_id: int, conditions: list[Any], images: list[Any]) -> dic
 
 def image_is_reviewed(image: Any) -> bool:
     rating_keys = ["rating_face", "rating_costume", "rating_style", "rating_stability", "rating_flexibility", "rating_overall"]
-    if any(image[key] is not None and int(image[key]) > 0 for key in rating_keys if key in image.keys()):
+    if any(rating_is_positive(image[key]) for key in rating_keys if key in image.keys()):
         return True
-    return bool(image["strength_label"] or image["overfit_level"] or image["adoption_label"] or image["failure_tags_json"])
+    if any(str(image[key] or "").strip() for key in ("strength_label", "overfit_level", "adoption_label") if key in image.keys()):
+        return True
+    return has_failure_tags(image["failure_tags_json"] if "failure_tags_json" in image.keys() else None)
+
+
+def has_failure_tags(value: str | None) -> bool:
+    if not value:
+        return False
+    try:
+        tags = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return False
+    return bool(tags)
+
+
+def rating_is_positive(value: Any) -> bool:
+    try:
+        return value is not None and int(value) > 0
+    except (TypeError, ValueError):
+        return False
 
 
 def build_weight_review_matrix(images: list[Any]) -> dict[str, Any]:

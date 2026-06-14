@@ -15,6 +15,12 @@ from PIL import Image
 from app import settings
 from app.db import connect, fetch_all, fetch_one, init_db, utc_now
 from app.main import build_loss_chart, build_metric_table
+from app.services.validation_generation import (
+    common_gen_img_args,
+    normalize_sd_scripts_sampler,
+    reconcile_stale_validation_generations,
+)
+from app.services.validation_runs import image_is_reviewed
 
 
 class IsolatedDbTest(unittest.TestCase):
@@ -71,6 +77,66 @@ class MetricDisplayTests(unittest.TestCase):
         self.assertLessEqual(chart["point_count"], 1200)
         self.assertEqual(chart["min_step"], 1)
         self.assertEqual(chart["max_step"], 18900)
+
+
+class ReviewSemanticsTests(IsolatedDbTest):
+    def test_empty_failure_tags_do_not_mark_validation_image_reviewed(self) -> None:
+        image = {
+            "rating_face": None,
+            "rating_costume": None,
+            "rating_style": None,
+            "rating_stability": None,
+            "rating_flexibility": None,
+            "rating_overall": None,
+            "strength_label": "",
+            "overfit_level": "",
+            "adoption_label": "",
+            "failure_tags_json": "[]",
+        }
+        self.assertFalse(image_is_reviewed(image))
+        image["failure_tags_json"] = json.dumps(["顔が弱い"], ensure_ascii=False)
+        self.assertTrue(image_is_reviewed(image))
+
+    def test_rubric_schema_includes_flexibility_rating(self) -> None:
+        row = fetch_one("SELECT schema_json FROM evaluation_rubrics WHERE id = ?", ("lora_visual_eval_v1",))
+        self.assertIsNotNone(row)
+        schema = json.loads(row["schema_json"])
+        self.assertIn("rating_flexibility", schema["fields"]["ratings"])
+
+    def test_sd_scripts_validation_generation_uses_condition_defaults(self) -> None:
+        args = common_gen_img_args(
+            venv_python=Path("python.exe"),
+            gen_img=Path("gen_img.py"),
+            base_model_path=Path("base.safetensors"),
+            out_dir=Path("out"),
+            model_family="SDXL",
+            mixed_precision="bf16",
+            condition={"width": 768, "height": 1152, "cfg_scale": 6.5, "steps": 32, "sampler": "ddim"},
+        )
+        self.assertEqual(args[args.index("--W") + 1], "768")
+        self.assertEqual(args[args.index("--H") + 1], "1152")
+        self.assertEqual(args[args.index("--scale") + 1], "6.5")
+        self.assertEqual(args[args.index("--steps") + 1], "32")
+        self.assertEqual(args[args.index("--sampler") + 1], "ddim")
+
+    def test_sd_scripts_validation_generation_normalizes_sampler_display_names(self) -> None:
+        self.assertEqual(normalize_sd_scripts_sampler("Euler a"), "euler_a")
+        self.assertEqual(normalize_sd_scripts_sampler("Euler_A"), "euler_a")
+        self.assertEqual(normalize_sd_scripts_sampler("k euler a"), "k_euler_a")
+        args = common_gen_img_args(
+            venv_python=Path("python.exe"),
+            gen_img=Path("gen_img.py"),
+            base_model_path=Path("base.safetensors"),
+            out_dir=Path("out"),
+            model_family="SDXL",
+            mixed_precision="bf16",
+            condition={"sampler": "Euler a"},
+        )
+        self.assertEqual(args[args.index("--sampler") + 1], "euler_a")
+
+    def test_init_db_does_not_seed_zuihou_project_from_hardcoded_ids(self) -> None:
+        source = Path("app/db.py").read_text(encoding="utf-8")
+        self.assertNotIn("seed_zuihou_project(conn)", source)
 
 
 class Phase107StabilizationTests(IsolatedDbTest):
@@ -354,7 +420,7 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertNotIn("PYTHONPATH", env)
         self.assertNotIn("PYTHONHOME", env)
         self.assertEqual(env["PYTHONUTF8"], "1")
-        self.assertEqual(env["PYTHONIOENCODING"], "utf-8")
+        self.assertEqual(env["PYTHONIOENCODING"], "utf-8:replace")
 
     def test_validation_image_outside_allowed_root_is_403(self) -> None:
         outside = self.make_png(self.root / "outside.png")
@@ -403,6 +469,56 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertTrue(first["prompt"])
         self.assertTrue(first["webui_prompt"])
         self.assertEqual(first["preset_version"], "1.0")
+
+    def test_validation_generation_busy_redirects_back_to_job(self) -> None:
+        project_id, dataset_id, version_id = self.create_project_fixture()
+        job_id = self.add_completed_job(dataset_id, version_id, "sdxl_2d_face_adamw8bit_standard", project_id=project_id)
+        from app.main import job_validation_generation_run
+        from app.services.validation_runs import create_validation_run
+
+        run_id = create_validation_run(job_id, "standard_validation_v1", "base", "testchar", "")
+        with mock.patch("app.main.start_validation_generation", side_effect=RuntimeError("Validation生成 #8 が実行中です。")):
+            response = job_validation_generation_run(job_id, run_id)
+        self.assertEqual(response.status_code, 303)
+        self.assertIn(f"/jobs/{job_id}?generation_error=", response.headers["location"])
+        self.assertTrue(response.headers["location"].endswith("#validation-runs"))
+
+    def test_stale_validation_generation_completed_log_is_reconciled(self) -> None:
+        project_id, dataset_id, version_id = self.create_project_fixture()
+        job_id = self.add_completed_job(dataset_id, version_id, "sdxl_2d_face_adamw8bit_standard", project_id=project_id)
+        from app.services.validation_runs import create_validation_run
+
+        run_id = create_validation_run(job_id, "standard_validation_v1", "base", "testchar", "")
+        condition = fetch_one("SELECT * FROM validation_expected_conditions WHERE validation_run_id = ? ORDER BY expected_order LIMIT 1", (run_id,))
+        output_dir = self.root / "exports" / "validation_runs" / f"validation_run_{run_id:06d}" / "generation" / "images"
+        log_path = output_dir.parent / "generation.log"
+        image_path = output_dir / f"vr{run_id:06d}_ec{int(condition['id']):06d}_{condition['condition_hash'][:12]}_test.png"
+        self.make_png(image_path)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("100%|done\nINFO done!\n", encoding="utf-8")
+        now = utc_now()
+        with connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO validation_generation_runs(
+                    validation_run_id, status, process_id, output_dir, log_path,
+                    started_at, created_at, updated_at
+                )
+                VALUES (?, 'running', 999999, ?, ?, ?, ?, ?)
+                """,
+                (run_id, str(output_dir), str(log_path), now, now, now),
+            )
+            generation_id = int(cur.lastrowid)
+        fixed = reconcile_stale_validation_generations()
+        generation = fetch_one("SELECT * FROM validation_generation_runs WHERE id = ?", (generation_id,))
+        imported = fetch_one("SELECT COUNT(*) AS count FROM validation_images WHERE validation_run_id = ?", (run_id,))
+        self.assertEqual(fixed, 1)
+        self.assertEqual(generation["status"], "completed")
+        self.assertIsNone(generation["process_id"])
+        self.assertEqual(generation["return_code"], 0)
+        self.assertEqual(generation["generated_image_count"], 1)
+        self.assertEqual(generation["imported_image_count"], 1)
+        self.assertEqual(imported["count"], 1)
 
     def test_reference_image_is_copied_to_managed_directory(self) -> None:
         source = self.make_png(self.root / "source" / "ref.png")
