@@ -24,8 +24,8 @@
   <fieldset class="form-fieldset wide-field">
     <legend>Project（LoRA作成単位）</legend>
     <p class="muted">Projectは1つのLoRA作成作業です。学習ジョブはProject内の1回の学習実行として保存されます。</p>
-    <label><input type="radio" name="project_mode" value="new" {{ 'checked' if not selected_project else '' }}> 新しいProjectを作成</label>
-    <label><input type="radio" name="project_mode" value="existing" {{ 'checked' if selected_project else '' }}> 既存Projectに追加</label>
+    <label class="radio-line"><input type="radio" name="project_mode" value="new" {{ 'checked' if not selected_project else '' }}> 新しいProjectを作成</label>
+    <label class="radio-line"><input type="radio" name="project_mode" value="existing" {{ 'checked' if selected_project else '' }}> 既存Projectに追加</label>
     <label>既存Project
       <select name="project_id">
         <option value="">選択なし</option>

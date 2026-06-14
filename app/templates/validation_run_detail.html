@@ -1,12 +1,7 @@
 {% extends "base.html" %}
-{% block head_extra %}
-{% if generation and generation.status == 'running' %}
-  <meta http-equiv="refresh" content="5">
-{% endif %}
-{% endblock %}
 {% block content %}
 <header class="page-head">
-  <h1>外部検証 #{{ run.id }}</h1>
+  <h1>検証Run #{{ run.id }}</h1>
   <div class="actions">
     <a class="button" href="/jobs/{{ run.job_id }}">ジョブへ戻る</a>
     {% if run.project_id %}<a class="button" href="/projects/{{ run.project_id }}">Projectへ戻る</a>{% endif %}
@@ -27,7 +22,7 @@
 </section>
 {% endif %}
 
-<section class="action-panel validation-action-panel">
+<section class="action-panel validation-action-panel" data-validation-run-detail="{{ run.id }}" data-generation-status="{{ generation.status if generation else '' }}">
   <div>
     <h2>ステータス</h2>
     <dl>
@@ -36,12 +31,12 @@
       <dt>レビュー済み</dt><dd>{{ coverage.reviewed_condition_count }}</dd>
       <dt>未登録</dt><dd>{{ coverage.missing_condition_count }}</dd>
       <dt>推奨weight</dt><dd>{{ suggestion.suggested_weight_min if suggestion.suggested_weight_min is not none else '-' }} - {{ suggestion.suggested_weight_max if suggestion.suggested_weight_max is not none else '-' }}</dd>
-      <dt>画像生成</dt><dd>{% if generation %}<span class="label {{ generation.status }}">{{ generation.status }}</span>{% else %}-{% endif %}</dd>
+      <dt>画像生成</dt><dd>{% if generation %}<span class="label {{ generation.status }}" data-detail-generation-status-label>{{ generation.status }}</span>{% else %}<span data-detail-generation-status-label>-</span>{% endif %}</dd>
       {% if generation %}
-      <dt>生成PID</dt><dd>{{ generation.process_id or '-' }}</dd>
-      <dt>プロセス確認</dt><dd>{% if generation.status == 'running' %}{% if generation_process_alive %}<span class="label running">動作中</span>{% else %}<span class="label warning">未確認 / 停止の可能性</span>{% endif %}{% else %}-{% endif %}</dd>
-      <dt>生成済みファイル</dt><dd>{{ generation_output_image_count }} 件</dd>
-      <dt>ログ更新</dt><dd>{{ generation_log_updated_at or '-' }}</dd>
+      <dt>生成PID</dt><dd data-detail-generation-pid>{{ generation.process_id or '-' }}</dd>
+      <dt>プロセス確認</dt><dd data-detail-generation-process>{% if generation.status == 'running' %}{% if generation_process_alive %}<span class="label running">動作中</span>{% else %}<span class="label warning">未確認 / 停止の可能性</span>{% endif %}{% else %}-{% endif %}</dd>
+      <dt>生成済みファイル</dt><dd><span data-detail-generation-file-count>{{ generation_output_image_count }}</span> 件</dd>
+      <dt>ログ更新</dt><dd data-detail-generation-log-updated>{{ generation_log_updated_at or '-' }}</dd>
       {% endif %}
     </dl>
   </div>
@@ -57,22 +52,22 @@
     <p>レビューは概ね揃っています。推奨weightを確認し、必要ならLoRAプロファイルへ反映してください。</p>
     {% endif %}
     {% if generation and generation.status in ['running', 'failed', 'stopped'] %}
-    <div class="notice generation-status-note">
-      <strong>画像生成: {{ generation.status }}</strong>
+    <div class="notice generation-status-note" data-detail-generation-note>
+      <strong>画像生成: <span data-detail-generation-status-text>{{ generation.status }}</span></strong>
       {% if generation.status == 'running' %}
       / {% if generation_process_alive %}プロセス動作中{% else %}PIDが確認できません。停止している可能性があります{% endif %}
       {% elif generation.return_code is not none %}
       / 終了コード {{ generation.return_code }}
       {% endif %}
       <div class="generation-live-meta">
-        <span>生成済み: {{ generation_output_image_count }} 件</span>
-        <span>ログ: {{ generation_log_size }} bytes</span>
-        <span>更新: {{ generation_log_updated_at or '-' }}</span>
+        <span>生成済み: <span data-detail-generation-note-file-count>{{ generation_output_image_count }}</span> 件</span>
+        <span>ログ: <span data-detail-generation-log-size>{{ generation_log_size }}</span> bytes</span>
+        <span>更新: <span data-detail-generation-note-log-updated>{{ generation_log_updated_at or '-' }}</span></span>
       </div>
       {% if generation_log_preview %}
-      <pre class="tiny-log">{{ generation_log_preview }}</pre>
+      <pre class="tiny-log" data-detail-generation-log-preview>{{ generation_log_preview }}</pre>
       {% else %}
-      <p class="muted">生成ログはまだありません。</p>
+      <pre class="tiny-log empty" data-detail-generation-log-preview>生成ログはまだありません。</pre>
       {% endif %}
     </div>
     {% endif %}
@@ -82,7 +77,7 @@
       <form method="post" action="/validation-runs/{{ run.id }}/generation/stop"><button type="submit" class="danger" {% if not generation or generation.status != 'running' %}disabled{% endif %}>画像生成を停止</button></form>
       <form method="post" action="/validation-runs/{{ run.id }}/generation/import"><button type="submit">生成画像を再取り込み</button></form>
       <form method="post" action="/validation-runs/{{ run.id }}/export-report"><button type="submit">検証レポート出力</button></form>
-      {% if matrix_exists %}<a class="button" href="/validation-runs/{{ run.id }}/matrix" target="_blank" rel="noopener">比較Matrixを開く</a>{% endif %}
+      {% if matrix_exists %}<a class="button" href="/validation-runs/{{ run.id }}/matrix" target="_blank" rel="noopener">検証Matrixを開く</a>{% endif %}
     </div>
   </div>
 </section>
@@ -94,7 +89,7 @@
 </section>
 {% endif %}
 
-<nav class="validation-tabs" aria-label="外部検証ページ内ナビ">
+<nav class="validation-tabs" aria-label="検証Runページ内ナビ">
   <a href="#overview">概要</a>
   <a href="#images">画像確認</a>
   <a href="#weight-review">Weightレビュー</a>
@@ -184,7 +179,7 @@
 <section id="images">
   <h2>登録画像・レビュー</h2>
   <div class="actions compact-actions validation-image-actions">
-    {% if matrix_exists %}<a class="button" href="/validation-runs/{{ run.id }}/matrix" target="_blank" rel="noopener">比較Matrixを開く</a>{% endif %}
+    {% if matrix_exists %}<a class="button" href="/validation-runs/{{ run.id }}/matrix" target="_blank" rel="noopener">検証Matrixを開く</a>{% endif %}
     <a class="button" href="#image-register">画像を登録する</a>
     <a class="button" href="#expected-conditions">未登録条件を見る</a>
   </div>
@@ -359,7 +354,7 @@
         <dl>
           <dt>promptファイル</dt><dd>{{ generation.prompt_file_path or '-' }}</dd>
           <dt>出力フォルダ</dt><dd>{{ generation.output_dir or '-' }}</dd>
-          <dt>比較Matrix</dt><dd>{{ matrix_path or '-' }}</dd>
+          <dt>検証Matrix</dt><dd>{{ matrix_path or '-' }}</dd>
         </dl>
         {% else %}
         <p class="muted">生成ファイルはまだありません。</p>

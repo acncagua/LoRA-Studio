@@ -252,3 +252,161 @@ function openLightbox(src, title) {
   box.querySelector(".lightbox-title").textContent = title;
   box.classList.add("open");
 }
+
+function initValidationGenerationPolling() {
+  const rows = [...document.querySelectorAll("[data-validation-run-row]")];
+  const activeRows = rows.filter((row) => row.getAttribute("data-generation-status") === "running");
+  if (!activeRows.length) {
+    return;
+  }
+
+  const pollRow = async (row) => {
+    const runId = row.getAttribute("data-validation-run-row");
+    if (!runId || row.getAttribute("data-generation-status") !== "running") {
+      return;
+    }
+    try {
+      const payload = await fetchValidationGenerationStatus(runId);
+      applyValidationGenerationStatus(row, payload);
+    } catch (error) {
+      const logRow = document.querySelector(`[data-validation-run-log-row="${runId}"]`);
+      const preview = logRow?.querySelector("[data-generation-log-preview]");
+      if (preview) {
+        preview.textContent = `状態更新に失敗しました: ${error.message}`;
+      }
+    }
+  };
+
+  activeRows.forEach((row) => pollRow(row));
+  const timer = window.setInterval(() => {
+    const runningRows = [...document.querySelectorAll('[data-validation-run-row][data-generation-status="running"]')];
+    if (!runningRows.length) {
+      window.clearInterval(timer);
+      return;
+    }
+    runningRows.forEach((row) => pollRow(row));
+  }, 5000);
+}
+
+async function fetchValidationGenerationStatus(runId) {
+  const response = await fetch(`/validation-runs/${runId}/generation/status`, {
+    headers: { "Accept": "application/json" },
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+function generationStatusLabel(status, fallback = "-") {
+  const labels = {
+    queued: "待機中",
+    running: "実行中",
+    completed: "完了",
+    failed: "失敗",
+    stopped: "停止",
+  };
+  return labels[status] || fallback || status || "-";
+}
+
+function applyValidationGenerationStatus(row, payload) {
+  row.setAttribute("data-generation-status", payload.status || "");
+  const label = row.querySelector("[data-generation-status-label]");
+  if (label) {
+    label.className = payload.status ? `label ${payload.status}` : "";
+    label.textContent = generationStatusLabel(payload.status, payload.status_label);
+  }
+  const actual = row.querySelector("[data-validation-actual]");
+  const expected = row.querySelector("[data-validation-expected]");
+  if (actual) actual.textContent = payload.actual_image_count ?? "0";
+  if (expected) expected.textContent = payload.expected_image_count ?? "-";
+
+  const logRow = document.querySelector(`[data-validation-run-log-row="${payload.run_id}"]`);
+  if (logRow) {
+    const fileCount = logRow.querySelector("[data-generation-file-count]");
+    const logSize = logRow.querySelector("[data-generation-log-size]");
+    const logUpdated = logRow.querySelector("[data-generation-log-updated]");
+    const pid = logRow.querySelector("[data-generation-pid]");
+    const preview = logRow.querySelector("[data-generation-log-preview]");
+    if (fileCount) fileCount.textContent = payload.file_count ?? "0";
+    if (logSize) logSize.textContent = payload.log_size ?? "0";
+    if (logUpdated) logUpdated.textContent = payload.log_updated_at || "-";
+    if (pid) pid.textContent = payload.process_id || "-";
+    if (preview) {
+      preview.classList.toggle("empty", !payload.log_preview);
+      preview.textContent = payload.log_preview || "ログはまだありません。生成ファイル数が増えていれば処理は進行中です。";
+    }
+  }
+}
+
+function initValidationGenerationDetailPolling() {
+  const panel = document.querySelector("[data-validation-run-detail]");
+  if (!panel || panel.getAttribute("data-generation-status") !== "running") {
+    return;
+  }
+  const runId = panel.getAttribute("data-validation-run-detail");
+  const pollDetail = async () => {
+    if (!runId || panel.getAttribute("data-generation-status") !== "running") {
+      return;
+    }
+    try {
+      const payload = await fetchValidationGenerationStatus(runId);
+      applyValidationGenerationDetailStatus(panel, payload);
+    } catch (error) {
+      const preview = panel.querySelector("[data-detail-generation-log-preview]");
+      if (preview) {
+        preview.textContent = `状態更新に失敗しました: ${error.message}`;
+      }
+    }
+  };
+
+  pollDetail();
+  const timer = window.setInterval(() => {
+    if (panel.getAttribute("data-generation-status") !== "running") {
+      window.clearInterval(timer);
+      return;
+    }
+    pollDetail();
+  }, 5000);
+}
+
+function applyValidationGenerationDetailStatus(panel, payload) {
+  panel.setAttribute("data-generation-status", payload.status || "");
+  const statusLabel = panel.querySelector("[data-detail-generation-status-label]");
+  if (statusLabel) {
+    statusLabel.className = payload.status ? `label ${payload.status}` : "";
+    statusLabel.textContent = generationStatusLabel(payload.status, payload.status_label);
+  }
+  const statusText = panel.querySelector("[data-detail-generation-status-text]");
+  if (statusText) statusText.textContent = generationStatusLabel(payload.status, payload.status_label);
+  const pid = panel.querySelector("[data-detail-generation-pid]");
+  if (pid) pid.textContent = payload.process_id || "-";
+  const process = panel.querySelector("[data-detail-generation-process]");
+  if (process) {
+    if (payload.status === "running") {
+      process.innerHTML = payload.process_alive
+        ? '<span class="label running">動作中</span>'
+        : '<span class="label warning">未確認 / 停止の可能性</span>';
+    } else {
+      process.textContent = "-";
+    }
+  }
+  const fileCount = panel.querySelector("[data-detail-generation-file-count]");
+  const noteFileCount = panel.querySelector("[data-detail-generation-note-file-count]");
+  const logSize = panel.querySelector("[data-detail-generation-log-size]");
+  const logUpdated = panel.querySelector("[data-detail-generation-log-updated]");
+  const noteLogUpdated = panel.querySelector("[data-detail-generation-note-log-updated]");
+  const preview = panel.querySelector("[data-detail-generation-log-preview]");
+  if (fileCount) fileCount.textContent = payload.file_count ?? "0";
+  if (noteFileCount) noteFileCount.textContent = payload.file_count ?? "0";
+  if (logSize) logSize.textContent = payload.log_size ?? "0";
+  if (logUpdated) logUpdated.textContent = payload.log_updated_at || "-";
+  if (noteLogUpdated) noteLogUpdated.textContent = payload.log_updated_at || "-";
+  if (preview) {
+    preview.classList.toggle("empty", !payload.log_preview);
+    preview.textContent = payload.log_preview || "生成ログはまだありません。生成済みファイル数が増えていれば処理は進行中です。";
+  }
+}
+
+document.addEventListener("DOMContentLoaded", initValidationGenerationPolling);
+document.addEventListener("DOMContentLoaded", initValidationGenerationDetailPolling);

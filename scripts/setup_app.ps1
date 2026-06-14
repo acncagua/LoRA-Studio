@@ -6,8 +6,13 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
 function Test-PythonCmd([string]$Command) {
     try {
-        Invoke-Expression "& $Command -c `"import sys; print(sys.version_info[:2])`"" *> $null
-        return $LASTEXITCODE -eq 0
+        $pathCommand = $Command.Trim().Trim('"').Trim("'")
+        if (Test-Path -LiteralPath $pathCommand) {
+            & $pathCommand --version
+        } else {
+            Invoke-Expression "& $Command --version"
+        }
+        return ($? -or $LASTEXITCODE -eq 0)
     } catch {
         return $false
     }
@@ -85,7 +90,8 @@ function Get-OtherScannedPythonCommands {
 
 function Resolve-PythonCmd([string]$RequestedCommand) {
     if (-not [string]::IsNullOrWhiteSpace($RequestedCommand)) {
-        if (Test-PythonCmd $RequestedCommand) { return $RequestedCommand }
+        $command = if (Test-Path $RequestedCommand) { Quote-CommandPath $RequestedCommand } else { $RequestedCommand }
+        if (Test-PythonCmd $command) { return $command }
         throw "Requested Python command is not available: $RequestedCommand"
     }
     $pythonSettingPath = ".\data\python_cmd.txt"

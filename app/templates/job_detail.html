@@ -454,12 +454,12 @@
   <p class="muted">サンプル画像はまだ取り込まれていません。</p>
   {% endfor %}
 </section>
-<section>
-  <h2>外部検証</h2>
-  <p class="muted">外部生成の条件を検証プリセットで固定し、WebUI / reForge用のプロンプトパックを出力します。画像生成自体は自動実行しません。</p>
+<section id="validation-runs">
+  <h2>検証Run</h2>
+  <p class="muted">検証プリセットで条件を固定し、採用候補LoRAごとに画像生成・Matrix確認・レビュー保存を行います。WebUI / reForge由来の画像も登録できます。</p>
   <div class="panel-grid">
     <div>
-      <h3>外部検証を作成</h3>
+      <h3>採用中LoRAで検証Runを作成</h3>
       <form method="post" action="/jobs/{{ job.id }}/validation-runs" class="form-grid">
         <label>プリセット<select name="validation_preset_id">
           {% for preset in validation_presets %}
@@ -469,33 +469,96 @@
         <label>ベースモデル<input name="base_model" value="{{ selected_lora_profile.base_model if selected_lora_profile else '' }}"></label>
         <label>トリガー<input name="trigger_word" value="{{ selected_lora_profile.trigger_word if selected_lora_profile else job.trigger_word_at_creation or '' }}"></label>
         <label class="wide-field">メモ<textarea name="memo"></textarea></label>
-        <button type="submit" {% if not selected_output %}disabled{% endif %}>外部検証を作成</button>
+        <button type="submit" {% if not selected_output %}disabled{% endif %}>検証Runを作成</button>
+      </form>
+      <h3>複数Epochの検証Runをまとめて作成</h3>
+      <form method="post" action="/jobs/{{ job.id }}/validation-runs/bulk" class="form-grid">
+        <label>プリセット<select name="validation_preset_id">
+          {% for preset in validation_presets %}
+          <option value="{{ preset.id }}" {{ 'selected' if selected_lora_profile and selected_lora_profile.default_validation_preset_id == preset.id else '' }}>{{ display_validation_preset_name(preset) }} / {{ preset.expected_image_count }}枚</option>
+          {% endfor %}
+        </select></label>
+        <label>ベースモデル<input name="base_model" value="{{ selected_lora_profile.base_model if selected_lora_profile else '' }}"></label>
+        <label>トリガー<input name="trigger_word" value="{{ selected_lora_profile.trigger_word if selected_lora_profile else job.trigger_word_at_creation or '' }}"></label>
+        <div class="wide-field checkbox-grid">
+          {% for output in outputs if output.epoch is not none and not output.deleted_at %}
+          <label><input type="checkbox" name="output_ids" value="{{ output.id }}" {{ 'checked' if output.selected else '' }}> epoch {{ output.epoch }}{% if output.selected %}（採用中）{% endif %}</label>
+          {% else %}
+          <p class="muted">選択できるLoRA出力がありません。</p>
+          {% endfor %}
+        </div>
+        <label class="wide-field">メモ<textarea name="memo" placeholder="例: 候補epoch 6/7/8 の標準検証"></textarea></label>
+        <button type="submit" {% if outputs|length == 0 %}disabled{% endif %}>選択Epochの検証Runを作成</button>
+        <p class="muted wide-field">選択したEpochごとに検証Runを1件ずつ作成します。結果確認は各検証Runの検証Matrixで行います。</p>
       </form>
     </div>
     <div>
-      <h3>外部検証一覧</h3>
+      <h3>検証Run一覧</h3>
       <table>
-        <thead><tr><th>ID</th><th>プリセット</th><th>状態</th><th>画像数</th><th></th></tr></thead>
+        <thead><tr><th>比較</th><th>ID</th><th>プリセット</th><th>Epoch</th><th>状態</th><th>画像生成</th><th>画像数</th><th>操作</th></tr></thead>
         <tbody>
           {% for run in validation_runs %}
-          <tr>
+          <tr data-validation-run-row="{{ run.id }}" data-generation-status="{{ run.generation_status or '' }}">
+            <td><input form="epoch-matrix-form" type="checkbox" name="run_ids" value="{{ run.id }}" aria-label="検証Run #{{ run.id }} を比較対象にする"></td>
             <td>#{{ run.id }}</td>
             <td>{{ run.name }}</td>
+            <td>{{ run.selected_epoch if run.selected_epoch is not none else '-' }}</td>
             <td>{{ display_validation_status(run.status) }}</td>
-            <td>{{ run.actual_image_count }} / {{ run.expected_image_count }}</td>
-            <td><a class="button" href="/validation-runs/{{ run.id }}">詳細</a></td>
+            <td>
+              {% if run.generation_status %}
+              <span class="label {{ run.generation_status }}" data-generation-status-label>{{ run.generation_status }}</span>
+              {% else %}
+              <span data-generation-status-label>-</span>
+              {% endif %}
+            </td>
+            <td><span data-validation-actual>{{ run.actual_image_count }}</span> / <span data-validation-expected>{{ run.expected_image_count }}</span></td>
+            <td class="inline-actions">
+              <a class="button" href="/validation-runs/{{ run.id }}">詳細</a>
+              {% if run.generation_status == 'running' %}
+              <form method="post" action="/jobs/{{ job.id }}/validation-runs/{{ run.id }}/generation/stop"><button type="submit" class="danger">停止</button></form>
+              {% else %}
+              <form method="post" action="/jobs/{{ job.id }}/validation-runs/{{ run.id }}/generation/run"><button type="submit">画像生成を実行</button></form>
+              {% endif %}
+            </td>
           </tr>
+          {% if run.generation_status %}
+          <tr class="sub-row" data-validation-run-log-row="{{ run.id }}">
+            <td></td>
+            <td colspan="7">
+              <div class="mini-log-panel">
+                <div class="mini-log-meta">
+                  <strong>簡易ログ</strong>
+                  <span>生成ファイル: <span data-generation-file-count>{{ run.generation_file_count }}</span> 件</span>
+                  <span>ログ: <span data-generation-log-size>{{ run.generation_log_size }}</span> bytes</span>
+                  <span>更新: <span data-generation-log-updated>{{ run.generation_log_updated_at or '-' }}</span></span>
+                  <span>PID: <span data-generation-pid>{{ run.generation_process_id or '-' }}</span></span>
+                </div>
+                {% if run.generation_log_preview %}
+                <pre class="mini-log" data-generation-log-preview>{{ run.generation_log_preview }}</pre>
+                {% else %}
+                <pre class="mini-log empty" data-generation-log-preview>ログはまだありません。生成ファイル数が増えていれば処理は進行中です。</pre>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% endif %}
           {% else %}
-          <tr><td colspan="5" class="muted">外部検証はまだありません。</td></tr>
+          <tr><td colspan="8" class="muted">検証Runはまだありません。</td></tr>
           {% endfor %}
         </tbody>
       </table>
+      <form id="epoch-matrix-form" method="get" action="/jobs/{{ job.id }}/validation-runs/epoch-matrix" target="_blank" rel="noopener">
+        <div class="actions">
+          <button type="submit" {% if validation_runs|length < 2 %}disabled{% endif %}>選択した検証RunでEpoch横断Matrixを開く</button>
+        </div>
+      </form>
+      <p class="muted">まず各検証Runの画像生成を実行し、結果は詳細画面で個別確認します。画像が揃ったら、同じprompt / seed / weight条件をEpoch横断Matrixで横並び比較できます。</p>
     </div>
   </div>
 </section>
 <section>
   <h2>旧形式の外部検証</h2>
-  <p class="notice">新規の標準ワークフローでは、LoRAライブラリまたはジョブ詳細の検証プリセットから外部検証を作成し、条件カバレッジで条件単位にレビューしてください。この欄は旧形式の画像/weightメモを残すための入力です。</p>
+  <p class="notice">新規の標準ワークフローでは、LoRAライブラリまたはジョブ詳細の検証Runを使い、条件カバレッジで条件単位にレビューしてください。この欄は旧形式の外部画像/weightメモを残すための入力です。</p>
   <p class="muted">reForge / WebUIなど外部生成環境で作成した画像とweight評価を、採用LoRAに紐づけて保存します。</p>
   {% if selected_lora_profile %}
   <dl>
@@ -505,7 +568,7 @@
     <dt>検証メモ</dt><dd>{{ selected_lora_profile.validation_memo or '-' }}</dd>
   </dl>
   {% else %}
-  <p class="notice">採用LoRAを選択すると、LoRAライブラリプロファイルと外部検証を保存できます。</p>
+  <p class="notice">採用LoRAを選択すると、LoRAライブラリプロファイルと検証Runを保存できます。</p>
   {% endif %}
   <div class="panel-grid">
     <div>

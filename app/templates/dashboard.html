@@ -33,7 +33,7 @@
 <section>
   <h2>最近のProject（LoRA作成単位）</h2>
   <table>
-    <thead><tr><th>ID</th><th>Project名</th><th>状態</th><th>データセット</th><th>採用学習ジョブ</th><th>推奨weight</th><th>最新検証</th><th>操作</th></tr></thead>
+    <thead><tr><th>ID</th><th>Project名</th><th>状態</th><th>データセット</th><th>採用学習ジョブ</th><th>推奨weight</th><th>最新検証Run</th><th>操作</th></tr></thead>
     <tbody>
       {% for project in projects %}
       <tr>
@@ -84,7 +84,7 @@
   <h2>採用LoRAの検証進捗</h2>
   <table>
     <thead>
-      <tr><th>プロファイル</th><th>プリセット</th><th>最新の外部検証</th><th>予定 / 登録 / レビュー済み</th><th>推奨weight</th><th>状態</th></tr>
+      <tr><th>プロファイル</th><th>プリセット</th><th>最新の検証Run</th><th>予定 / 登録 / レビュー済み</th><th>推奨weight</th><th>状態</th></tr>
     </thead>
     <tbody>
       {% for profile in validation_profiles %}

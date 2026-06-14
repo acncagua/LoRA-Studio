@@ -48,12 +48,15 @@ from app.services.storage_cleanup import (
 )
 from app.services.training_runner import read_log_tail, reconcile_stale_running_jobs, start_job, stop_job, validate_job_ready
 from app.services.validation_generation import (
+    build_epoch_cross_matrix_html,
+    count_generated_images,
     generation_view_state,
     import_generated_images,
     prepare_validation_generation,
     start_validation_generation,
     stop_validation_generation,
     validation_run_dir as generation_validation_run_dir,
+    validation_generation_log_tail,
     write_validation_matrix,
 )
 from app.services.validation_runs import (
@@ -499,7 +502,7 @@ def recommended_next_action(job: Any, selected_output: Any | None = None) -> str
     if status == "running":
         return "次にやること: 学習中です。train.logを確認できます。必要なら停止してください。"
     if status == "completed" and selected_output is not None:
-        return "次にやること: 採用LoRA出力または外部検証を作成してください。"
+        return "次にやること: 採用LoRA出力または検証Runを作成してください。"
     if status == "completed":
         return "次にやること: sample画像を評価し、採用LoRAを選択してください。"
     if status == "failed":
@@ -633,9 +636,24 @@ def project_workflow_status(project: Any, jobs: list[dict[str, Any]], validation
         {"name": "Sample評価", "status": "OK" if has_completed else "未実施"},
         {"name": "採用LoRA", "status": "OK" if has_selected else "未選択"},
         {"name": "Export", "status": "OK" if has_export else "未出力"},
-        {"name": "外部検証", "status": "OK" if has_validation else "未実施"},
+        {"name": "検証Run", "status": "OK" if has_validation else "未実施"},
         {"name": "Recommendation", "status": "OK" if has_recommendation else "未生成"},
     ]
+
+
+def decorate_validation_runs_for_job(validation_runs: list[Any]) -> list[dict[str, Any]]:
+    decorated: list[dict[str, Any]] = []
+    for row in validation_runs:
+        item = dict(row)
+        run_id = int(item["id"])
+        output_dir = Path(item["output_dir"]) if item.get("output_dir") else generation_validation_run_dir(run_id) / "generation" / "images"
+        log_path = Path(item["log_path"]) if item.get("log_path") else generation_validation_run_dir(run_id) / "generation" / "generation.log"
+        item["generation_file_count"] = count_generated_images(output_dir)
+        item["generation_log_preview"] = validation_generation_log_tail(run_id, max_lines=5)
+        item["generation_log_updated_at"] = datetime.fromtimestamp(log_path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S") if log_path.exists() else ""
+        item["generation_log_size"] = log_path.stat().st_size if log_path.exists() else 0
+        decorated.append(item)
+    return decorated
 
 
 def pilot_recommendation(project: Any) -> dict[str, Any]:
@@ -1946,7 +1964,25 @@ def job_detail(
     validation_results = fetch_all("SELECT * FROM validation_results WHERE job_id = ? ORDER BY created_at DESC, id DESC", (job_id,))
     validation_images = fetch_all("SELECT * FROM validation_images WHERE job_id = ? ORDER BY created_at DESC, id DESC", (job_id,))
     validation_weight_reviews = fetch_all("SELECT * FROM validation_weight_reviews WHERE job_id = ? ORDER BY lora_weight, id", (job_id,))
-    validation_runs = fetch_all("SELECT * FROM validation_runs WHERE job_id = ? ORDER BY id DESC", (job_id,))
+    validation_runs = fetch_all(
+        """
+        SELECT vr.*, o.epoch AS selected_epoch,
+               vg.status AS generation_status,
+               vg.process_id AS generation_process_id,
+               vg.return_code AS generation_return_code
+        FROM validation_runs vr
+        LEFT JOIN training_outputs o ON o.id = vr.selected_output_id
+        LEFT JOIN validation_generation_runs vg ON vg.id = (
+            SELECT id FROM validation_generation_runs
+            WHERE validation_run_id = vr.id
+            ORDER BY id DESC LIMIT 1
+        )
+        WHERE vr.job_id = ?
+        ORDER BY vr.id DESC
+        """,
+        (job_id,),
+    )
+    validation_runs = decorate_validation_runs_for_job(validation_runs)
     validation_summary = build_validation_summary(validation_results)
     selected_lora_profile = ensure_selected_lora_profile(job_id) if selected_output else None
     recommendations = list_recommendations(job_id)
@@ -2835,6 +2871,36 @@ def job_create_validation_run(
     return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
 
 
+@app.post("/jobs/{job_id}/validation-runs/bulk")
+def job_create_validation_runs_for_outputs(
+    job_id: int,
+    output_ids: list[int] = Form([]),
+    validation_preset_id: str = Form(...),
+    base_model: str = Form(""),
+    trigger_word: str = Form(""),
+    memo: str = Form(""),
+) -> RedirectResponse:
+    if not output_ids:
+        raise HTTPException(status_code=400, detail="検証するEpochを1つ以上選択してください。")
+    created: list[int] = []
+    for output_id in output_ids:
+        try:
+            run_id = create_validation_run(
+                job_id,
+                validation_preset_id,
+                base_model,
+                trigger_word,
+                memo,
+                selected_output_id=output_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        created.append(run_id)
+    if len(created) == 1:
+        return RedirectResponse(f"/validation-runs/{created[0]}", status_code=303)
+    return RedirectResponse(f"/jobs/{job_id}#validation-runs", status_code=303)
+
+
 @app.get("/validation-runs/{run_id}", response_class=HTMLResponse)
 def validation_run_detail(request: Request, run_id: int) -> HTMLResponse:
     try:
@@ -2936,10 +3002,62 @@ def validation_generation_run(run_id: int) -> RedirectResponse:
     return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
 
 
+@app.post("/jobs/{job_id}/validation-runs/{run_id}/generation/run")
+def job_validation_generation_run(job_id: int, run_id: int) -> RedirectResponse:
+    run = fetch_one("SELECT id FROM validation_runs WHERE id = ? AND job_id = ?", (run_id, job_id))
+    if run is None:
+        raise HTTPException(status_code=404, detail="Validation Run not found")
+    try:
+        start_validation_generation(run_id)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(f"/jobs/{job_id}#validation-runs", status_code=303)
+
+
 @app.post("/validation-runs/{run_id}/generation/stop")
 def validation_generation_stop(run_id: int) -> RedirectResponse:
     stop_validation_generation(run_id)
     return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
+
+
+@app.post("/jobs/{job_id}/validation-runs/{run_id}/generation/stop")
+def job_validation_generation_stop(job_id: int, run_id: int) -> RedirectResponse:
+    run = fetch_one("SELECT id FROM validation_runs WHERE id = ? AND job_id = ?", (run_id, job_id))
+    if run is None:
+        raise HTTPException(status_code=404, detail="Validation Run not found")
+    stop_validation_generation(run_id)
+    return RedirectResponse(f"/jobs/{job_id}#validation-runs", status_code=303)
+
+
+@app.get("/validation-runs/{run_id}/generation/status")
+def validation_generation_status(run_id: int) -> JSONResponse:
+    run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (run_id,))
+    if run is None:
+        raise HTTPException(status_code=404, detail="Validation Run not found")
+    state = generation_view_state(run_id)
+    generation = state["generation"]
+    status = generation["status"] if generation else ""
+    process_id = generation["process_id"] if generation else None
+    actual_row = fetch_one("SELECT actual_image_count, expected_image_count FROM validation_runs WHERE id = ?", (run_id,))
+    return JSONResponse(
+        {
+            "run_id": run_id,
+            "status": status,
+            "status_label": status or "-",
+            "process_id": process_id,
+            "process_alive": state["generation_process_alive"],
+            "generated_image_count": generation["generated_image_count"] if generation else 0,
+            "imported_image_count": generation["imported_image_count"] if generation else 0,
+            "actual_image_count": actual_row["actual_image_count"] if actual_row else 0,
+            "expected_image_count": actual_row["expected_image_count"] if actual_row else run["expected_image_count"],
+            "file_count": state["generation_output_image_count"],
+            "log_preview": validation_generation_log_tail(run_id, max_lines=5),
+            "log_size": state["generation_log_size"],
+            "log_updated_at": state["generation_log_updated_at"],
+            "return_code": generation["return_code"] if generation else None,
+            "done": status in {"completed", "failed", "stopped"},
+        }
+    )
 
 
 @app.post("/validation-runs/{run_id}/generation/import")
@@ -2961,6 +3079,15 @@ def validation_generation_matrix(run_id: int) -> FileResponse:
         if not path.exists():
             raise HTTPException(status_code=404, detail="validation_matrix.html not found") from exc
     return FileResponse(path)
+
+
+@app.get("/jobs/{job_id}/validation-runs/epoch-matrix", response_class=HTMLResponse)
+def validation_epoch_cross_matrix(job_id: int, run_ids: list[int] = Query(default=[])) -> HTMLResponse:
+    try:
+        html_text = build_epoch_cross_matrix_html(job_id, run_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return HTMLResponse(html_text)
 
 
 @app.post("/validation-runs/{run_id}/images/individual")

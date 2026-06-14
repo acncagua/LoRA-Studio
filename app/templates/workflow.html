@@ -6,7 +6,7 @@
 
 <section>
   <p class="notice">
-    運用ベータでは、いきなり長時間学習へ進まず、データセット確認、短時間テスト、画像評価、外部検証を小さく回す流れをおすすめします。
+    運用ベータでは、いきなり長時間学習へ進まず、データセット確認、短時間テスト、画像評価、検証Runを小さく回す流れをおすすめします。
     結合確認は初回環境確認専用です。通常運用では、事前確認がOKで同条件の完走実績があるなら、軽量確認をスキップして標準6Epochの学習ジョブへ進めます。
   </p>
 </section>
@@ -15,7 +15,7 @@
   <div>
     <h2>まず整える</h2>
     <ol class="workflow-list">
-      <li><strong>Project作成</strong><br>作りたいLoRA単位でProjectを作ります。軽量確認、標準学習、外部検証、採用LoRAをProject詳細でまとめて確認します。</li>
+      <li><strong>Project作成</strong><br>作りたいLoRA単位でProjectを作ります。軽量確認、標準学習、検証Run、採用LoRAをProject詳細でまとめて確認します。</li>
       <li><strong>データセット登録</strong><br>画像フォルダを登録し、モデル種別、トリガー、class tokenを設定します。</li>
       <li><strong>再スキャン</strong><br>画像数、caption数、欠損、manifest hashを更新します。</li>
       <li><strong>トリガー整合性確認</strong><br>トリガーの出現率、captionの揺れ、混入タグを見ます。</li>
@@ -49,7 +49,7 @@
   <div>
     <h2>外で試して仕上げる</h2>
     <ol class="workflow-list">
-      <li><strong>検証プリセットで外部検証</strong><br>クイック、標準、拡張の順でreForge/WebUI生成用プロンプトパックを使います。</li>
+      <li><strong>検証プリセットで検証Run</strong><br>クイック、標準、拡張の順で条件を固定し、LoRA-Studioのsd-scripts生成またはreForge/WebUI生成画像で確認します。</li>
       <li><strong>検証レビュー</strong><br>条件カバレッジ、登録済み、レビュー済みを確認し、評価ルーブリックを保存します。</li>
       <li><strong>提案確認</strong><br>loss、サンプル評価、検証結果、データセット整合性を見たルールベース提案を確認します。</li>
       <li><strong>次の一手へ</strong><br>必要なら提案から下書きジョブを作成し、実行するかどうかは人間が判断します。</li>

@@ -115,7 +115,7 @@
     </dl>
   </div>
   <div>
-    <h2>外部検証</h2>
+    <h2>検証Run</h2>
     <table>
       <thead><tr><th>ID</th><th>プリセット</th><th>予定/登録/レビュー</th><th>状態</th></tr></thead>
       <tbody>
@@ -127,7 +127,7 @@
           <td><span class="label {{ run.status }}">{{ display_validation_status(run.status) }}</span></td>
         </tr>
         {% else %}
-        <tr><td colspan="4" class="muted">外部検証はまだありません。</td></tr>
+        <tr><td colspan="4" class="muted">検証Runはまだありません。</td></tr>
         {% endfor %}
       </tbody>
     </table>

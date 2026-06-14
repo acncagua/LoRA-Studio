@@ -86,6 +86,16 @@ button.active, .button.active { background: var(--ink); color: white; }
 .wide-field { grid-column: 1 / -1; }
 label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; }
 input, select, textarea { border: 1px solid var(--line); border-radius: 6px; padding: 9px 10px; font: inherit; color: var(--ink); background: white; min-width: 0; max-width: 100%; }
+input[type="checkbox"], input[type="radio"] {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  max-width: 16px;
+  padding: 0;
+  margin: 0;
+  accent-color: var(--accent);
+  vertical-align: middle;
+}
 textarea { min-height: 84px; }
 .form-fieldset { grid-column: 1 / -1; display: grid; gap: 12px; border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: #fbfcfa; min-width: 0; }
 .form-fieldset legend { padding: 0 6px; font-weight: 700; color: var(--ink); }
@@ -95,6 +105,12 @@ textarea { min-height: 84px; }
 .warning { color: var(--accent-2); }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
 .actions form { padding: 0; border: 0; background: transparent; }
+.inline-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.inline-actions form { margin: 0; padding: 0; border: 0; background: transparent; }
+.sub-row td { background: #fbfcfa; border-top: 0; }
+.mini-log-panel { border: 1px solid #d8ddd4; border-radius: 6px; padding: 10px; background: #f8faf7; }
+.mini-log-meta { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; color: #4f5b54; font-size: 13px; }
+.mini-log { max-height: 110px; overflow: auto; margin: 8px 0 0; padding: 8px; background: #1a2824; color: #d7eee6; border-radius: 6px; font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
 .compact-actions { justify-content: flex-start; align-items: center; }
 .next-job-actions {
   justify-content: flex-start;
@@ -156,15 +172,45 @@ textarea { min-height: 84px; }
   color: var(--ink);
   margin-right: 6px;
 }
-.inline-check input, .checkbox-line input { width: auto; }
+.inline-check input, .checkbox-line input, .radio-line input { width: 16px; }
 .checkbox-line {
   display: flex;
   align-items: center;
   gap: 8px;
   color: var(--ink);
 }
+.radio-line {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  color: var(--ink);
+}
 .mono-textarea { font-family: Consolas, "Yu Gothic UI", monospace; min-height: 220px; }
-.jobs-table th:nth-child(13), .jobs-table td:nth-child(13) { width: 320px; }
+.jobs-table { min-width: 2180px; table-layout: fixed; }
+.jobs-table th, .jobs-table td { overflow-wrap: normal; word-break: normal; }
+.jobs-table th:nth-child(1), .jobs-table td:nth-child(1) { width: 64px; }
+.jobs-table th:nth-child(2), .jobs-table td:nth-child(2) { width: 260px; overflow-wrap: anywhere; }
+.jobs-table th:nth-child(3), .jobs-table td:nth-child(3) { width: 120px; }
+.jobs-table th:nth-child(4), .jobs-table td:nth-child(4) { width: 180px; overflow-wrap: anywhere; }
+.jobs-table th:nth-child(5), .jobs-table td:nth-child(5) { width: 150px; }
+.jobs-table th:nth-child(6), .jobs-table td:nth-child(6) { width: 250px; overflow-wrap: anywhere; }
+.jobs-table th:nth-child(7), .jobs-table td:nth-child(7) { width: 84px; }
+.jobs-table th:nth-child(8), .jobs-table td:nth-child(8),
+.jobs-table th:nth-child(9), .jobs-table td:nth-child(9) { width: 178px; overflow-wrap: anywhere; }
+.jobs-table th:nth-child(10), .jobs-table td:nth-child(10) { width: 96px; }
+.jobs-table th:nth-child(11), .jobs-table td:nth-child(11) { width: 130px; }
+.jobs-table th:nth-child(12), .jobs-table td:nth-child(12) { width: 150px; overflow-wrap: anywhere; }
+.jobs-table th:nth-child(13), .jobs-table td:nth-child(13) { width: 370px; }
+.jobs-table td:nth-child(13) .compact-actions {
+  justify-content: flex-start;
+  align-items: flex-start;
+  gap: 7px;
+}
+.jobs-table td:nth-child(13) .small-button {
+  min-width: 54px;
+  text-align: center;
+}
 .danger { background: var(--accent-2); }
 .sample-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; }
 .sample-grid figure { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px; min-width: 0; overflow: hidden; }

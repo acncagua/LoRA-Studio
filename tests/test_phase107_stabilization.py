@@ -776,14 +776,43 @@ class Phase107StabilizationTests(IsolatedDbTest):
         expected = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ?", (run_id,))
         self.assertEqual(len(Path(payload["all_prompt_file"]).read_text(encoding="utf-8").splitlines()), expected["count"])
 
+    def test_validation_run_can_target_specific_output_epoch(self) -> None:
+        from app.services.validation_runs import create_validation_run
+
+        run_id, _ = self.create_validation_generation_fixture()
+        run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (run_id,))
+        job_id = int(run["job_id"])
+        second_lora = self.root / "runs" / "job_000001" / "models" / "epoch7.safetensors"
+        second_lora.parent.mkdir(parents=True, exist_ok=True)
+        second_lora.write_text("stub", encoding="utf-8")
+        now = utc_now()
+        with connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO training_outputs(job_id, epoch, file_path, file_type, selected, file_size, sha256, created_at)
+                VALUES (?, 7, ?, 'model', 0, ?, 'def456', ?)
+                """,
+                (job_id, str(second_lora), second_lora.stat().st_size, now),
+            )
+            output_id = int(cur.lastrowid)
+
+        new_run_id = create_validation_run(job_id, "standard_validation_v1", "", "", "epoch 7 check", selected_output_id=output_id)
+
+        new_run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (new_run_id,))
+        self.assertEqual(new_run["selected_output_id"], output_id)
+        self.assertIn("epoch 7", new_run["name"])
+        self.assertEqual(new_run["lora_filename"], second_lora.name)
+
     def test_sd_scripts_generated_image_import_links_expected_condition_and_matrix(self) -> None:
         from app.services.validation_generation import (
+            build_epoch_cross_matrix_html,
             generation_output_dir,
             import_generated_images,
             output_stem,
             prepare_validation_generation,
             write_validation_matrix,
         )
+        from app.services.validation_runs import create_validation_run
 
         run_id, _ = self.create_validation_generation_fixture()
         prepare_validation_generation(run_id)
@@ -803,6 +832,54 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertIn(f"/validation-images/{image['id']}", matrix_html)
         self.assertIn(f"/validation-runs/{run_id}/images/{image['id']}/matrix-review", matrix_html)
         self.assertIn(str(condition["id"]), matrix_html)
+
+        run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (run_id,))
+        job_id = int(run["job_id"])
+        second_lora = self.root / "runs" / "job_000001" / "models" / "epoch7.safetensors"
+        second_lora.parent.mkdir(parents=True, exist_ok=True)
+        second_lora.write_text("stub", encoding="utf-8")
+        now = utc_now()
+        with connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO training_outputs(job_id, epoch, file_path, file_type, selected, file_size, sha256, created_at)
+                VALUES (?, 7, ?, 'model', 0, ?, 'def456', ?)
+                """,
+                (job_id, str(second_lora), second_lora.stat().st_size, now),
+            )
+            output_id = int(cur.lastrowid)
+        second_run_id = create_validation_run(job_id, "standard_validation_v1", "", "", "epoch 7 compare", selected_output_id=output_id)
+        second_condition = dict(
+            fetch_one(
+                """
+                SELECT * FROM validation_expected_conditions
+                WHERE validation_run_id = ? AND prompt_key = ? AND seed = ? AND lora_weight = ? AND hires_enabled = ?
+                LIMIT 1
+                """,
+                (second_run_id, condition["prompt_key"], condition["seed"], condition["lora_weight"], condition["hires_enabled"]),
+            )
+        )
+        second_image_path = generation_output_dir(second_run_id) / f"{output_stem(second_run_id, second_condition)}.png"
+        self.make_png(second_image_path)
+        from app.main import register_validation_run_image
+
+        register_validation_run_image(
+            run_id=second_run_id,
+            source_path=str(second_image_path),
+            image_role="individual",
+            prompt_key=second_condition["prompt_key"],
+            seed=int(second_condition["seed"]),
+            lora_weight=float(second_condition["lora_weight"]),
+            hires_enabled=bool(second_condition["hires_enabled"]),
+            memo="epoch 7",
+        )
+        cross_html = build_epoch_cross_matrix_html(job_id, [run_id, second_run_id])
+        self.assertIn("Epoch横断Matrix", cross_html)
+        self.assertIn("Epoch 4", cross_html)
+        self.assertIn("Epoch 7", cross_html)
+        self.assertIn(f"/validation-images/{image['id']}", cross_html)
+        second_image = fetch_one("SELECT * FROM validation_images WHERE validation_run_id = ?", (second_run_id,))
+        self.assertIn(f"/validation-images/{second_image['id']}", cross_html)
 
     def test_sd_scripts_generation_stop_without_process_marks_stopped(self) -> None:
         from app.services.validation_generation import stop_validation_generation
@@ -1071,35 +1148,35 @@ class ReviewQueueTests(IsolatedDbTest):
 
 
 class StartHelperTests(unittest.TestCase):
-    def test_start_helper_does_not_release_7865_by_default(self) -> None:
-        import start_lora_helper
+    def test_start_lora_studio_does_not_release_7865_by_default(self) -> None:
+        import start_lora_studio
 
         fake_uvicorn = types.SimpleNamespace(run=mock.Mock())
-        with mock.patch.object(sys, "argv", ["start_lora_helper.py", "--port", "8768", "--no-browser", "--skip-sd-scripts-setup"]), \
+        with mock.patch.object(sys, "argv", ["start_lora_studio.py", "--port", "8768", "--no-browser", "--skip-sd-scripts-setup"]), \
             mock.patch.dict(sys.modules, {"uvicorn": fake_uvicorn}), \
-            mock.patch.object(start_lora_helper, "init_db"), \
-            mock.patch.object(start_lora_helper, "release_port") as release_port:
-            start_lora_helper.main()
+            mock.patch.object(start_lora_studio, "init_db"), \
+            mock.patch.object(start_lora_studio, "release_port") as release_port:
+            start_lora_studio.main()
         release_port.assert_not_called()
 
-    def test_start_helper_force_releases_only_app_port(self) -> None:
-        import start_lora_helper
+    def test_start_lora_studio_force_releases_only_app_port(self) -> None:
+        import start_lora_studio
 
         fake_uvicorn = types.SimpleNamespace(run=mock.Mock())
-        with mock.patch.object(sys, "argv", ["start_lora_helper.py", "--port", "8768", "--no-browser", "--skip-sd-scripts-setup", "--force-release-port"]), \
+        with mock.patch.object(sys, "argv", ["start_lora_studio.py", "--port", "8768", "--no-browser", "--skip-sd-scripts-setup", "--force-release-port"]), \
             mock.patch.dict(sys.modules, {"uvicorn": fake_uvicorn}), \
-            mock.patch.object(start_lora_helper, "init_db"), \
-            mock.patch.object(start_lora_helper, "release_port") as release_port:
-            start_lora_helper.main()
+            mock.patch.object(start_lora_studio, "init_db"), \
+            mock.patch.object(start_lora_studio, "release_port") as release_port:
+            start_lora_studio.main()
         release_port.assert_called_once_with(8768)
 
     def test_release_port_does_not_kill_process_tree(self) -> None:
-        import start_lora_helper
+        import start_lora_studio
 
-        with mock.patch.object(start_lora_helper, "find_listening_pids", return_value={1234}), \
-            mock.patch.object(start_lora_helper.os, "getpid", return_value=9999), \
-            mock.patch.object(start_lora_helper.subprocess, "run") as run:
-            start_lora_helper.release_port(8768)
+        with mock.patch.object(start_lora_studio, "find_listening_pids", return_value={1234}), \
+            mock.patch.object(start_lora_studio.os, "getpid", return_value=9999), \
+            mock.patch.object(start_lora_studio.subprocess, "run") as run:
+            start_lora_studio.release_port(8768)
 
         args = run.call_args.args[0]
         self.assertEqual(args, ["taskkill", "/PID", "1234", "/F"])

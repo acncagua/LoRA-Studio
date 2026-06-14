@@ -542,9 +542,9 @@ def write_validation_matrix(run_id: int) -> str:
     lines = [
         "<!doctype html>",
         "<meta charset=\"utf-8\">",
-        f"<title>Validation Matrix #{run_id}</title>",
+        f"<title>検証Matrix #{run_id}</title>",
         "<style>body{font-family:'Segoe UI','Yu Gothic UI',sans-serif;background:#f6f7f4;color:#20231f;margin:24px;overflow-x:auto}table{border-collapse:collapse;width:max-content;min-width:100%;margin:16px 0;background:white}th,td{border:1px solid #d8ddd4;padding:8px;vertical-align:top}th{background:#eef2eb}.cell{min-width:1040px}.missing{color:#8b4f39;font-weight:700}img{width:auto;max-width:none;border-radius:6px;display:block;margin-bottom:6px}.muted{color:#657064;font-size:12px}.matrix-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 18px}.button{display:inline-flex;align-items:center;min-height:34px;padding:7px 12px;border-radius:6px;background:#2f7668;color:white;text-decoration:none;font-weight:700;border:0;cursor:pointer;font:inherit}.button.secondary{background:#dce4df;color:#20231f}.matrix-review{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr)) auto auto;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid #d8ddd4;align-items:end}.matrix-review label{display:grid;gap:3px;font-size:12px;color:#4a554f}.matrix-review input,.matrix-review select,.matrix-review textarea{box-sizing:border-box;width:100%;border:1px solid #cfd8d1;border-radius:5px;padding:5px;font:inherit}.matrix-review textarea{min-height:34px;resize:vertical}.matrix-review button{border:0;border-radius:6px;background:#2f7668;color:white;font-weight:700;padding:7px 9px;cursor:pointer}.matrix-review button:disabled{background:#cfd8d1;cursor:wait}.matrix-review .save-status{font-size:12px;color:#2f7668;font-weight:700;min-height:16px}.matrix-review.saved{outline:2px solid #b8ded0;border-radius:6px}</style>",
-        f"<h1>Validation Matrix #{run_id}</h1>",
+        f"<h1>検証Matrix #{run_id}</h1>",
         matrix_navigation(run_id),
         "<p class=\"muted\">画像は原寸で表示します。横スクロールしながら細部を比較してください。Matrix上では総合点・強さ・採用判断・メモだけを素早く保存できます。</p>",
     ]
@@ -586,10 +586,165 @@ def write_validation_matrix(run_id: int) -> str:
     return str(matrix_path)
 
 
+def build_epoch_cross_matrix_html(job_id: int, run_ids: list[int]) -> str:
+    unique_run_ids = list(dict.fromkeys(int(run_id) for run_id in run_ids if int(run_id) > 0))
+    if len(unique_run_ids) < 2:
+        raise ValueError("Epoch横断Matrixには検証Runを2件以上選択してください。")
+    placeholders = ",".join("?" for _ in unique_run_ids)
+    params: list[Any] = [job_id, *unique_run_ids]
+    runs = [
+        dict(row)
+        for row in fetch_all(
+            f"""
+            SELECT vr.*, o.epoch AS selected_epoch, o.file_path AS selected_output_path
+            FROM validation_runs vr
+            LEFT JOIN training_outputs o ON o.id = vr.selected_output_id
+            WHERE vr.job_id = ? AND vr.id IN ({placeholders})
+            ORDER BY CASE WHEN o.epoch IS NULL THEN 999999 ELSE o.epoch END, vr.id
+            """,
+            tuple(params),
+        )
+    ]
+    if len(runs) != len(unique_run_ids):
+        raise ValueError("指定された検証Runの一部が見つからないか、このジョブに属していません。")
+    ordered_run_ids = [int(run["id"]) for run in runs]
+    placeholders = ",".join("?" for _ in ordered_run_ids)
+    conditions = [
+        dict(row)
+        for row in fetch_all(
+            f"""
+            SELECT *
+            FROM validation_expected_conditions
+            WHERE validation_run_id IN ({placeholders})
+            ORDER BY prompt_key, hires_enabled, seed, lora_weight, validation_run_id
+            """,
+            tuple(ordered_run_ids),
+        )
+    ]
+    images = [
+        dict(row)
+        for row in fetch_all(
+            f"""
+            SELECT *
+            FROM validation_images
+            WHERE validation_run_id IN ({placeholders}) AND image_role = 'individual'
+            ORDER BY validation_run_id, prompt_key, hires_enabled, seed, lora_weight, id
+            """,
+            tuple(ordered_run_ids),
+        )
+    ]
+    condition_by_key: dict[tuple[int, str, int, int, str], dict[str, Any]] = {}
+    sections: dict[tuple[str, int], dict[str, set[Any]]] = {}
+    for condition in conditions:
+        prompt_key = str(condition["prompt_key"] or "prompt")
+        hires = int(condition["hires_enabled"] or 0)
+        seed = int(condition["seed"])
+        weight_key = f"{float(condition['lora_weight'] or 0):g}"
+        condition_by_key[(int(condition["validation_run_id"]), prompt_key, hires, seed, weight_key)] = condition
+        section = sections.setdefault((prompt_key, hires), {"seeds": set(), "weights": set()})
+        section["seeds"].add(seed)
+        section["weights"].add(float(condition["lora_weight"] or 0))
+
+    images_by_condition: dict[int, dict[str, Any]] = {}
+    for image in images:
+        if image["expected_condition_id"]:
+            images_by_condition[int(image["expected_condition_id"])] = image
+
+    title = f"Epoch横断Matrix Job #{job_id}"
+    lines = [
+        "<!doctype html>",
+        "<meta charset=\"utf-8\">",
+        f"<title>{html.escape(title)}</title>",
+        cross_matrix_style(),
+        f"<h1>{html.escape(title)}</h1>",
+        cross_matrix_navigation(job_id),
+        "<p class=\"muted\">prompt単位でまとめ、同じprompt / seed / weight / Hires条件をEpoch横断で横並び比較します。画像は原寸表示です。横スクロールしながら細部を確認してください。</p>",
+        "<section class=\"run-summary\"><h2>比較対象</h2><div class=\"summary-grid\">",
+    ]
+    for run in runs:
+        lines.append(
+            "<div class=\"summary-card\">"
+            f"<strong>検証Run #{int(run['id'])}</strong>"
+            f"<div>Epoch: {html.escape(run_epoch_label(run))}</div>"
+            f"<div>{html.escape(str(run['name'] or '-'))}</div>"
+            f"<div class=\"muted\">LoRA: {html.escape(str(run['lora_filename'] or '-'))}</div>"
+            "</div>"
+        )
+    lines.append("</div></section>")
+
+    for (prompt_key, hires), section in sorted(sections.items(), key=lambda item: (item[0][0], item[0][1])):
+        seeds = sorted(int(seed) for seed in section["seeds"])
+        weights = sorted(float(weight) for weight in section["weights"])
+        lines.append(f"<h2>{html.escape(prompt_key)} / {'Hiresあり' if hires else 'Hiresなし'}</h2>")
+        for seed in seeds:
+            for weight in weights:
+                weight_key = f"{weight:g}"
+                lines.append(f"<h3>seed {seed} / weight {weight_key}</h3>")
+                lines.append("<table><thead><tr>")
+                for run in runs:
+                    lines.append(f"<th>{html.escape(run_matrix_label(run))}</th>")
+                lines.append("</tr></thead><tbody><tr>")
+                for run in runs:
+                    condition = condition_by_key.get((int(run["id"]), prompt_key, hires, seed, weight_key))
+                    lines.append("<td class=\"epoch-cell\">")
+                    if condition is None:
+                        lines.append("<div class=\"missing\">条件なし</div>")
+                    else:
+                        image = images_by_condition.get(int(condition["id"]))
+                        if image:
+                            lines.append(f"<img src=\"/validation-images/{int(image['id'])}\" alt=\"validation image\">")
+                            lines.append(matrix_review_form(int(run["id"]), image))
+                        else:
+                            lines.append("<div class=\"missing\">画像未登録</div>")
+                        lines.append(f"<div class=\"muted\">検証Run: #{int(run['id'])} / Epoch: {html.escape(run_epoch_label(run))}</div>")
+                        lines.append(f"<div class=\"muted\">expected_condition_id: {int(condition['id'])}</div>")
+                        lines.append(f"<div class=\"muted\">hash: {html.escape(str(condition['condition_hash'])[:12])}</div>")
+                    lines.append("</td>")
+                lines.append("</tr></tbody></table>")
+    if not sections:
+        lines.append("<p class=\"notice\">比較できる検証条件がありません。検証Runの生成ファイル作成または条件再生成を確認してください。</p>")
+    lines.append(cross_matrix_navigation(job_id))
+    lines.append(matrix_review_script())
+    return "\n".join(lines) + "\n"
+
+
+def run_epoch_label(run: dict[str, Any]) -> str:
+    return str(run["selected_epoch"]) if run.get("selected_epoch") is not None else "-"
+
+
+def run_matrix_label(run: dict[str, Any]) -> str:
+    epoch = run_epoch_label(run)
+    return f"Epoch {epoch} / Run #{int(run['id'])}"
+
+
+def cross_matrix_navigation(job_id: int) -> str:
+    return (
+        "<div class=\"matrix-actions\">"
+        f"<a class=\"button\" href=\"/jobs/{job_id}#validation-runs\">ジョブへ戻る</a>"
+        "<button class=\"button secondary\" type=\"button\" onclick=\"window.close()\">閉じる</button>"
+        "</div>"
+    )
+
+
+def cross_matrix_style() -> str:
+    return (
+        "<style>"
+        "body{font-family:'Segoe UI','Yu Gothic UI',sans-serif;background:#f6f7f4;color:#20231f;margin:24px;overflow-x:auto}"
+        "table{border-collapse:collapse;width:max-content;min-width:100%;margin:12px 0 28px;background:white}"
+        "th,td{border:1px solid #d8ddd4;padding:8px;vertical-align:top}th{background:#eef2eb;min-width:220px}"
+        ".epoch-cell{min-width:1040px}.missing{color:#8b4f39;font-weight:700}.notice{background:#f4ece6;border:1px solid #d7b79f;border-radius:6px;padding:10px}"
+        "img{width:auto;max-width:none;border-radius:6px;display:block;margin-bottom:6px}.muted{color:#657064;font-size:12px}"
+        ".matrix-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 18px}.button{display:inline-flex;align-items:center;min-height:34px;padding:7px 12px;border-radius:6px;background:#2f7668;color:white;text-decoration:none;font-weight:700;border:0;cursor:pointer;font:inherit}.button.secondary{background:#dce4df;color:#20231f}"
+        ".summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:10px 0 20px}.summary-card{background:white;border:1px solid #d8ddd4;border-radius:6px;padding:10px}"
+        ".matrix-review{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr)) auto auto;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid #d8ddd4;align-items:end}.matrix-review label{display:grid;gap:3px;font-size:12px;color:#4a554f}.matrix-review input,.matrix-review select,.matrix-review textarea{box-sizing:border-box;width:100%;border:1px solid #cfd8d1;border-radius:5px;padding:5px;font:inherit}.matrix-review textarea{min-height:34px;resize:vertical}.matrix-review button{border:0;border-radius:6px;background:#2f7668;color:white;font-weight:700;padding:7px 9px;cursor:pointer}.matrix-review button:disabled{background:#cfd8d1;cursor:wait}.matrix-review .save-status{font-size:12px;color:#2f7668;font-weight:700;min-height:16px}.matrix-review.saved{outline:2px solid #b8ded0;border-radius:6px}"
+        "</style>"
+    )
+
+
 def matrix_navigation(run_id: int) -> str:
     return (
         "<div class=\"matrix-actions\">"
-        f"<a class=\"button\" href=\"/validation-runs/{run_id}\">外部検証へ戻る</a>"
+        f"<a class=\"button\" href=\"/validation-runs/{run_id}\">検証Runへ戻る</a>"
         "<button class=\"button secondary\" type=\"button\" onclick=\"window.close()\">閉じる</button>"
         "</div>"
     )

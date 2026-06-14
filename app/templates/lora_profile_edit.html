@@ -40,10 +40,10 @@
   </form>
 </section>
 <section>
-  <h2>外部検証</h2>
+  <h2>検証Run</h2>
   <div class="panel-grid">
     <div>
-      <h3>外部検証を作成</h3>
+      <h3>検証Runを作成</h3>
       <form method="post" action="/lora-library/{{ profile.id }}/validation-runs" class="form-grid">
         <label>プリセット<select name="validation_preset_id">
           {% for preset in validation_presets %}
@@ -53,18 +53,18 @@
         <label>ベースモデル<input name="base_model" value="{{ profile.base_model or '' }}"></label>
         <label>トリガー<input name="trigger_word" value="{{ profile.trigger_word or '' }}"></label>
         <label class="wide-field">メモ<textarea name="memo"></textarea></label>
-        <button type="submit">外部検証を作成</button>
+        <button type="submit">検証Runを作成</button>
       </form>
     </div>
     <div>
-      <h3>外部検証一覧</h3>
+      <h3>検証Run一覧</h3>
       <table>
         <thead><tr><th>ID</th><th>プリセット</th><th>状態</th><th>画像数</th><th></th></tr></thead>
         <tbody>
           {% for run in validation_runs %}
           <tr><td>#{{ run.id }}</td><td>{{ run.name }}</td><td>{{ display_validation_status(run.status) }}</td><td>{{ run.actual_image_count }} / {{ run.expected_image_count }}</td><td><a class="button" href="/validation-runs/{{ run.id }}">詳細</a></td></tr>
           {% else %}
-          <tr><td colspan="5" class="muted">外部検証はまだありません。</td></tr>
+          <tr><td colspan="5" class="muted">検証Runはまだありません。</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -106,7 +106,7 @@
   </table>
 </section>
 <section>
-  <h2>外部検証画像</h2>
+  <h2>外部検証画像（旧形式）</h2>
   <div class="sample-grid">
     {% for image in validation_images %}
     <figure>

@@ -126,31 +126,48 @@ def create_validation_run(
     trigger_word: str,
     memo: str,
     profile_id: int | None = None,
+    selected_output_id: int | None = None,
 ) -> int:
     job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
     if job is None:
         raise ValueError(f"Job not found: {job_id}")
-    selected_output = fetch_one("SELECT * FROM training_outputs WHERE job_id = ? AND selected = 1", (job_id,))
-    if profile_id is None:
-        profile = fetch_one("SELECT * FROM selected_lora_profiles WHERE job_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1", (job_id,))
+    if selected_output_id is not None:
+        selected_output = fetch_one(
+            "SELECT * FROM training_outputs WHERE id = ? AND job_id = ? AND file_type = 'model'",
+            (selected_output_id, job_id),
+        )
+        if selected_output is None:
+            raise ValueError(f"LoRA output not found: {selected_output_id}")
+    else:
+        selected_output = fetch_one("SELECT * FROM training_outputs WHERE job_id = ? AND selected = 1", (job_id,))
+    latest_profile = fetch_one("SELECT * FROM selected_lora_profiles WHERE job_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1", (job_id,))
+    if profile_id is None and selected_output_id is not None:
+        profile = fetch_one(
+            "SELECT * FROM selected_lora_profiles WHERE job_id = ? AND selected_output_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1",
+            (job_id, selected_output_id),
+        )
+    elif profile_id is None:
+        profile = latest_profile
     else:
         profile = fetch_one("SELECT * FROM selected_lora_profiles WHERE id = ?", (profile_id,))
+    profile_defaults = profile or latest_profile
     preset = fetch_one("SELECT * FROM validation_presets WHERE id = ?", (validation_preset_id,))
     if preset is None:
         raise ValueError(f"Validation preset not found: {validation_preset_id}")
-    if selected_output is None and profile is not None and profile["selected_output_id"]:
-        selected_output = fetch_one("SELECT * FROM training_outputs WHERE id = ?", (profile["selected_output_id"],))
+    if selected_output is None and profile_defaults is not None and profile_defaults["selected_output_id"]:
+        selected_output = fetch_one("SELECT * FROM training_outputs WHERE id = ?", (profile_defaults["selected_output_id"],))
     lora_filename = Path(
         (selected_output["file_path"] if selected_output else "")
-        or (profile["selected_model_path"] if profile else "")
+        or (profile_defaults["selected_model_path"] if profile_defaults else "")
         or "selected_lora.safetensors"
     ).name
-    base_model_value = base_model.strip() or (profile["base_model"] if profile else "") or Path(job["base_model_path"]).stem
-    trigger_value = trigger_word.strip() or (profile["trigger_word"] if profile else "") or job["trigger_word_at_creation"] or ""
+    base_model_value = base_model.strip() or (profile_defaults["base_model"] if profile_defaults else "") or Path(job["base_model_path"]).stem
+    trigger_value = trigger_word.strip() or (profile_defaults["trigger_word"] if profile_defaults else "") or job["trigger_word_at_creation"] or ""
     expected = preset_expected_count(preset)
     preset_snapshot = json.dumps(dict(preset), ensure_ascii=False, sort_keys=True)
     now = utc_now()
-    name = f"Job #{job_id} {preset['name']}"
+    epoch_suffix = f" epoch {selected_output['epoch']}" if selected_output is not None and selected_output["epoch"] is not None else ""
+    name = f"Job #{job_id} {preset['name']}{epoch_suffix}"
     with connect() as conn:
         cur = conn.execute(
             """
@@ -174,8 +191,8 @@ def create_validation_run(
                 base_model_value,
                 trigger_value,
                 lora_filename,
-                profile["recommended_weight_min"] if profile else None,
-                profile["recommended_weight_max"] if profile else None,
+                profile_defaults["recommended_weight_min"] if profile_defaults else None,
+                profile_defaults["recommended_weight_max"] if profile_defaults else None,
                 expected,
                 preset_snapshot,
                 now,
