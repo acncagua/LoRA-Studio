@@ -275,22 +275,32 @@
   {% else %}
   <p class="muted">Lossグラフのデータはまだありません。結果を再取り込みするとTensorBoard、次にtrain.logから読み込みます。</p>
   {% endif %}
-  <p class="muted">
-    メトリクス表は画面を軽くするため、{% if metric_table.limited %}全{{ metric_table.total }}件のうち先頭{{ metric_table.head }}件と末尾{{ metric_table.tail }}件を表示しています。省略: {{ metric_table.omitted }}件。{% else %}全{{ metric_table.total }}件を表示しています。{% endif %}
-  </p>
-  <table>
-    <thead><tr><th>Step</th><th>Loss</th><th>学習率</th><th>取得元</th><th>タグ</th></tr></thead>
-    <tbody>
-      {% for metric in metric_rows %}
-      {% if metric_table.limited and loop.index == metric_table.head + 1 %}
-      <tr><td colspan="5" class="muted">... {{ metric_table.omitted }}件を省略 ...</td></tr>
-      {% endif %}
-      <tr><td>{{ metric.step }}</td><td>{{ '%.6f'|format(metric.loss) if metric.loss is not none else '-' }}</td><td>{{ metric.learning_rate if metric.learning_rate is not none else '-' }}</td><td>{{ metric.source or '-' }}</td><td>{{ metric.raw_tag or '-' }}</td></tr>
+  <details class="metric-raw-details">
+    <summary>
+      Step別メトリクス表
+      {% if metric_table.limited %}
+      （全{{ metric_table.total }}件 / 先頭{{ metric_table.head }}件＋末尾{{ metric_table.tail }}件のみ表示）
       {% else %}
-      <tr><td colspan="5" class="muted">メトリクスはまだ取り込まれていません。</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
+      （全{{ metric_table.total }}件）
+      {% endif %}
+    </summary>
+    <p class="muted">
+      {% if metric_table.limited %}画面を軽くするため {{ metric_table.omitted }}件を省略しています。通常確認はLossグラフとEpochサマリーを優先してください。{% else %}全{{ metric_table.total }}件を表示しています。{% endif %}
+    </p>
+    <table>
+      <thead><tr><th>Step</th><th>Loss</th><th>学習率</th><th>取得元</th><th>タグ</th></tr></thead>
+      <tbody>
+        {% for metric in metric_rows %}
+        {% if metric_table.limited and loop.index == metric_table.head + 1 %}
+        <tr><td colspan="5" class="muted">... {{ metric_table.omitted }}件を省略 ...</td></tr>
+        {% endif %}
+        <tr><td>{{ metric.step }}</td><td>{{ '%.6f'|format(metric.loss) if metric.loss is not none else '-' }}</td><td>{{ metric.learning_rate if metric.learning_rate is not none else '-' }}</td><td>{{ metric.source or '-' }}</td><td>{{ metric.raw_tag or '-' }}</td></tr>
+        {% else %}
+        <tr><td colspan="5" class="muted">メトリクスはまだ取り込まれていません。</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </details>
   <h3>Epochサマリー</h3>
   <table>
     <thead><tr><th>Epoch</th><th>Step範囲</th><th>メトリクス</th><th>平均Loss</th><th>最小</th><th>最大</th><th>最終</th><th>移動平均Final</th><th>Spikes</th><th>サンプル</th><th>出力</th></tr></thead>
@@ -342,7 +352,13 @@
     </tbody>
   </table>
 </section>
-<section><h2>train.log末尾</h2><pre>{{ log_tail or 'train.logはまだありません。' }}</pre></section>
+<section>
+  <details class="log-tail-details" {% if job.status in ['running', 'failed'] %}open{% endif %}>
+    <summary>train.log末尾（最大40行）</summary>
+    <p class="muted">通常は閉じています。実行中や失敗時はエラー確認のため開いた状態で表示します。</p>
+    <pre class="compact-log">{{ log_tail or 'train.logはまだありません。' }}</pre>
+  </details>
+</section>
 <section id="review-queue">
   <h2>Review Queue</h2>
   <p class="muted">lossとepoch summaryから候補epochを先に出します。自動候補は画像内容AI判定ではなく、人間評価の入口を軽くするための補助です。</p>
@@ -465,7 +481,7 @@
           <tr>
             <td>#{{ run.id }}</td>
             <td>{{ run.name }}</td>
-            <td>{{ run.status }}</td>
+            <td>{{ display_validation_status(run.status) }}</td>
             <td>{{ run.actual_image_count }} / {{ run.expected_image_count }}</td>
             <td><a class="button" href="/validation-runs/{{ run.id }}">詳細</a></td>
           </tr>
@@ -573,7 +589,7 @@
   <div class="sample-grid">
     {% for image in validation_images %}
     <figure>
-      <img src="/validation-images/{{ image.id }}" alt="検証画像 {{ image.id }}">
+      <img src="/validation-images/{{ image.id }}" alt="検証画像 {{ image.id }}" data-lightbox-src="/validation-images/{{ image.id }}" data-lightbox-title="検証画像 #{{ image.id }}">
       <figcaption>#{{ image.id }} {{ image.validation_type or '-' }} / weight {{ image.lora_weights or '-' }}<br>{{ image.base_model or '-' }} / {{ image.sampler or '-' }}<br>顔 {{ image.rating_face or '-' }} 衣装 {{ image.rating_costume or '-' }} スタイル {{ image.rating_style or '-' }} 安定性 {{ image.rating_stability or '-' }} 総合 {{ image.rating_overall or '-' }}<br>強さ {{ image.strength_label or '-' }} / 過学習 {{ image.overfit_level or '-' }} / 採用 {{ image.adoption_label or '-' }}<br>{{ image.memo or '' }}</figcaption>
     </figure>
     {% else %}

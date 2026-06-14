@@ -13,6 +13,7 @@ from typing import Any
 from app import settings
 from app.db import connect, fetch_all, fetch_one, latest_environment, utc_now
 from app.services.image_store import verify_image_file
+from app.services.training_runner import process_exists, sd_scripts_subprocess_env
 from app.services.validation_runs import (
     ensure_expected_conditions,
     update_validation_run_counts,
@@ -218,7 +219,7 @@ def common_gen_img_args(
 def prompt_line(run_id: int, row: dict[str, Any], include_am: bool) -> str:
     prompt = row.get("prompt") or row.get("webui_prompt") or ""
     negative = row.get("negative_prompt") or ""
-    filename = output_stem(run_id, row)
+    filename = output_filename(run_id, row)
     parts = [
         prompt,
         "--n",
@@ -250,6 +251,10 @@ def output_stem(run_id: int, row: dict[str, Any]) -> str:
     )
 
 
+def output_filename(run_id: int, row: dict[str, Any]) -> str:
+    return f"{output_stem(run_id, row)}.png"
+
+
 def sanitize_filename(value: str) -> str:
     text = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())
     return text.strip("._-") or "prompt"
@@ -273,10 +278,10 @@ def command_text(payload: dict[str, Any]) -> str:
 
 def start_validation_generation(run_id: int) -> int:
     reject_if_gpu_busy()
+    # 実行時に必ず最新のValidation条件・採用LoRA・出力ファイル名で生成ファイルを作り直す。
+    # これにより、古いplanned生成Runや過去バージョンのpromptファイルを誤って再利用しない。
+    prepare_validation_generation(run_id)
     generation = latest_generation_run(run_id)
-    if generation is None or generation["status"] not in {"planned", "failed", "stopped"}:
-        prepare_validation_generation(run_id)
-        generation = latest_generation_run(run_id)
     if generation is None:
         raise RuntimeError("Generation Runを作成できませんでした。")
     payload = json.loads(generation["command_argv_json"] or "{}")
@@ -292,9 +297,7 @@ def start_validation_generation(run_id: int) -> int:
     archive_existing_log(log_path)
     start_time = utc_now()
     log_handle = log_path.open("ab")
-    env = os.environ.copy()
-    env.setdefault("PYTHONUTF8", "1")
-    env.setdefault("PYTHONIOENCODING", "utf-8")
+    env = sd_scripts_subprocess_env()
     first_process = subprocess.Popen(
         commands[0]["argv"],
         cwd=str(sd_scripts_path),
@@ -540,8 +543,10 @@ def write_validation_matrix(run_id: int) -> str:
         "<!doctype html>",
         "<meta charset=\"utf-8\">",
         f"<title>Validation Matrix #{run_id}</title>",
-        "<style>body{font-family:'Segoe UI','Yu Gothic UI',sans-serif;background:#f6f7f4;color:#20231f;margin:24px}table{border-collapse:collapse;width:100%;margin:16px 0;background:white}th,td{border:1px solid #d8ddd4;padding:8px;vertical-align:top}th{background:#eef2eb}.cell{min-width:180px}.missing{color:#8b4f39;font-weight:700}img{max-width:180px;border-radius:6px;display:block;margin-bottom:6px}.muted{color:#657064;font-size:12px}</style>",
+        "<style>body{font-family:'Segoe UI','Yu Gothic UI',sans-serif;background:#f6f7f4;color:#20231f;margin:24px;overflow-x:auto}table{border-collapse:collapse;width:max-content;min-width:100%;margin:16px 0;background:white}th,td{border:1px solid #d8ddd4;padding:8px;vertical-align:top}th{background:#eef2eb}.cell{min-width:1040px}.missing{color:#8b4f39;font-weight:700}img{width:auto;max-width:none;border-radius:6px;display:block;margin-bottom:6px}.muted{color:#657064;font-size:12px}.matrix-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 18px}.button{display:inline-flex;align-items:center;min-height:34px;padding:7px 12px;border-radius:6px;background:#2f7668;color:white;text-decoration:none;font-weight:700;border:0;cursor:pointer;font:inherit}.button.secondary{background:#dce4df;color:#20231f}.matrix-review{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr)) auto auto;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid #d8ddd4;align-items:end}.matrix-review label{display:grid;gap:3px;font-size:12px;color:#4a554f}.matrix-review input,.matrix-review select,.matrix-review textarea{box-sizing:border-box;width:100%;border:1px solid #cfd8d1;border-radius:5px;padding:5px;font:inherit}.matrix-review textarea{min-height:34px;resize:vertical}.matrix-review button{border:0;border-radius:6px;background:#2f7668;color:white;font-weight:700;padding:7px 9px;cursor:pointer}.matrix-review button:disabled{background:#cfd8d1;cursor:wait}.matrix-review .save-status{font-size:12px;color:#2f7668;font-weight:700;min-height:16px}.matrix-review.saved{outline:2px solid #b8ded0;border-radius:6px}</style>",
         f"<h1>Validation Matrix #{run_id}</h1>",
+        matrix_navigation(run_id),
+        "<p class=\"muted\">画像は原寸で表示します。横スクロールしながら細部を比較してください。Matrix上では総合点・強さ・採用判断・メモだけを素早く保存できます。</p>",
     ]
     for (prompt_key, hires), rows in sections.items():
         seeds = sorted({int(row["seed"]) for row in rows})
@@ -559,8 +564,8 @@ def write_validation_matrix(run_id: int) -> str:
                     linked = images_by_condition.get(int(condition["id"]), [])
                     if linked:
                         image = linked[-1]
-                        rel = path_to_matrix_relative(matrix_path, Path(image["image_path"]))
-                        lines.append(f"<img src=\"{html.escape(rel)}\" alt=\"validation image\">")
+                        lines.append(f"<img src=\"/validation-images/{int(image['id'])}\" alt=\"validation image\">")
+                        lines.append(matrix_review_form(run_id, image))
                     else:
                         lines.append("<div class=\"missing\">missing</div>")
                     lines.append(f"<div class=\"muted\">prompt_key: {html.escape(str(condition['prompt_key']))}</div>")
@@ -573,11 +578,94 @@ def write_validation_matrix(run_id: int) -> str:
     if grid_images:
         lines.append("<h2>Grid画像</h2><div>")
         for image in grid_images:
-            rel = path_to_matrix_relative(matrix_path, Path(image["image_path"]))
-            lines.append(f"<figure><img src=\"{html.escape(rel)}\" alt=\"grid image\"><figcaption>{html.escape(image['memo'] or '')}</figcaption></figure>")
+            lines.append(f"<figure><img src=\"/validation-images/{int(image['id'])}\" alt=\"grid image\"><figcaption>{html.escape(image['memo'] or '')}</figcaption></figure>")
         lines.append("</div>")
+    lines.append(matrix_navigation(run_id))
+    lines.append(matrix_review_script())
     matrix_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return str(matrix_path)
+
+
+def matrix_navigation(run_id: int) -> str:
+    return (
+        "<div class=\"matrix-actions\">"
+        f"<a class=\"button\" href=\"/validation-runs/{run_id}\">外部検証へ戻る</a>"
+        "<button class=\"button secondary\" type=\"button\" onclick=\"window.close()\">閉じる</button>"
+        "</div>"
+    )
+
+
+def matrix_review_form(run_id: int, image: dict[str, Any]) -> str:
+    image_id = int(image["id"])
+    overall = "" if image.get("rating_overall") is None else str(image["rating_overall"])
+    strength = str(image.get("strength_label") or "")
+    adoption = str(image.get("adoption_label") or "")
+    memo = html.escape(str(image.get("memo") or ""))
+    return "\n".join(
+        [
+            f"<form class=\"matrix-review\" method=\"post\" action=\"/validation-runs/{run_id}/images/{image_id}/matrix-review\">",
+            "<label>総合点<input type=\"number\" min=\"0\" max=\"5\" name=\"rating_overall\" value=\"" + html.escape(overall) + "\"></label>",
+            "<label>強さ<select name=\"strength_label\">",
+            option_tag("", "未評価", strength),
+            option_tag("too_weak", "弱すぎる", strength),
+            option_tag("weak_but_usable", "弱いが使える", strength),
+            option_tag("recommended", "推奨", strength),
+            option_tag("strong_but_usable", "強いが使える", strength),
+            option_tag("too_strong", "強すぎる", strength),
+            option_tag("broken", "破綻", strength),
+            "</select></label>",
+            "<label>採用判断<select name=\"adoption_label\">",
+            option_tag("", "未評価", adoption),
+            option_tag("reject", "不採用", adoption),
+            option_tag("candidate", "候補", adoption),
+            option_tag("adopt", "採用", adoption),
+            "</select></label>",
+            f"<label>メモ<textarea name=\"memo\">{memo}</textarea></label>",
+            "<button type=\"submit\">保存</button><span class=\"save-status\" aria-live=\"polite\"></span>",
+            "</form>",
+        ]
+    )
+
+
+def option_tag(value: str, label: str, current: str) -> str:
+    selected = " selected" if value == current else ""
+    return f"<option value=\"{html.escape(value)}\"{selected}>{html.escape(label)}</option>"
+
+
+def matrix_review_script() -> str:
+    return """
+<script>
+document.addEventListener("submit", async (event) => {
+  const form = event.target.closest(".matrix-review");
+  if (!form) return;
+  event.preventDefault();
+  const button = form.querySelector("button[type='submit']");
+  const status = form.querySelector(".save-status");
+  const original = button ? button.textContent : "";
+  if (button) { button.disabled = true; button.textContent = "保存中"; }
+  if (status) status.textContent = "";
+  try {
+    const response = await fetch(form.action, {
+      method: "POST",
+      body: new FormData(form),
+      headers: {"X-Requested-With": "fetch", "Accept": "application/json"}
+    });
+    if (!response.ok) throw new Error(await response.text());
+    form.classList.add("saved");
+    if (status) status.textContent = "保存済み";
+    window.setTimeout(() => {
+      form.classList.remove("saved");
+      if (status) status.textContent = "";
+    }, 1800);
+  } catch (error) {
+    if (status) status.textContent = "保存失敗";
+    alert("評価保存に失敗しました: " + error.message);
+  } finally {
+    if (button) { button.disabled = false; button.textContent = original; }
+  }
+});
+</script>
+"""
 
 
 def path_to_matrix_relative(matrix_path: Path, image_path: Path) -> str:
@@ -587,7 +675,7 @@ def path_to_matrix_relative(matrix_path: Path, image_path: Path) -> str:
         return str(image_path)
 
 
-def validation_generation_log_tail(run_id: int, max_lines: int = 200) -> str:
+def validation_generation_log_tail(run_id: int, max_lines: int = 80) -> str:
     generation = latest_generation_run(run_id)
     if generation is None or not generation["log_path"]:
         return ""
@@ -602,9 +690,24 @@ def validation_generation_log_tail(run_id: int, max_lines: int = 200) -> str:
 def generation_view_state(run_id: int) -> dict[str, Any]:
     generation = latest_generation_run(run_id)
     matrix_path = validation_run_dir(run_id) / "validation_matrix.html"
+    output_dir = Path(generation["output_dir"]) if generation and generation["output_dir"] else generation_output_dir(run_id)
+    log_path = Path(generation["log_path"]) if generation and generation["log_path"] else generation_dir(run_id) / "generation.log"
+    log_size = log_path.stat().st_size if log_path.exists() else 0
+    log_updated_at = datetime.fromtimestamp(log_path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S") if log_path.exists() else ""
+    process_alive = bool(
+        generation
+        and generation["status"] == "running"
+        and generation["process_id"]
+        and process_exists(int(generation["process_id"]))
+    )
     return {
         "generation": generation,
         "generation_log_tail": validation_generation_log_tail(run_id),
+        "generation_log_preview": validation_generation_log_tail(run_id, max_lines=12),
+        "generation_process_alive": process_alive,
+        "generation_output_image_count": count_generated_images(output_dir),
+        "generation_log_size": log_size,
+        "generation_log_updated_at": log_updated_at,
         "matrix_path": str(matrix_path) if matrix_path.exists() else "",
         "matrix_exists": matrix_path.exists(),
     }

@@ -1,12 +1,16 @@
-{% extends "base.html" %}{% block content %}
+{% extends "base.html" %}
+{% block head_extra %}
+{% if generation and generation.status == 'running' %}
+  <meta http-equiv="refresh" content="5">
+{% endif %}
+{% endblock %}
+{% block content %}
 <header class="page-head">
   <h1>外部検証 #{{ run.id }}</h1>
   <div class="actions">
     <a class="button" href="/jobs/{{ run.job_id }}">ジョブへ戻る</a>
     {% if run.project_id %}<a class="button" href="/projects/{{ run.project_id }}">Projectへ戻る</a>{% endif %}
     {% if run.selected_lora_profile_id %}<a class="button" href="/lora-library/{{ run.selected_lora_profile_id }}/edit">LoRAプロファイルへ</a>{% endif %}
-    <form method="post" action="/validation-runs/{{ run.id }}/export"><button type="submit">プロンプトパック再出力</button></form>
-    <form method="post" action="/validation-runs/{{ run.id }}/export-report"><button type="submit">検証レポート出力</button></form>
   </div>
 </header>
 
@@ -23,6 +27,93 @@
 </section>
 {% endif %}
 
+<section class="action-panel validation-action-panel">
+  <div>
+    <h2>ステータス</h2>
+    <dl>
+      <dt>状態</dt><dd><span class="label {{ run.status }}">{{ display_validation_status(run.status) }}</span></dd>
+      <dt>登録 / 予定</dt><dd>{{ coverage.registered_condition_count }} / {{ coverage.expected_image_count }}</dd>
+      <dt>レビュー済み</dt><dd>{{ coverage.reviewed_condition_count }}</dd>
+      <dt>未登録</dt><dd>{{ coverage.missing_condition_count }}</dd>
+      <dt>推奨weight</dt><dd>{{ suggestion.suggested_weight_min if suggestion.suggested_weight_min is not none else '-' }} - {{ suggestion.suggested_weight_max if suggestion.suggested_weight_max is not none else '-' }}</dd>
+      <dt>画像生成</dt><dd>{% if generation %}<span class="label {{ generation.status }}">{{ generation.status }}</span>{% else %}-{% endif %}</dd>
+      {% if generation %}
+      <dt>生成PID</dt><dd>{{ generation.process_id or '-' }}</dd>
+      <dt>プロセス確認</dt><dd>{% if generation.status == 'running' %}{% if generation_process_alive %}<span class="label running">動作中</span>{% else %}<span class="label warning">未確認 / 停止の可能性</span>{% endif %}{% else %}-{% endif %}</dd>
+      <dt>生成済みファイル</dt><dd>{{ generation_output_image_count }} 件</dd>
+      <dt>ログ更新</dt><dd>{{ generation_log_updated_at or '-' }}</dd>
+      {% endif %}
+    </dl>
+  </div>
+  <div>
+    <h2>次にやること</h2>
+    {% if generation and generation.status == 'running' %}
+    <p>sd-scripts画像生成が実行中です。必要ならログ末尾を確認して、完了後に生成画像を取り込んでください。</p>
+    {% elif coverage.missing_condition_count > 0 %}
+    <p>未登録の検証画像があります。画像生成または手動登録でカバレッジを埋めてください。</p>
+    {% elif coverage.reviewed_condition_count < coverage.registered_condition_count %}
+    <p>画像は登録済みです。Weight別レビューを入力して、推奨weightを確認してください。</p>
+    {% else %}
+    <p>レビューは概ね揃っています。推奨weightを確認し、必要ならLoRAプロファイルへ反映してください。</p>
+    {% endif %}
+    {% if generation and generation.status in ['running', 'failed', 'stopped'] %}
+    <div class="notice generation-status-note">
+      <strong>画像生成: {{ generation.status }}</strong>
+      {% if generation.status == 'running' %}
+      / {% if generation_process_alive %}プロセス動作中{% else %}PIDが確認できません。停止している可能性があります{% endif %}
+      {% elif generation.return_code is not none %}
+      / 終了コード {{ generation.return_code }}
+      {% endif %}
+      <div class="generation-live-meta">
+        <span>生成済み: {{ generation_output_image_count }} 件</span>
+        <span>ログ: {{ generation_log_size }} bytes</span>
+        <span>更新: {{ generation_log_updated_at or '-' }}</span>
+      </div>
+      {% if generation_log_preview %}
+      <pre class="tiny-log">{{ generation_log_preview }}</pre>
+      {% else %}
+      <p class="muted">生成ログはまだありません。</p>
+      {% endif %}
+    </div>
+    {% endif %}
+    <p class="muted">画像生成の実行時に、sd-scripts用の生成ファイルを最新条件で自動作成します。</p>
+    <div class="actions compact-actions">
+      <form method="post" action="/validation-runs/{{ run.id }}/generation/run"><button type="submit" {% if generation and generation.status == 'running' %}disabled{% endif %}>画像生成を実行</button></form>
+      <form method="post" action="/validation-runs/{{ run.id }}/generation/stop"><button type="submit" class="danger" {% if not generation or generation.status != 'running' %}disabled{% endif %}>画像生成を停止</button></form>
+      <form method="post" action="/validation-runs/{{ run.id }}/generation/import"><button type="submit">生成画像を再取り込み</button></form>
+      <form method="post" action="/validation-runs/{{ run.id }}/export-report"><button type="submit">検証レポート出力</button></form>
+      {% if matrix_exists %}<a class="button" href="/validation-runs/{{ run.id }}/matrix" target="_blank" rel="noopener">比較Matrixを開く</a>{% endif %}
+    </div>
+  </div>
+</section>
+
+{% if generation and generation.status in ['failed'] and generation_log_preview %}
+<section class="notice">
+  <h2>画像生成ログ末尾</h2>
+  <pre class="tiny-log">{{ generation_log_preview }}</pre>
+</section>
+{% endif %}
+
+<nav class="validation-tabs" aria-label="外部検証ページ内ナビ">
+  <a href="#overview">概要</a>
+  <a href="#images">画像確認</a>
+  <a href="#weight-review">Weightレビュー</a>
+  <a href="#expected-conditions">検証条件</a>
+  <a href="#technical-details">ログ・詳細</a>
+</nav>
+
+<section id="overview">
+  <h2>カバレッジ概要</h2>
+  <div class="summary-grid">
+    <div><span>予定</span><strong>{{ coverage.expected_image_count }}</strong></div>
+    <div><span>登録済み</span><strong>{{ coverage.registered_condition_count }}</strong></div>
+    <div><span>レビュー済み</span><strong>{{ coverage.reviewed_condition_count }}</strong></div>
+    <div><span>未登録</span><strong>{{ coverage.missing_condition_count }}</strong></div>
+    <div><span>登録率</span><strong>{{ '%.1f%%'|format(coverage.coverage_rate * 100) }}</strong></div>
+    <div><span>レビュー率</span><strong>{{ '%.1f%%'|format(coverage.review_rate * 100) }}</strong></div>
+  </div>
+</section>
+
 <section class="panel-grid">
   <div>
     <h2>検証情報</h2>
@@ -30,7 +121,6 @@
       <dt>名前</dt><dd>{{ run.name }}</dd>
       <dt>プリセット</dt><dd>{{ display_validation_preset_name(preset) if preset else '旧形式 / プリセット未指定' }}</dd>
       <dt>レベル</dt><dd>{{ display_validation_level(run.validation_level) }}</dd>
-      <dt>状態</dt><dd><span class="label {{ run.status }}">{{ run.status }}</span></dd>
       <dt>出力先</dt><dd>{{ output_dir }}</dd>
       <dt>ベースモデル</dt><dd>{{ run.base_model or '-' }}</dd>
       <dt>トリガー</dt><dd>{{ run.trigger_word or '-' }}</dd>
@@ -38,19 +128,11 @@
     </dl>
   </div>
   <div>
-    <h2>進捗</h2>
-    <dl>
-      <dt>予定</dt><dd>{{ coverage.expected_image_count }}</dd>
-      <dt>登録済み</dt><dd>{{ coverage.registered_condition_count }}</dd>
-      <dt>レビュー済み</dt><dd>{{ coverage.reviewed_condition_count }}</dd>
-      <dt>未登録</dt><dd>{{ coverage.missing_condition_count }}</dd>
-      <dt>登録率</dt><dd>{{ '%.1f%%'|format(coverage.coverage_rate * 100) }}</dd>
-      <dt>レビュー率</dt><dd>{{ '%.1f%%'|format(coverage.review_rate * 100) }}</dd>
-    </dl>
+    <h2>状態変更</h2>
     <form method="post" action="/validation-runs/{{ run.id }}/status" class="inline-form">
-      <label>状態変更<select name="status">
-        {% for status in ['planned','images_registered','partially_reviewed','reviewed','completed','archived'] %}
-        <option value="{{ status }}" {{ 'selected' if run.status == status else '' }}>{{ status }}</option>
+      <label>状態<select name="status">
+        {% for status, label in validation_run_status_options %}
+        <option value="{{ status }}" {{ 'selected' if run.status == status else '' }}>{{ label }}</option>
         {% endfor %}
       </select></label>
       <button type="submit">状態を保存</button>
@@ -58,56 +140,7 @@
   </div>
 </section>
 
-<section>
-  <h2>sd-scripts画像生成</h2>
-  <p class="muted">検証条件からsd-scripts gen_img.py用のpromptファイルを作成し、Hiresなし条件を自動生成します。weight 0はLoRAなしの基準画像として扱います。Hiresあり条件は初期版では生成対象外です。</p>
-  <div class="actions compact-actions">
-    <form method="post" action="/validation-runs/{{ run.id }}/generation/prepare"><button type="submit">生成ファイルを作成</button></form>
-    <form method="post" action="/validation-runs/{{ run.id }}/generation/run"><button type="submit" {% if generation and generation.status == 'running' %}disabled{% endif %}>画像生成を実行</button></form>
-    <form method="post" action="/validation-runs/{{ run.id }}/generation/stop"><button type="submit" class="danger" {% if not generation or generation.status != 'running' %}disabled{% endif %}>画像生成を停止</button></form>
-    <form method="post" action="/validation-runs/{{ run.id }}/generation/import"><button type="submit">生成画像を再取り込み</button></form>
-    {% if matrix_exists %}<a class="button" href="/validation-runs/{{ run.id }}/matrix" target="_blank" rel="noopener">比較Matrixを開く</a>{% endif %}
-  </div>
-  <div class="panel-grid">
-    <div>
-      <h3>画像生成ステータス</h3>
-      {% if generation %}
-      <dl>
-        <dt>状態</dt><dd><span class="label {{ generation.status }}">{{ generation.status }}</span></dd>
-        <dt>生成数</dt><dd>{{ generation.generated_image_count }}</dd>
-        <dt>取り込み数</dt><dd>{{ generation.imported_image_count }}</dd>
-        <dt>終了コード</dt><dd>{{ generation.return_code if generation.return_code is not none else '-' }}</dd>
-        <dt>経過秒数</dt><dd>{{ generation.elapsed_seconds if generation.elapsed_seconds is not none else '-' }}</dd>
-        <dt>promptファイル</dt><dd>{{ generation.prompt_file_path or '-' }}</dd>
-        <dt>出力フォルダ</dt><dd>{{ generation.output_dir or '-' }}</dd>
-        <dt>比較Matrix</dt><dd>{{ matrix_path or '-' }}</dd>
-        <dt>メッセージ</dt><dd>{{ generation.error_message or '-' }}</dd>
-      </dl>
-      {% else %}
-      <p class="muted">まだ生成ファイルは作成されていません。</p>
-      {% endif %}
-    </div>
-    <div>
-      <h3>画像生成ログ</h3>
-      {% if generation_log_tail %}
-      <pre>{{ generation_log_tail }}</pre>
-      {% else %}
-      <p class="muted">ログはまだありません。</p>
-      {% endif %}
-    </div>
-  </div>
-  {% if generation and generation.command_argv_json %}
-  <details>
-    <summary>実行コマンド確認</summary>
-    <pre>{{ generation.command_argv_json }}</pre>
-  </details>
-  {% endif %}
-  {% if missing %}
-  <p class="notice warning">未登録の検証条件: {{ missing|length }} 件</p>
-  {% endif %}
-</section>
-
-<section class="panel-grid">
+<section id="weight-review" class="panel-grid">
   <div>
     <h2>推奨weight</h2>
     <dl>
@@ -115,36 +148,86 @@
       <dt>弱め / 強め</dt><dd>{{ suggestion.suggested_light_weight if suggestion.suggested_light_weight is not none else '-' }} / {{ suggestion.suggested_strong_weight if suggestion.suggested_strong_weight is not none else '-' }}</dd>
       <dt>理由</dt><dd>{{ suggestion.suggested_weight_reason }}</dd>
     </dl>
-    <div class="actions">
+    <div class="actions compact-actions">
       <form method="post" action="/validation-runs/{{ run.id }}/suggest"><button type="submit">推奨weightを保存</button></form>
       <form method="post" action="/validation-runs/{{ run.id }}/apply"><button type="submit">LoRAプロファイルへ反映</button></form>
     </div>
     <p class="muted">自動反映はしません。プロファイルへ反映する場合は、内容を確認してからボタンを押してください。</p>
   </div>
   <div>
-    <h2>リファレンスセット</h2>
-    {% if reference_set %}
+    <h2>Weightレビューまとめ</h2>
     <dl>
-      <dt>ID</dt><dd>#{{ reference_set.id }}</dd>
-      <dt>名前</dt><dd>{{ reference_set.name }}</dd>
-      <dt>トリガー</dt><dd>{{ reference_set.trigger_word or '-' }}</dd>
-      <dt>メモ</dt><dd>{{ reference_set.memo or '-' }}</dd>
+      <dt>推奨weight</dt><dd>{{ weight_matrix.recommended_weights or '-' }}</dd>
+      <dt>強すぎるweight</dt><dd>{{ weight_matrix.too_strong_weights or '-' }}</dd>
+      <dt>弱すぎるweight</dt><dd>{{ weight_matrix.too_weak_weights or '-' }}</dd>
+      <dt>強さ</dt><dd>{{ weight_matrix.strength_distribution }}</dd>
+      <dt>過学習</dt><dd>{{ weight_matrix.overfit_distribution }}</dd>
+      <dt>採用判断</dt><dd>{{ weight_matrix.adoption_distribution }}</dd>
     </dl>
-    <div class="sample-grid">
-      {% for ref in reference_images %}
-      <figure>
-        <img src="/reference-images/{{ ref.id }}" alt="リファレンス画像 {{ ref.id }}">
-        <figcaption>{{ ref.image_role }} / {{ ref.caption or '' }}</figcaption>
-      </figure>
-      {% endfor %}
-    </div>
-    {% else %}
-    <p class="muted">紐づくリファレンスセットはありません。</p>
-    {% endif %}
   </div>
 </section>
 
-<section class="panel-grid">
+<section>
+  <h2>Weight別レビュー</h2>
+  <table>
+    <thead><tr><th>weight</th><th>件数</th><th>総合平均</th><th>強さ</th><th>採用判断</th></tr></thead>
+    <tbody>
+      {% for row in weight_matrix.by_weight %}
+      <tr><td>{{ row.key }}</td><td>{{ row.count }}</td><td>{{ '%.2f'|format(row.avg_overall) if row.avg_overall is not none else '-' }}</td><td>{{ row.strength_distribution }}</td><td>{{ row.adoption_distribution }}</td></tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">レビュー済み画像がありません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section id="images">
+  <h2>登録画像・レビュー</h2>
+  <div class="actions compact-actions validation-image-actions">
+    {% if matrix_exists %}<a class="button" href="/validation-runs/{{ run.id }}/matrix" target="_blank" rel="noopener">比較Matrixを開く</a>{% endif %}
+    <a class="button" href="#image-register">画像を登録する</a>
+    <a class="button" href="#expected-conditions">未登録条件を見る</a>
+  </div>
+  <div class="sample-grid compare">
+    {% for image in images %}
+    <figure>
+      <img src="/validation-images/{{ image.id }}" alt="検証画像 {{ image.id }}" data-lightbox-src="/validation-images/{{ image.id }}" data-lightbox-title="#{{ image.id }} {{ image.prompt_key or '-' }} / seed {{ image.seed or '-' }} / weight {{ image.lora_weight if image.lora_weight is not none else '-' }}">
+      <figcaption>
+        #{{ image.id }} {{ image.image_role }} / {{ image.prompt_key or '-' }} / seed {{ image.seed or '-' }} / weight {{ image.lora_weight if image.lora_weight is not none else '-' }} / Hires {{ 'あり' if image.hires_enabled else 'なし' }}<br>
+        条件: {{ image.expected_condition_id or '未一致 / グリッド' }}
+      </figcaption>
+      <form method="post" action="/validation-runs/{{ run.id }}/images/{{ image.id }}/review" class="review-form" data-review-form>
+        <div class="rating-grid">
+          <label>顔<input type="number" min="0" max="5" name="rating_face" value="{{ image.rating_face or 0 }}"></label>
+          <label>衣装<input type="number" min="0" max="5" name="rating_costume" value="{{ image.rating_costume or 0 }}"></label>
+          <label>スタイル<input type="number" min="0" max="5" name="rating_style" value="{{ image.rating_style or 0 }}"></label>
+          <label>安定性<input type="number" min="0" max="5" name="rating_stability" value="{{ image.rating_stability or 0 }}"></label>
+          <label>柔軟性<input type="number" min="0" max="5" name="rating_flexibility" value="{{ image.rating_flexibility or 0 }}"></label>
+          <label>総合<input type="number" min="0" max="5" name="rating_overall" value="{{ image.rating_overall or 0 }}"></label>
+        </div>
+        <label>強さ<select name="strength_label">{% for value, label in rubric_options.strength_labels %}<option value="{{ value }}" {{ 'selected' if image.strength_label == value else '' }}>{{ label }}</option>{% endfor %}</select></label>
+        <label>過学習<select name="overfit_level">{% for value, label in rubric_options.overfit_levels %}<option value="{{ value }}" {{ 'selected' if image.overfit_level == value else '' }}>{{ label }}</option>{% endfor %}</select></label>
+        <label>採用判断<select name="adoption_label">{% for value, label in rubric_options.adoption_labels %}<option value="{{ value }}" {{ 'selected' if image.adoption_label == value else '' }}>{{ label }}</option>{% endfor %}</select></label>
+        <div class="checkbox-grid">
+          {% for tag in rubric_options.failure_tags %}
+          <label><input type="checkbox" name="failure_tags" value="{{ tag }}"> {{ tag }}</label>
+          {% endfor %}
+        </div>
+        <label><input type="checkbox" name="ignored" value="1" {{ 'checked' if image.ignored else '' }}> カバレッジ判定では無視する</label>
+        <label>メモ<textarea name="memo">{{ image.memo or '' }}</textarea></label>
+        <div class="review-save-row">
+          <button type="submit">レビューを保存</button>
+          <span class="save-status" aria-live="polite"></span>
+        </div>
+      </form>
+    </figure>
+    {% else %}
+    <p class="muted">登録済み画像はありません。</p>
+    {% endfor %}
+  </div>
+</section>
+
+<section id="image-register" class="panel-grid">
   <div>
     <h2>個別画像登録</h2>
     <form method="post" action="/validation-runs/{{ run.id }}/images/individual" class="form-grid">
@@ -181,94 +264,123 @@
   </div>
 </section>
 
-<section>
-  <h2>条件カバレッジ</h2>
-  <table>
-    <thead><tr><th>#</th><th>prompt</th><th>seed</th><th>weight</th><th>Hires</th><th>状態</th><th>画像</th><th>Hash</th></tr></thead>
-    <tbody>
-      {% for row in coverage.rows %}
-      <tr>
-        <td>{{ row.expected_order }}</td>
-        <td>{{ row.prompt_key }}</td>
-        <td>{{ row.seed }}</td>
-        <td>{{ row.lora_weight }}</td>
-        <td>{{ 'あり' if row.hires_enabled else 'なし' }}</td>
-        <td><span class="label {{ row.status }}">{{ row.status }}</span></td>
-        <td>{{ row.image_count }}</td>
-        <td>{{ row.condition_hash[:12] }}</td>
-      </tr>
-      {% else %}
-      <tr><td colspan="8" class="muted">予定条件がありません。</td></tr>
+<section class="panel-grid">
+  <div>
+    <h2>リファレンスセット</h2>
+    {% if reference_set %}
+    <dl>
+      <dt>ID</dt><dd>#{{ reference_set.id }}</dd>
+      <dt>名前</dt><dd>{{ reference_set.name }}</dd>
+      <dt>トリガー</dt><dd>{{ reference_set.trigger_word or '-' }}</dd>
+      <dt>メモ</dt><dd>{{ reference_set.memo or '-' }}</dd>
+    </dl>
+    <div class="sample-grid">
+      {% for ref in reference_images %}
+      <figure>
+        <img src="/reference-images/{{ ref.id }}" alt="リファレンス画像 {{ ref.id }}">
+        <figcaption>{{ ref.image_role }} / {{ ref.caption or '' }}</figcaption>
+      </figure>
       {% endfor %}
-    </tbody>
-  </table>
-</section>
-
-<section>
-  <h2>weightレビュー表</h2>
-  <div class="panel-grid">
-    <div>
-      <h3>Weight別</h3>
-      <table>
-        <thead><tr><th>weight</th><th>件数</th><th>総合平均</th><th>強さ</th><th>採用判断</th></tr></thead>
-        <tbody>
-          {% for row in weight_matrix.by_weight %}
-          <tr><td>{{ row.key }}</td><td>{{ row.count }}</td><td>{{ '%.2f'|format(row.avg_overall) if row.avg_overall is not none else '-' }}</td><td>{{ row.strength_distribution }}</td><td>{{ row.adoption_distribution }}</td></tr>
-          {% else %}
-          <tr><td colspan="5" class="muted">レビュー済み画像がありません。</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
     </div>
-    <div>
-      <h3>まとめ</h3>
-      <dl>
-        <dt>推奨weight</dt><dd>{{ weight_matrix.recommended_weights or '-' }}</dd>
-        <dt>強すぎるweight</dt><dd>{{ weight_matrix.too_strong_weights or '-' }}</dd>
-        <dt>弱すぎるweight</dt><dd>{{ weight_matrix.too_weak_weights or '-' }}</dd>
-        <dt>強さ</dt><dd>{{ weight_matrix.strength_distribution }}</dd>
-        <dt>過学習</dt><dd>{{ weight_matrix.overfit_distribution }}</dd>
-        <dt>採用判断</dt><dd>{{ weight_matrix.adoption_distribution }}</dd>
-      </dl>
-    </div>
-  </div>
-</section>
-
-<section>
-  <h2>検証レビュー</h2>
-  <div class="sample-grid compare">
-    {% for image in images %}
-    <figure>
-      <img src="/validation-images/{{ image.id }}" alt="検証画像 {{ image.id }}">
-      <figcaption>
-        #{{ image.id }} {{ image.image_role }} / {{ image.prompt_key or '-' }} / seed {{ image.seed or '-' }} / weight {{ image.lora_weight if image.lora_weight is not none else '-' }} / Hires {{ 'あり' if image.hires_enabled else 'なし' }}<br>
-        条件: {{ image.expected_condition_id or '未一致 / グリッド' }}
-      </figcaption>
-      <form method="post" action="/validation-runs/{{ run.id }}/images/{{ image.id }}/review" class="review-form">
-        <div class="rating-grid">
-          <label>顔<input type="number" min="0" max="5" name="rating_face" value="{{ image.rating_face or 0 }}"></label>
-          <label>衣装<input type="number" min="0" max="5" name="rating_costume" value="{{ image.rating_costume or 0 }}"></label>
-          <label>スタイル<input type="number" min="0" max="5" name="rating_style" value="{{ image.rating_style or 0 }}"></label>
-          <label>安定性<input type="number" min="0" max="5" name="rating_stability" value="{{ image.rating_stability or 0 }}"></label>
-          <label>柔軟性<input type="number" min="0" max="5" name="rating_flexibility" value="{{ image.rating_flexibility or 0 }}"></label>
-          <label>総合<input type="number" min="0" max="5" name="rating_overall" value="{{ image.rating_overall or 0 }}"></label>
-        </div>
-        <label>強さ<select name="strength_label">{% for value, label in rubric_options.strength_labels %}<option value="{{ value }}" {{ 'selected' if image.strength_label == value else '' }}>{{ label }}</option>{% endfor %}</select></label>
-        <label>過学習<select name="overfit_level">{% for value, label in rubric_options.overfit_levels %}<option value="{{ value }}" {{ 'selected' if image.overfit_level == value else '' }}>{{ label }}</option>{% endfor %}</select></label>
-        <label>採用判断<select name="adoption_label">{% for value, label in rubric_options.adoption_labels %}<option value="{{ value }}" {{ 'selected' if image.adoption_label == value else '' }}>{{ label }}</option>{% endfor %}</select></label>
-        <div class="checkbox-grid">
-          {% for tag in rubric_options.failure_tags %}
-          <label><input type="checkbox" name="failure_tags" value="{{ tag }}"> {{ tag }}</label>
-          {% endfor %}
-        </div>
-        <label><input type="checkbox" name="ignored" value="1" {{ 'checked' if image.ignored else '' }}> カバレッジ判定では無視する</label>
-        <label>メモ<textarea name="memo">{{ image.memo or '' }}</textarea></label>
-        <button type="submit">レビューを保存</button>
-      </form>
-    </figure>
     {% else %}
-    <p class="muted">登録済み画像はありません。</p>
-    {% endfor %}
+    <p class="muted">紐づくリファレンスセットはありません。</p>
+    {% endif %}
   </div>
+  <div>
+    <h2>生成ステータス</h2>
+    {% if generation %}
+    <dl>
+      <dt>状態</dt><dd><span class="label {{ generation.status }}">{{ generation.status }}</span></dd>
+      <dt>生成数</dt><dd>{{ generation.generated_image_count }}</dd>
+      <dt>取り込み数</dt><dd>{{ generation.imported_image_count }}</dd>
+      <dt>終了コード</dt><dd>{{ generation.return_code if generation.return_code is not none else '-' }}</dd>
+      <dt>経過秒数</dt><dd>{{ generation.elapsed_seconds if generation.elapsed_seconds is not none else '-' }}</dd>
+      <dt>メッセージ</dt><dd>{{ generation.error_message or '-' }}</dd>
+    </dl>
+    {% else %}
+    <p class="muted">生成ファイルは、画像生成の実行時に自動作成されます。</p>
+    {% endif %}
+  </div>
+</section>
+
+<section>
+  <details>
+    <summary>検証プリセット / Prompt Pack</summary>
+    <div class="panel-grid detail-panel">
+      <div>
+        <h2>検証プリセット</h2>
+        <dl>
+          <dt>プリセット</dt><dd>{{ display_validation_preset_name(preset) if preset else '旧形式 / プリセット未指定' }}</dd>
+          <dt>レベル</dt><dd>{{ display_validation_level(run.validation_level) }}</dd>
+          <dt>出力先</dt><dd>{{ output_dir }}</dd>
+        </dl>
+      </div>
+      <div>
+        <h2>Prompt Pack</h2>
+        <p class="muted">外部生成環境で手動生成する場合はここから再出力します。</p>
+        <form method="post" action="/validation-runs/{{ run.id }}/export"><button type="submit">プロンプトパック再出力</button></form>
+      </div>
+    </div>
+  </details>
+</section>
+
+<section id="expected-conditions">
+  <details>
+    <summary>検証条件一覧（{{ coverage.rows|length }}件）</summary>
+    <table>
+      <thead><tr><th>#</th><th>prompt</th><th>seed</th><th>weight</th><th>Hires</th><th>状態</th><th>画像</th><th>Hash</th></tr></thead>
+      <tbody>
+        {% for row in coverage.rows %}
+        <tr>
+          <td>{{ row.expected_order }}</td>
+          <td>{{ row.prompt_key }}</td>
+          <td>{{ row.seed }}</td>
+          <td>{{ row.lora_weight }}</td>
+          <td>{{ 'あり' if row.hires_enabled else 'なし' }}</td>
+          <td><span class="label {{ row.status }}">{{ row.status }}</span></td>
+          <td>{{ row.image_count }}</td>
+          <td>{{ row.condition_hash[:12] }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="muted">予定条件がありません。</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </details>
+</section>
+
+<section id="technical-details">
+  <details>
+    <summary>ログ・コマンド・技術詳細</summary>
+    <div class="panel-grid detail-panel">
+      <div>
+        <h2>生成ファイル</h2>
+        {% if generation %}
+        <dl>
+          <dt>promptファイル</dt><dd>{{ generation.prompt_file_path or '-' }}</dd>
+          <dt>出力フォルダ</dt><dd>{{ generation.output_dir or '-' }}</dd>
+          <dt>比較Matrix</dt><dd>{{ matrix_path or '-' }}</dd>
+        </dl>
+        {% else %}
+        <p class="muted">生成ファイルはまだありません。</p>
+        {% endif %}
+      </div>
+      <div>
+        <h2>ログ末尾</h2>
+        {% if generation_log_tail %}
+        <pre>{{ generation_log_tail }}</pre>
+        {% else %}
+        <p class="muted">ログはまだありません。</p>
+        {% endif %}
+      </div>
+    </div>
+    {% if generation and generation.command_argv_json %}
+    <h2>実行コマンド</h2>
+    <pre>{{ generation.command_argv_json }}</pre>
+    {% endif %}
+    {% if missing %}
+    <p class="notice warning">未登録の検証条件: {{ missing|length }} 件</p>
+    {% endif %}
+  </details>
 </section>
 {% endblock %}

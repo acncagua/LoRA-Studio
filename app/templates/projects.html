@@ -30,7 +30,7 @@
         <td>{% if project.selected_job_id %}<a href="/jobs/{{ project.selected_job_id }}">#{{ project.selected_job_id }} {{ project.selected_job_name or '' }}</a>{% else %}-{% endif %}</td>
         <td>{{ project.selected_epoch if project.selected_epoch is not none else '-' }}</td>
         <td>{{ project.recommended_weight_min if project.recommended_weight_min is not none else '-' }} - {{ project.recommended_weight_max if project.recommended_weight_max is not none else '-' }}</td>
-        <td>{{ project.latest_validation_status or '-' }}</td>
+        <td>{{ display_validation_status(project.latest_validation_status) }}</td>
         <td>{{ project.updated_at }}</td>
         <td>
           <div class="actions compact-actions">

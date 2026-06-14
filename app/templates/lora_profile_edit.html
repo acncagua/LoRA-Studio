@@ -62,7 +62,7 @@
         <thead><tr><th>ID</th><th>プリセット</th><th>状態</th><th>画像数</th><th></th></tr></thead>
         <tbody>
           {% for run in validation_runs %}
-          <tr><td>#{{ run.id }}</td><td>{{ run.name }}</td><td>{{ run.status }}</td><td>{{ run.actual_image_count }} / {{ run.expected_image_count }}</td><td><a class="button" href="/validation-runs/{{ run.id }}">詳細</a></td></tr>
+          <tr><td>#{{ run.id }}</td><td>{{ run.name }}</td><td>{{ display_validation_status(run.status) }}</td><td>{{ run.actual_image_count }} / {{ run.expected_image_count }}</td><td><a class="button" href="/validation-runs/{{ run.id }}">詳細</a></td></tr>
           {% else %}
           <tr><td colspan="5" class="muted">外部検証はまだありません。</td></tr>
           {% endfor %}
@@ -110,7 +110,7 @@
   <div class="sample-grid">
     {% for image in validation_images %}
     <figure>
-      <img src="/validation-images/{{ image.id }}" alt="検証画像 {{ image.id }}">
+      <img src="/validation-images/{{ image.id }}" alt="検証画像 {{ image.id }}" data-lightbox-src="/validation-images/{{ image.id }}" data-lightbox-title="検証画像 #{{ image.id }}">
       <figcaption>#{{ image.id }} {{ image.validation_type or '-' }} / weight {{ image.lora_weights or '-' }}<br>強さ {{ image.strength_label or '-' }} / 過学習 {{ image.overfit_level or '-' }} / 採用 {{ image.adoption_label or '-' }}<br>{{ image.memo or '' }}</figcaption>
     </figure>
     {% else %}

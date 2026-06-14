@@ -124,7 +124,7 @@
           <td><a href="/validation-runs/{{ run.id }}">#{{ run.id }}</a></td>
           <td>{{ display_validation_preset_name(run.validation_preset_id) if run.validation_preset_id else (run.preset_name or '旧形式') }}</td>
           <td>{{ run.expected_image_count if run.expected_image_count is not none else '-' }} / {{ run.actual_image_count if run.actual_image_count is not none else '-' }} / {{ run.reviewed_count if run.reviewed_count is not none else '-' }}</td>
-          <td><span class="label {{ run.status }}">{{ run.status }}</span></td>
+          <td><span class="label {{ run.status }}">{{ display_validation_status(run.status) }}</span></td>
         </tr>
         {% else %}
         <tr><td colspan="4" class="muted">外部検証はまだありません。</td></tr>

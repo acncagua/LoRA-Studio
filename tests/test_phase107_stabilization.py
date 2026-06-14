@@ -56,11 +56,11 @@ class MetricDisplayTests(unittest.TestCase):
         table = build_metric_table(self.make_metrics(18900))
         self.assertTrue(table["limited"])
         self.assertEqual(table["total"], 18900)
-        self.assertEqual(table["shown"], 205)
-        self.assertEqual(table["omitted"], 18695)
+        self.assertEqual(table["shown"], 43)
+        self.assertEqual(table["omitted"], 18857)
         self.assertEqual(table["rows"][0]["step"], 1)
-        self.assertEqual(table["rows"][4]["step"], 5)
-        self.assertEqual(table["rows"][5]["step"], 18701)
+        self.assertEqual(table["rows"][2]["step"], 3)
+        self.assertEqual(table["rows"][3]["step"], 18861)
         self.assertEqual(table["rows"][-1]["step"], 18900)
 
     def test_loss_chart_downsamples_large_runs(self) -> None:
@@ -344,6 +344,17 @@ class Phase107StabilizationTests(IsolatedDbTest):
 
         self.assertIn("エラー: メモリ不足", tail)
         self.assertIn("RuntimeError: bad allocation", tail)
+
+    def test_sd_scripts_subprocess_env_strips_app_pythonpath(self) -> None:
+        from app.services.training_runner import sd_scripts_subprocess_env
+
+        with mock.patch.dict("os.environ", {"PYTHONPATH": "D:/app/.venv/Lib/site-packages", "PYTHONHOME": "D:/bad"}, clear=False):
+            env = sd_scripts_subprocess_env()
+
+        self.assertNotIn("PYTHONPATH", env)
+        self.assertNotIn("PYTHONHOME", env)
+        self.assertEqual(env["PYTHONUTF8"], "1")
+        self.assertEqual(env["PYTHONIOENCODING"], "utf-8")
 
     def test_validation_image_outside_allowed_root_is_403(self) -> None:
         outside = self.make_png(self.root / "outside.png")
@@ -759,6 +770,9 @@ class Phase107StabilizationTests(IsolatedDbTest):
         lora_prompt = Path(lora["prompt_file"]).read_text(encoding="utf-8")
         self.assertNotIn("--am", baseline_prompt)
         self.assertIn("--am", lora_prompt)
+        self.assertIn(".png", baseline_prompt)
+        self.assertIn(".png", lora_prompt)
+        self.assertRegex(baseline_prompt, r"--f\s+\S+\.png")
         expected = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ?", (run_id,))
         self.assertEqual(len(Path(payload["all_prompt_file"]).read_text(encoding="utf-8").splitlines()), expected["count"])
 
@@ -786,7 +800,8 @@ class Phase107StabilizationTests(IsolatedDbTest):
         matrix_path = Path(write_validation_matrix(run_id))
         self.assertTrue(matrix_path.exists())
         matrix_html = matrix_path.read_text(encoding="utf-8")
-        self.assertIn(image_path.name, matrix_html)
+        self.assertIn(f"/validation-images/{image['id']}", matrix_html)
+        self.assertIn(f"/validation-runs/{run_id}/images/{image['id']}/matrix-review", matrix_html)
         self.assertIn(str(condition["id"]), matrix_html)
 
     def test_sd_scripts_generation_stop_without_process_marks_stopped(self) -> None:

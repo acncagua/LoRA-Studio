@@ -132,6 +132,15 @@ STATUS_TEXT_REPLACEMENTS = {
     "Validation": "検証",
 }
 
+VALIDATION_RUN_STATUS_LABELS = {
+    "planned": "予定",
+    "images_registered": "画像登録済み",
+    "partially_reviewed": "一部レビュー済み",
+    "reviewed": "レビュー済み",
+    "completed": "完了",
+    "archived": "アーカイブ",
+}
+
 templates = Environment(
     loader=FileSystemLoader(settings.ROOT_DIR / "app" / "templates"),
     autoescape=select_autoescape(["html", "xml"]),
@@ -154,6 +163,8 @@ def render(request: Request, template: str, **context: Any) -> HTMLResponse:
     context.setdefault("display_preset_name", display_preset_name)
     context.setdefault("display_validation_preset_name", display_validation_preset_name)
     context.setdefault("display_validation_level", display_validation_level)
+    context.setdefault("display_validation_status", display_validation_status)
+    context.setdefault("validation_run_status_options", list(VALIDATION_RUN_STATUS_LABELS.items()))
     context.setdefault("display_status_text", display_status_text)
     return HTMLResponse(tpl.render(**context))
 
@@ -203,6 +214,10 @@ def display_validation_preset_name(preset: Any) -> str:
 
 def display_validation_level(level: str | None) -> str:
     return VALIDATION_LEVEL_LABELS.get(level or "", level or "-")
+
+
+def display_validation_status(status: str | None) -> str:
+    return VALIDATION_RUN_STATUS_LABELS.get(status or "", status or "-")
 
 
 def display_status_text(text: str | None) -> str:
@@ -2940,10 +2955,10 @@ def validation_generation_import(run_id: int) -> RedirectResponse:
 @app.get("/validation-runs/{run_id}/matrix")
 def validation_generation_matrix(run_id: int) -> FileResponse:
     path = generation_validation_run_dir(run_id) / "validation_matrix.html"
-    if not path.exists():
-        try:
-            write_validation_matrix(run_id)
-        except Exception as exc:
+    try:
+        write_validation_matrix(run_id)
+    except Exception as exc:
+        if not path.exists():
             raise HTTPException(status_code=404, detail="validation_matrix.html not found") from exc
     return FileResponse(path)
 
@@ -2997,6 +3012,7 @@ def validation_run_add_grid_image(
 
 @app.post("/validation-runs/{run_id}/images/{image_id}/review")
 def validation_run_review_image(
+    request: Request,
     run_id: int,
     image_id: int,
     rating_face: int = Form(0),
@@ -3046,7 +3062,63 @@ def validation_run_review_image(
             ),
         )
     update_validation_run_counts(run_id)
+    if wants_json_response(request):
+        return JSONResponse(
+            {
+                "ok": True,
+                "image_id": image_id,
+                "message": "レビューを保存しました。",
+            }
+        )
     return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
+
+
+@app.post("/validation-runs/{run_id}/images/{image_id}/matrix-review")
+def validation_run_matrix_review_image(
+    run_id: int,
+    image_id: int,
+    rating_overall: str = Form(""),
+    strength_label: str = Form(""),
+    adoption_label: str = Form(""),
+    memo: str = Form(""),
+) -> JSONResponse:
+    image = fetch_one("SELECT * FROM validation_images WHERE id = ? AND validation_run_id = ?", (image_id, run_id))
+    if image is None:
+        raise HTTPException(status_code=404, detail="Validation image not found")
+    now = settings_now()
+    rating_value = nullable_rating(rating_overall)
+    strength_value = clean_choice(strength_label, {key for key, _ in STRENGTH_LABELS})
+    adoption_value = clean_choice(adoption_label, {key for key, _ in ADOPTION_LABELS})
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE validation_images
+            SET rating_overall = ?, strength_label = ?, adoption_label = ?,
+                rubric_version = ?, memo = ?, updated_at = ?
+            WHERE id = ? AND validation_run_id = ?
+            """,
+            (
+                rating_value,
+                strength_value,
+                adoption_value,
+                RUBRIC_VERSION,
+                memo.strip(),
+                now,
+                image_id,
+                run_id,
+            ),
+        )
+    update_validation_run_counts(run_id)
+    return JSONResponse(
+        {
+            "ok": True,
+            "image_id": image_id,
+            "rating_overall": rating_value,
+            "strength_label": strength_value,
+            "adoption_label": adoption_value,
+            "message": "Matrix評価を保存しました。",
+        }
+    )
 
 
 def register_validation_run_image(
@@ -4485,7 +4557,7 @@ def downsample_rows(rows: list[Any], max_points: int) -> list[Any]:
     return [rows[index] for index in sorted(indexes)]
 
 
-def build_metric_table(metrics: list[Any], head: int = 5, tail: int = 200) -> dict[str, Any]:
+def build_metric_table(metrics: list[Any], head: int = 3, tail: int = 40) -> dict[str, Any]:
     total = len(metrics)
     if total <= head + tail:
         return {

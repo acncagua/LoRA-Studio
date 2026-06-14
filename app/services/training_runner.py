@@ -139,9 +139,7 @@ def start_job(job_id: int, acknowledge_trigger_mismatch: bool = False) -> int:
 
     start_time = utc_now()
     log_handle = log_path.open("ab")
-    env = os.environ.copy()
-    env.setdefault("PYTHONUTF8", "1")
-    env.setdefault("PYTHONIOENCODING", "utf-8")
+    env = sd_scripts_subprocess_env()
     process = subprocess.Popen(
         argv,
         cwd=str(sd_scripts_path),
@@ -326,6 +324,17 @@ def archive_existing_log(log_path: Path) -> None:
         pass
 
 
+def sd_scripts_subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    # LoRA-Studio may run with PYTHONPATH pointing at the app venv. Passing it to
+    # sd-scripts makes its Python load incompatible packages such as NumPy.
+    env.pop("PYTHONPATH", None)
+    env.pop("PYTHONHOME", None)
+    env.setdefault("PYTHONUTF8", "1")
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    return env
+
+
 def has_model_outputs(job_id: int) -> bool:
     row = fetch_one("SELECT id FROM training_outputs WHERE job_id = ? AND file_type = 'model' LIMIT 1", (job_id,))
     return row is not None
@@ -346,7 +355,7 @@ def elapsed_seconds(start_time_text: str | None, end_time_text: str) -> int | No
     return max(0, int((end - start).total_seconds()))
 
 
-def read_log_tail(job: dict, max_lines: int = 200) -> str:
+def read_log_tail(job: dict, max_lines: int = 40) -> str:
     log_path = Path(job["run_dir"]) / "logs" / "train.log"
     if not log_path.exists():
         return ""

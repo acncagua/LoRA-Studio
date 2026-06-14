@@ -43,7 +43,7 @@
         <td>{{ project.dataset_name or '-' }}</td>
         <td>{% if project.selected_job_id %}<a href="/jobs/{{ project.selected_job_id }}">#{{ project.selected_job_id }}</a>{% else %}-{% endif %}</td>
         <td>{{ project.recommended_weight_min if project.recommended_weight_min is not none else '-' }} - {{ project.recommended_weight_max if project.recommended_weight_max is not none else '-' }}</td>
-        <td>{{ project.latest_validation_status or '-' }}</td>
+        <td>{{ display_validation_status(project.latest_validation_status) }}</td>
         <td><a class="button small-button" href="/projects/{{ project.id }}">開く</a></td>
       </tr>
       {% else %}
@@ -91,7 +91,7 @@
       <tr>
         <td><a href="/lora-library/{{ profile.id }}/edit">{{ profile.profile_name }}</a></td>
         <td>{{ display_validation_preset_name(profile.default_validation_preset_id) if profile.default_validation_preset_id else '-' }}</td>
-        <td>{% if profile.last_validation_run_id %}<a href="/validation-runs/{{ profile.last_validation_run_id }}">#{{ profile.last_validation_run_id }}</a> / {{ profile.last_validation_status }}{% else %}-{% endif %}</td>
+        <td>{% if profile.last_validation_run_id %}<a href="/validation-runs/{{ profile.last_validation_run_id }}">#{{ profile.last_validation_run_id }}</a> / {{ display_validation_status(profile.last_validation_status) }}{% else %}-{% endif %}</td>
         <td>{{ profile.validation_expected_count if profile.validation_expected_count is not none else '-' }} / {{ profile.validation_registered_count if profile.validation_registered_count is not none else '-' }} / {{ profile.validation_reviewed_count if profile.validation_reviewed_count is not none else '-' }}</td>
         <td>{{ profile.recommended_weight_min if profile.recommended_weight_min is not none else '-' }} - {{ profile.recommended_weight_max if profile.recommended_weight_max is not none else '-' }}</td>
         <td>{{ profile.validation_warning or '-' }}</td>

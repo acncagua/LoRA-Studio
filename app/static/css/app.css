@@ -179,6 +179,8 @@ textarea { min-height: 84px; }
 .review-form label { min-width: 0; }
 .review-form textarea { min-height: 58px; width: 100%; resize: vertical; }
 .review-form button { width: 100%; }
+.review-save-row { display: grid; grid-template-columns: minmax(120px, 1fr) auto; gap: 8px; align-items: center; }
+.review-save-row .save-status { min-width: 56px; text-align: right; }
 .inline-form { display: grid; gap: 8px; margin-top: 10px; }
 .rating-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .rating-grid label { min-width: 0; }
@@ -212,6 +214,76 @@ textarea { min-height: 84px; }
 .loss-chart .avg { stroke: #8b4f39; }
 .notice { background: #eef2eb; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
 code { background: #eef2eb; border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; overflow-wrap: anywhere; }
+.validation-action-panel { position: static; }
+.validation-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  background: rgba(246, 247, 244, .96);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  margin: 18px 0;
+}
+.validation-tabs a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 7px 11px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  font-weight: 700;
+}
+.validation-tabs a:hover { border-color: #9fb7ae; color: var(--accent); }
+.validation-image-actions { margin-bottom: 12px; }
+.compact-log { max-height: 260px; }
+.tiny-log {
+  max-height: 160px;
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow: auto;
+  white-space: pre;
+}
+.generation-status-note {
+  margin: 10px 0;
+  padding: 10px;
+}
+.generation-live-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+details {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0;
+}
+details > summary {
+  cursor: pointer;
+  padding: 12px 14px;
+  font-weight: 700;
+  color: var(--ink);
+  background: #eef2eb;
+  border-radius: 8px;
+}
+details[open] > summary {
+  border-bottom: 1px solid var(--line);
+  border-radius: 8px 8px 0 0;
+}
+details > *:not(summary) { margin: 14px; }
+.detail-panel { margin: 14px; }
+.detail-panel > div { min-width: 0; }
 .workflow-list { display: grid; gap: 10px; padding-left: 24px; }
 .workflow-list li { line-height: 1.55; }
 .compare-columns { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 14px; }
