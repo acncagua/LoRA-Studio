@@ -1523,6 +1523,48 @@ class EmbeddingPhase112Tests(IsolatedDbTest):
         self.assertEqual(embedding_coverage("validation_run", run_id)["ready"], 1)
         self.assertEqual(ref_image_id, fetch_one("SELECT source_id FROM image_embeddings WHERE source_type = 'reference_image'")["source_id"])
 
+    def test_dataset_image_embeddings_do_not_collide_between_versions(self) -> None:
+        now = utc_now()
+        version_ids = []
+        for index in [1, 2]:
+            dataset_dir = self.root / f"dataset_{index}"
+            self.make_png(dataset_dir / "img001.png")
+            (dataset_dir / "img001.txt").write_text(f"testchar, version {index}", encoding="utf-8")
+            with connect() as conn:
+                cur = conn.execute(
+                    """
+                    INSERT INTO datasets(name, path, model_family, trigger_word, class_token, image_count, caption_count, created_at, updated_at)
+                    VALUES (?, ?, 'SDXL', 'testchar', 'person', 1, 1, ?, ?)
+                    """,
+                    (f"Embedding Dataset {index}", str(dataset_dir), now, now),
+                )
+                dataset_id = int(cur.lastrowid)
+                cur = conn.execute(
+                    """
+                    INSERT INTO dataset_versions(dataset_id, version_no, trigger_word, image_count, caption_count, created_at)
+                    VALUES (?, 1, 'testchar', 1, 1, ?)
+                    """,
+                    (dataset_id, now),
+                )
+                version_ids.append(int(cur.lastrowid))
+
+        for version_id in version_ids:
+            self.run_embedding_job_sync("dataset_version", version_id)
+
+        rows = fetch_all(
+            """
+            SELECT source_id, dataset_version_id, source_path, embedding_path
+            FROM image_embeddings
+            WHERE source_type = 'dataset_image'
+            ORDER BY dataset_version_id
+            """
+        )
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({row["source_id"] for row in rows}, {1})
+        self.assertEqual({row["dataset_version_id"] for row in rows}, set(version_ids))
+        self.assertEqual(len({row["source_path"] for row in rows}), 2)
+        self.assertEqual(len({row["embedding_path"] for row in rows}), 2)
+
     def test_stale_detection_and_recompute_stale(self) -> None:
         from app.services.embedding_service import create_embedding_job, embedding_coverage
         from app.services.embedding_worker import run_embedding_job
@@ -1640,6 +1682,41 @@ class EmbeddingPhase112Tests(IsolatedDbTest):
         self.assertEqual(result["scored"], 0)
         self.assertEqual(fetch_one("SELECT skipped_count, failed_count FROM machine_review_jobs WHERE id = ?", (result["job_id"],))["skipped_count"], 1)
         self.assertEqual(fetch_one("SELECT failed_count FROM machine_review_jobs WHERE id = ?", (result["job_id"],))["failed_count"], 0)
+
+    def test_machine_review_background_start_and_readiness_actions(self) -> None:
+        from app.services.machine_review import create_machine_review_job, machine_review_readiness, start_machine_review_job
+
+        dataset_id, version_id, dataset_dir = self.make_dataset_version()
+        reference_set_id = create_reference_set(
+            name="Machine Review Reference",
+            reference_type="character",
+            dataset_id=dataset_id,
+            dataset_version_id=version_id,
+        )
+        add_reference_image(reference_set_id=reference_set_id, image_path=str(dataset_dir / "img001.png"), image_role="face_front")
+        job_id = self.make_sample_job(dataset_id, version_id)
+        reference = fetch_one("SELECT current_version_id FROM reference_sets WHERE id = ?", (reference_set_id,))
+
+        readiness = machine_review_readiness("training_job_samples", job_id)
+        self.assertTrue(any("Reference画像Embedding" in item for item in readiness["next_actions"]))
+        self.assertTrue(any("Dataset画像Embedding" in item for item in readiness["next_actions"]))
+        self.assertTrue(any("サンプル画像Embedding" in item for item in readiness["next_actions"]))
+
+        self.run_embedding_job_sync("dataset_version", version_id)
+        self.run_embedding_job_sync("reference_set_version", reference["current_version_id"])
+        self.run_embedding_job_sync("training_job_samples", job_id)
+        readiness = machine_review_readiness("training_job_samples", job_id)
+        self.assertTrue(any("機械補助レビュー" in item for item in readiness["next_actions"]))
+
+        machine_review_job_id = create_machine_review_job("training_job_samples", job_id)
+        fake_proc = types.SimpleNamespace(pid=4242)
+        with mock.patch("app.services.machine_review.subprocess.Popen", return_value=fake_proc) as popen:
+            start_machine_review_job(machine_review_job_id)
+        row = fetch_one("SELECT status, process_id, log_path FROM machine_review_jobs WHERE id = ?", (machine_review_job_id,))
+        self.assertEqual(row["status"], "running")
+        self.assertEqual(row["process_id"], 4242)
+        self.assertIn("machine_review_job_", row["log_path"])
+        popen.assert_called_once()
 
 
 class StartHelperTests(unittest.TestCase):

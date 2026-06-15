@@ -5,7 +5,7 @@
 </header>
 {% if embedding_coverage %}
 <section class="notice embedding-coverage">
-  <h2>Dataset画像Embedding状況</h2>
+  <h2>Dataset画像Embedding状況 <span class="muted">Embedding Coverage</span></h2>
   <p>対象Dataset Version: #{{ embedding_target_id }} / モデル: {{ embedding_coverage.model_name }}</p>
   <div class="summary-grid">
     <div><span>画像</span><strong>{{ embedding_coverage.total }}</strong></div>

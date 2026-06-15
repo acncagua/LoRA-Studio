@@ -4,8 +4,9 @@
   <div class="actions"><a class="button" href="/maintenance">メンテナンスへ戻る</a></div>
 </header>
 
-{% if request.query_params.get('purged') %}
-<p class="notice">Trashを完全削除しました: {{ request.query_params.get('purged') }}</p>
+{% set query_params = request.query_params if request is defined and request else {} %}
+{% if query_params.get('purged') %}
+<p class="notice">Trashを完全削除しました: {{ query_params.get('purged') }}</p>
 {% endif %}
 {% if storage.onedrive_warning %}
 <p class="notice warning">{{ storage.onedrive_warning }}</p>

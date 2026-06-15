@@ -335,6 +335,23 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "trigger_candidates_json": "TEXT",
         },
     )
+    ensure_columns(
+        conn,
+        "image_embeddings",
+        {
+            "dataset_version_id": "INTEGER",
+            "source_path": "TEXT",
+        },
+    )
+    ensure_columns(
+        conn,
+        "machine_review_jobs",
+        {
+            "process_id": "INTEGER",
+            "return_code": "INTEGER",
+            "log_path": "TEXT",
+        },
+    )
     conn.executescript(
         """
         CREATE UNIQUE INDEX IF NOT EXISTS idx_training_outputs_job_path
@@ -385,6 +402,8 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             ON reference_set_versions(reference_set_id);
         CREATE INDEX IF NOT EXISTS idx_image_embeddings_source
             ON image_embeddings(source_type, source_id, embedding_model_id);
+        CREATE INDEX IF NOT EXISTS idx_image_embeddings_source_context
+            ON image_embeddings(source_type, source_id, dataset_version_id, source_path, embedding_model_id);
         CREATE INDEX IF NOT EXISTS idx_image_embeddings_status
             ON image_embeddings(status);
         CREATE INDEX IF NOT EXISTS idx_embedding_jobs_status

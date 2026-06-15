@@ -359,6 +359,63 @@
     <pre class="compact-log">{{ log_tail or 'train.logはまだありません。' }}</pre>
   </details>
 </section>
+{% if machine_review_readiness %}
+<section id="machine-assist-readiness" class="notice">
+  <h2>機械補助レビュー準備状況 <span class="muted">Machine Review Assist readiness</span></h2>
+  <p>機械補助レビューは自動判定ではなく、Reference類似度とDataset近傍類似度を並べる補助情報です。最終判断は人間評価を優先してください。</p>
+  <div class="summary-grid">
+    <div><span>provider</span><strong>{{ machine_review_readiness.provider }}</strong></div>
+    <div><span>Reference枚数</span><strong>{{ machine_review_readiness.reference_count }}</strong></div>
+    <div><span>Reference Embedding</span><strong>{{ machine_review_readiness.reference_coverage.ready if machine_review_readiness.reference_coverage else 0 }} / {{ machine_review_readiness.reference_coverage.total if machine_review_readiness.reference_coverage else 0 }}</strong></div>
+    <div><span>Dataset Embedding</span><strong>{{ machine_review_readiness.dataset_coverage.ready if machine_review_readiness.dataset_coverage else 0 }} / {{ machine_review_readiness.dataset_coverage.total if machine_review_readiness.dataset_coverage else 0 }}</strong></div>
+    <div><span>{{ machine_review_readiness.target_label }}Embedding</span><strong>{{ machine_review_readiness.target_coverage.ready if machine_review_readiness.target_coverage else 0 }} / {{ machine_review_readiness.target_coverage.total if machine_review_readiness.target_coverage else 0 }}</strong></div>
+    <div><span>Machine Review score</span><strong>{{ machine_review_readiness.score_coverage.ready }} / {{ machine_review_readiness.score_coverage.total }}</strong></div>
+  </div>
+  {% if machine_review_readiness.warnings %}
+  <ul>
+    {% for warning in machine_review_readiness.warnings %}<li>{{ warning }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+  <h3>次にやること</h3>
+  <ul>
+    {% for action in machine_review_readiness.next_actions %}<li>{{ action }}</li>{% endfor %}
+  </ul>
+  <div class="actions compact-actions">
+    {% if machine_review_readiness.context.reference_set_version_id %}
+    <form method="post" action="/embeddings/jobs" data-embedding-job-form>
+      <input type="hidden" name="job_type" value="reference_set_version">
+      <input type="hidden" name="target_id" value="{{ machine_review_readiness.context.reference_set_version_id }}">
+      <input type="hidden" name="recompute" value="missing">
+      <input type="hidden" name="return_to" value="/jobs/{{ job.id }}#machine-assist-readiness">
+      <button type="submit">Reference画像Embeddingを計算</button>
+    </form>
+    {% endif %}
+    {% if machine_review_readiness.context.dataset_version_id %}
+    <form method="post" action="/embeddings/jobs" data-embedding-job-form>
+      <input type="hidden" name="job_type" value="dataset_version">
+      <input type="hidden" name="target_id" value="{{ machine_review_readiness.context.dataset_version_id }}">
+      <input type="hidden" name="recompute" value="missing">
+      <input type="hidden" name="return_to" value="/jobs/{{ job.id }}#machine-assist-readiness">
+      <button type="submit">Dataset画像Embeddingを計算</button>
+    </form>
+    {% endif %}
+    <form method="post" action="/embeddings/jobs" data-embedding-job-form>
+      <input type="hidden" name="job_type" value="training_job_samples">
+      <input type="hidden" name="target_id" value="{{ job.id }}">
+      <input type="hidden" name="recompute" value="missing">
+      <input type="hidden" name="return_to" value="/jobs/{{ job.id }}#machine-assist-readiness">
+      <button type="submit">サンプル画像Embeddingを計算</button>
+    </form>
+    <form method="post" action="/machine-review/jobs">
+      <input type="hidden" name="target_type" value="training_job_samples">
+      <input type="hidden" name="target_id" value="{{ job.id }}">
+      <input type="hidden" name="return_to" value="/jobs/{{ job.id }}#machine-assist-readiness">
+      <button type="submit">機械補助レビューを実行</button>
+    </form>
+    <a class="button" href="#machine-assist">機械補助レビュー結果を見る</a>
+  </div>
+</section>
+{% endif %}
 <section id="machine-assist" class="notice">
   <h2>機械補助レビュー</h2>
   <p>機械補助判定は参考情報です。最終判断は人間評価を優先してください。mock providerのスコアは意味的な画像評価ではありません。</p>

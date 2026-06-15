@@ -170,6 +170,75 @@ function initEmbeddingJobStatusPolling() {
   });
 }
 
+function initMachineReviewJobStatusPolling() {
+  const panel = document.querySelector("[data-machine-review-job-status]");
+  if (!panel) {
+    return;
+  }
+  const jobId = panel.getAttribute("data-machine-review-job-id");
+  const statusText = panel.querySelector("[data-machine-review-job-status-text]");
+  if (!jobId || !statusText) {
+    return;
+  }
+
+  const poll = async () => {
+    try {
+      const response = await fetch(`/machine-review/jobs/${jobId}/status`, {
+        headers: { "Accept": "application/json" },
+      });
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      const payload = await response.json();
+      const total = payload.total_count ?? 0;
+      const processed = payload.processed_count ?? 0;
+      const scored = payload.scored_count ?? 0;
+      const failed = payload.failed_count ?? 0;
+      const skipped = payload.skipped_count ?? 0;
+      if (payload.status === "completed") {
+        statusText.textContent = `完了: スコア ${scored} / ${total} 件`;
+        panel.classList.remove("warning");
+        window.setTimeout(() => {
+          const url = new URL(window.location.href);
+          url.searchParams.delete("machine_review_message");
+          url.searchParams.delete("machine_review_job_id");
+          url.searchParams.delete("machine_review_error");
+          window.location.href = url.toString();
+        }, 900);
+        return true;
+      }
+      if (payload.status === "failed") {
+        statusText.textContent = `失敗: ${payload.error_message || ""}`;
+        panel.classList.add("warning");
+        return true;
+      }
+      if (payload.status === "stopped") {
+        statusText.textContent = `停止: ${processed} / ${total} 件`;
+        panel.classList.add("warning");
+        return true;
+      }
+      statusText.textContent = `処理中: ${processed} / ${total} 件（スコア ${scored}, スキップ ${skipped}, 失敗 ${failed}）`;
+      return false;
+    } catch (error) {
+      statusText.textContent = `状態確認に失敗: ${error.message}`;
+      panel.classList.add("warning");
+      return true;
+    }
+  };
+
+  poll().then((done) => {
+    if (done) {
+      return;
+    }
+    const timer = window.setInterval(async () => {
+      const donePolling = await poll();
+      if (donePolling) {
+        window.clearInterval(timer);
+      }
+    }, 2500);
+  });
+}
+
 async function addReferenceCandidate(form) {
   const button = form.querySelector("button[type='submit']");
   const row = form.closest("tr");
@@ -708,3 +777,4 @@ function applyValidationGenerationDetailStatus(panel, payload) {
 document.addEventListener("DOMContentLoaded", initValidationGenerationPolling);
 document.addEventListener("DOMContentLoaded", initValidationGenerationDetailPolling);
 document.addEventListener("DOMContentLoaded", initEmbeddingJobStatusPolling);
+document.addEventListener("DOMContentLoaded", initMachineReviewJobStatusPolling);

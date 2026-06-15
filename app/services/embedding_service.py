@@ -311,16 +311,19 @@ def latest_embedding_for(source: EmbeddingSource, model_id: str) -> dict[str, An
         query = """
             SELECT * FROM image_embeddings
             WHERE source_type = ? AND source_id = ? AND embedding_model_id = ?
+              AND COALESCE(dataset_version_id, 0) = COALESCE(?, 0)
+              AND COALESCE(source_path, '') = COALESCE(?, '')
             ORDER BY updated_at DESC, id DESC LIMIT 1
         """
-        params = (source.source_type, source.source_id, model_id)
+        params = (source.source_type, source.source_id, model_id, source.dataset_version_id, source.source_path)
     else:
         query = """
             SELECT * FROM image_embeddings
             WHERE source_type = ? AND source_path = ? AND embedding_model_id = ?
+              AND COALESCE(dataset_version_id, 0) = COALESCE(?, 0)
             ORDER BY updated_at DESC, id DESC LIMIT 1
         """
-        params = (source.source_type, source.source_path, model_id)
+        params = (source.source_type, source.source_path, model_id, source.dataset_version_id)
     row = fetch_one(query, params)
     return dict(row) if row else None
 
@@ -467,13 +470,24 @@ def upsert_image_embedding(source: EmbeddingSource, model: dict[str, Any], metad
         existing = None
         if source.source_id is not None:
             existing = conn.execute(
-                "SELECT id FROM image_embeddings WHERE source_type = ? AND source_id = ? AND embedding_model_id = ? ORDER BY id DESC LIMIT 1",
-                (source.source_type, source.source_id, model["id"]),
+                """
+                SELECT id FROM image_embeddings
+                WHERE source_type = ? AND source_id = ? AND embedding_model_id = ?
+                  AND COALESCE(dataset_version_id, 0) = COALESCE(?, 0)
+                  AND COALESCE(source_path, '') = COALESCE(?, '')
+                ORDER BY id DESC LIMIT 1
+                """,
+                (source.source_type, source.source_id, model["id"], source.dataset_version_id, source.source_path),
             ).fetchone()
         if existing is None:
             existing = conn.execute(
-                "SELECT id FROM image_embeddings WHERE source_type = ? AND source_path = ? AND embedding_model_id = ? ORDER BY id DESC LIMIT 1",
-                (source.source_type, source.source_path, model["id"]),
+                """
+                SELECT id FROM image_embeddings
+                WHERE source_type = ? AND source_path = ? AND embedding_model_id = ?
+                  AND COALESCE(dataset_version_id, 0) = COALESCE(?, 0)
+                ORDER BY id DESC LIMIT 1
+                """,
+                (source.source_type, source.source_path, model["id"], source.dataset_version_id),
             ).fetchone()
         values = {
             "source_type": source.source_type,
@@ -550,7 +564,11 @@ def upsert_image_embedding(source: EmbeddingSource, model: dict[str, Any], metad
 
 
 def embedding_cache_path(model_id: str, source_type: str, source_id: int | None, source_path: str) -> Path:
-    safe_id = f"{source_id:06d}" if source_id is not None else hashlib.sha256(source_path.encode("utf-8")).hexdigest()[:16]
+    if source_id is not None:
+        path_hash = hashlib.sha256(source_path.encode("utf-8")).hexdigest()[:10]
+        safe_id = f"{source_id:06d}_{path_hash}"
+    else:
+        safe_id = hashlib.sha256(source_path.encode("utf-8")).hexdigest()[:16]
     return settings.EMBEDDINGS_DIR / f"model_{model_id}" / source_type / f"{source_type}_{safe_id}_{model_id}.npy"
 
 

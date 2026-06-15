@@ -45,14 +45,19 @@ from app.services.image_store import (
 )
 from app.services.maintenance import create_app_backup, export_diagnostics, maintenance_summary
 from app.services.machine_review import (
+    create_machine_review_job,
     epoch_machine_summary,
+    latest_machine_review_jobs,
     load_machine_review_settings,
+    machine_review_readiness,
     reference_set_readiness,
     run_machine_review,
     score_map_for_samples,
     score_map_for_validation,
     scores_for_job,
     scores_for_validation_run,
+    start_machine_review_job,
+    stop_machine_review_job,
     update_machine_review_settings,
     validation_weight_summary,
 )
@@ -1417,6 +1422,7 @@ def embedding_settings_page(request: Request, preflight_model_id: str | None = N
         machine_review_settings=load_machine_review_settings(),
         preflight=preflight,
         embedding_jobs=latest_embedding_jobs(),
+        machine_review_jobs=latest_machine_review_jobs(),
         cache_size=embedding_cache_size(),
         format_bytes=embedding_format_bytes,
         failed_cleanup=embedding_cleanup_preview("failed"),
@@ -1540,8 +1546,53 @@ def embedding_job_stop(embedding_job_id: int, return_to: str = Form("")) -> Redi
 
 @app.post("/machine-review/jobs")
 def machine_review_run(target_type: str = Form(...), target_id: int = Form(...), reference_set_version_id: int | None = Form(None), return_to: str = Form("")) -> RedirectResponse:
+    destination = return_to or "/settings/embeddings"
+    running = fetch_one("SELECT id FROM machine_review_jobs WHERE status = 'running' LIMIT 1")
+    if running:
+        return RedirectResponse(
+            add_query_param(destination, machine_review_error=f"機械補助レビューJob #{running['id']} が実行中です。完了後に再実行してください。"),
+            status_code=303,
+        )
     try:
-        run_machine_review(target_type, target_id, reference_set_version_id=reference_set_version_id)
+        machine_review_job_id = create_machine_review_job(target_type, target_id, reference_set_version_id=reference_set_version_id)
+        start_machine_review_job(machine_review_job_id)
+    except (RuntimeError, ValueError) as exc:
+        return RedirectResponse(add_query_param(destination, machine_review_error=str(exc)), status_code=303)
+    return RedirectResponse(
+        add_query_param(
+            destination,
+            machine_review_job_id=machine_review_job_id,
+            machine_review_message=f"機械補助レビューJob #{machine_review_job_id} を開始しました。",
+        ),
+        status_code=303,
+    )
+
+
+@app.get("/machine-review/jobs/{machine_review_job_id}/status")
+def machine_review_job_status(machine_review_job_id: int) -> JSONResponse:
+    row = fetch_one("SELECT * FROM machine_review_jobs WHERE id = ?", (machine_review_job_id,))
+    if row is None:
+        raise HTTPException(status_code=404, detail="Machine Review Job not found")
+    return JSONResponse(
+        {
+            "id": row["id"],
+            "status": row["status"],
+            "total_count": row["total_count"],
+            "processed_count": row["processed_count"],
+            "scored_count": row["scored_count"],
+            "skipped_count": row["skipped_count"],
+            "failed_count": row["failed_count"],
+            "error_message": row["error_message"],
+            "ended_at": row["ended_at"],
+            "return_code": row["return_code"],
+        }
+    )
+
+
+@app.post("/machine-review/jobs/{machine_review_job_id}/stop")
+def machine_review_job_stop(machine_review_job_id: int, return_to: str = Form("")) -> RedirectResponse:
+    try:
+        stop_machine_review_job(machine_review_job_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return RedirectResponse(return_to or "/settings/embeddings", status_code=303)
@@ -2283,6 +2334,7 @@ def job_detail(
         epoch_summaries=decorated_epochs,
         epoch_visual_summaries=build_epoch_visual_summaries(decorated_epochs, samples, candidate_map, machine_epoch_summary),
         review_candidates=review_candidates,
+        machine_review_readiness=machine_review_readiness("training_job_samples", job_id),
         machine_review_scores=scores_for_job(job_id),
         machine_epoch_summary=machine_epoch_summary,
         candidate_map=candidate_map,
@@ -3200,6 +3252,7 @@ def validation_run_detail(request: Request, run_id: int, generation_error: str |
         generation_error=generation_error,
         running_generation=current_running_validation_generation(),
         validation_embedding_coverage=embedding_coverage("validation_run", run_id),
+        machine_review_readiness=machine_review_readiness("validation_run_images", run_id),
         machine_review_scores=scores_for_validation_run(run_id),
         machine_score_map=score_map_for_validation(run_id),
         machine_weight_summary=validation_weight_summary(run_id),
@@ -3232,6 +3285,7 @@ def validation_run_export_report(request: Request, run_id: int) -> HTMLResponse:
         apply_result=None,
         report_path=report_path,
         validation_embedding_coverage=embedding_coverage("validation_run", run_id),
+        machine_review_readiness=machine_review_readiness("validation_run_images", run_id),
         machine_review_scores=scores_for_validation_run(run_id),
         machine_score_map=score_map_for_validation(run_id),
         machine_weight_summary=validation_weight_summary(run_id),
@@ -3264,6 +3318,7 @@ def validation_run_apply_to_profile(request: Request, run_id: int) -> HTMLRespon
         apply_result=apply_result,
         report_path=None,
         validation_embedding_coverage=embedding_coverage("validation_run", run_id),
+        machine_review_readiness=machine_review_readiness("validation_run_images", run_id),
         machine_review_scores=scores_for_validation_run(run_id),
         machine_score_map=score_map_for_validation(run_id),
         machine_weight_summary=validation_weight_summary(run_id),

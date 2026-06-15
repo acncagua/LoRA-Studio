@@ -55,7 +55,7 @@
 
 {% if reference_embedding_coverage %}
 <section class="notice embedding-coverage">
-  <h2>リファレンス画像Embedding状況</h2>
+  <h2>リファレンス画像Embedding状況 <span class="muted">Reference Embedding Coverage</span></h2>
   <p>対象Reference Version: #{{ reference_set.current_version_id }} / モデル: {{ reference_embedding_coverage.model_name }}</p>
   <div class="summary-grid">
     <div><span>画像</span><strong>{{ reference_embedding_coverage.total }}</strong></div>
@@ -89,7 +89,7 @@
 
 {% if machine_review_readiness %}
 <section class="notice">
-  <h2>機械補助レビュー準備状況</h2>
+  <h2>機械補助レビュー準備状況 <span class="muted">Machine Review readiness</span></h2>
   <p>Reference Setの枚数・Completeness・Embedding状況から、機械補助レビューに使える状態かを確認します。</p>
   <div class="summary-grid">
     <div><span>準備</span><strong><span class="label {{ machine_review_readiness.label|lower }}">{{ machine_review_readiness.label }}</span></strong></div>

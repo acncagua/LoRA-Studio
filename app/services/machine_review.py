@@ -2,17 +2,22 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
+from app import settings as app_settings
 from app.db import connect, fetch_all, fetch_one, utc_now
 from app.services.embedding_service import (
     EmbeddingSource,
     active_embedding_model,
     dataset_image_sources,
+    embedding_coverage,
     embedding_status_for_source,
     latest_embedding_for,
     reference_image_sources,
@@ -449,51 +454,13 @@ def upsert_machine_review_score(values: dict[str, Any]) -> int:
         return int(cur.lastrowid)
 
 
-def create_machine_review_job(target_type: str, target_id: int, context: dict[str, Any], model_id: str) -> int:
-    sources = sources_for_target(target_type, target_id)
-    now = utc_now()
-    with connect() as conn:
-        cur = conn.execute(
-            """
-            INSERT INTO machine_review_jobs(
-                target_type, target_id, reference_set_id, reference_set_version_id,
-                dataset_id, dataset_version_id, embedding_model_id, status, total_count,
-                created_at, updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'planned', ?, ?, ?)
-            """,
-            (
-                target_type,
-                target_id,
-                context.get("reference_set_id"),
-                context.get("reference_set_version_id"),
-                context.get("dataset_id"),
-                context.get("dataset_version_id"),
-                model_id,
-                len(sources),
-                now,
-                now,
-            ),
-        )
-        return int(cur.lastrowid)
-
-
-def sources_for_target(target_type: str, target_id: int) -> list[EmbeddingSource]:
-    if target_type == "training_job_samples":
-        return sample_image_sources(target_id)
-    if target_type == "validation_run_images":
-        return validation_image_sources(target_id)
-    return []
-
-
-def run_machine_review(target_type: str, target_id: int, reference_set_version_id: int | None = None) -> dict[str, Any]:
+def machine_review_context(target_type: str, target_id: int, reference_set_version_id: int | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
     settings = load_machine_review_settings()
     model = active_embedding_model()
     if settings.get("active_embedding_model_id"):
         row = fetch_one("SELECT * FROM embedding_models WHERE id = ?", (settings["active_embedding_model_id"],))
         if row:
             model = dict(row)
-    model_id = model.get("id") or "mock_image_512"
     if target_type == "training_job_samples":
         context = context_for_training_job(target_id)
     elif target_type == "validation_run_images":
@@ -505,7 +472,67 @@ def run_machine_review(target_type: str, target_id: int, reference_set_version_i
         if ref:
             context["reference_set_version_id"] = reference_set_version_id
             context["reference_set_id"] = ref["reference_set_id"]
-    job_id = create_machine_review_job(target_type, target_id, context, model_id)
+    return context, model
+
+
+def create_machine_review_job(target_type: str, target_id: int, context: dict[str, Any] | None = None, model_id: str | None = None, reference_set_version_id: int | None = None) -> int:
+    if context is None or model_id is None:
+        context, model = machine_review_context(target_type, target_id, reference_set_version_id=reference_set_version_id)
+        model_id = model.get("id") or "mock_image_512"
+    sources = sources_for_target(target_type, target_id)
+    now = utc_now()
+    log_dir = app_settings.LOGS_DIR / "machine_review"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    with connect() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO machine_review_jobs(
+                target_type, target_id, reference_set_id, reference_set_version_id,
+                dataset_id, dataset_version_id, embedding_model_id, status, total_count,
+                log_path, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'planned', ?, ?, ?, ?)
+            """,
+            (
+                target_type,
+                target_id,
+                context.get("reference_set_id"),
+                context.get("reference_set_version_id"),
+                context.get("dataset_id"),
+                context.get("dataset_version_id"),
+                model_id,
+                len(sources),
+                "",
+                now,
+                now,
+            ),
+        )
+        job_id = int(cur.lastrowid)
+        log_path = log_dir / f"machine_review_job_{job_id:06d}.log"
+        conn.execute("UPDATE machine_review_jobs SET log_path = ? WHERE id = ?", (str(log_path), job_id))
+        return job_id
+
+
+def sources_for_target(target_type: str, target_id: int) -> list[EmbeddingSource]:
+    if target_type == "training_job_samples":
+        return sample_image_sources(target_id)
+    if target_type == "validation_run_images":
+        return validation_image_sources(target_id)
+    return []
+
+
+def run_machine_review_job(job_id: int) -> dict[str, Any]:
+    job = fetch_one("SELECT * FROM machine_review_jobs WHERE id = ?", (job_id,))
+    if job is None:
+        raise ValueError(f"Machine Review Job not found: {job_id}")
+    target_type = job["target_type"]
+    target_id = int(job["target_id"])
+    context, model = machine_review_context(target_type, target_id, reference_set_version_id=job["reference_set_version_id"])
+    model_id = job["embedding_model_id"] or model.get("id") or "mock_image_512"
+    model_row = fetch_one("SELECT * FROM embedding_models WHERE id = ?", (model_id,))
+    if model_row:
+        model = dict(model_row)
+    settings = load_machine_review_settings()
     sources = sources_for_target(target_type, target_id)
     vector_cache: VectorCache = {}
     now = utc_now()
@@ -513,20 +540,36 @@ def run_machine_review(target_type: str, target_id: int, reference_set_version_i
     scored = skipped = failed = processed = 0
     error_message = ""
     with connect() as conn:
-        conn.execute("UPDATE machine_review_jobs SET status = 'running', started_at = ?, updated_at = ? WHERE id = ?", (now, now, job_id))
+        conn.execute(
+            "UPDATE machine_review_jobs SET status = 'running', started_at = COALESCE(started_at, ?), updated_at = ? WHERE id = ?",
+            (now, now, job_id),
+        )
     for source in sources:
         processed += 1
         try:
             score_source(source, context, model, settings, vector_cache)
             scored += 1
+            print(f"[{processed}/{len(sources)}] scored {source.source_type}#{source.source_id}", flush=True)
         except Exception as exc:
             message = str(exc)
             if "Embedding is not ready" in message:
                 skipped += 1
                 error_message = message
+                print(f"[{processed}/{len(sources)}] skipped {source.source_type}#{source.source_id}: {message}", flush=True)
             else:
                 failed += 1
                 error_message = message
+                print(f"[{processed}/{len(sources)}] failed {source.source_type}#{source.source_id}: {message}", flush=True)
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE machine_review_jobs
+                SET processed_count = ?, scored_count = ?, skipped_count = ?,
+                    failed_count = ?, error_message = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (processed, scored, skipped, failed, error_message, utc_now(), job_id),
+            )
     elapsed = int(time.time() - started)
     ended = utc_now()
     status = "completed" if failed == 0 else "failed"
@@ -535,12 +578,176 @@ def run_machine_review(target_type: str, target_id: int, reference_set_version_i
             """
             UPDATE machine_review_jobs
             SET status = ?, processed_count = ?, scored_count = ?, skipped_count = ?,
-                failed_count = ?, ended_at = ?, elapsed_seconds = ?, error_message = ?, updated_at = ?
+                failed_count = ?, ended_at = ?, elapsed_seconds = ?, return_code = ?,
+                error_message = ?, updated_at = ?
             WHERE id = ?
             """,
-            (status, processed, scored, skipped, failed, ended, elapsed, error_message, ended, job_id),
+            (status, processed, scored, skipped, failed, ended, elapsed, 0 if status == "completed" else 1, error_message, ended, job_id),
         )
     return {"job_id": job_id, "status": status, "processed": processed, "scored": scored, "failed": failed}
+
+
+def run_machine_review(target_type: str, target_id: int, reference_set_version_id: int | None = None) -> dict[str, Any]:
+    job_id = create_machine_review_job(target_type, target_id, reference_set_version_id=reference_set_version_id)
+    return run_machine_review_job(job_id)
+
+
+def start_machine_review_job(job_id: int) -> None:
+    running = fetch_one("SELECT id FROM machine_review_jobs WHERE status = 'running' AND id != ? LIMIT 1", (job_id,))
+    if running:
+        raise RuntimeError(f"Machine Review Job #{running['id']} が実行中です。")
+    row = fetch_one("SELECT * FROM machine_review_jobs WHERE id = ?", (job_id,))
+    if row is None:
+        raise RuntimeError("Machine Review Jobが見つかりません。")
+    if row["status"] not in {"planned", "failed", "stopped"}:
+        raise RuntimeError(f"Machine Review Job #{job_id} は開始できない状態です: {row['status']}")
+    argv = [sys.executable, "-m", "app.services.machine_review_worker", "--machine-review-job-id", str(job_id)]
+    log_path = Path(row["log_path"] or app_settings.LOGS_DIR / "machine_review" / f"machine_review_job_{job_id:06d}.log")
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_handle = log_path.open("a", encoding="utf-8", errors="replace")
+    proc = subprocess.Popen(
+        argv,
+        cwd=str(app_settings.ROOT_DIR),
+        stdout=log_handle,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    log_handle.close()
+    now = utc_now()
+    with connect() as conn:
+        conn.execute(
+            "UPDATE machine_review_jobs SET status = 'running', process_id = ?, started_at = ?, updated_at = ? WHERE id = ?",
+            (proc.pid, now, now, job_id),
+        )
+
+
+def stop_machine_review_job(job_id: int) -> None:
+    row = fetch_one("SELECT * FROM machine_review_jobs WHERE id = ?", (job_id,))
+    if row is None:
+        return
+    pid = row["process_id"]
+    if pid:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, text=True, check=False)
+        else:
+            try:
+                os.kill(int(pid), 15)
+            except OSError:
+                pass
+    now = utc_now()
+    with connect() as conn:
+        conn.execute(
+            "UPDATE machine_review_jobs SET status = 'stopped', ended_at = ?, updated_at = ?, return_code = COALESCE(return_code, -1) WHERE id = ?",
+            (now, now, job_id),
+        )
+
+
+def latest_machine_review_jobs(limit: int = 20) -> list[dict[str, Any]]:
+    return [
+        dict(row)
+        for row in fetch_all(
+            "SELECT * FROM machine_review_jobs ORDER BY id DESC LIMIT ?",
+            (limit,),
+        )
+    ]
+
+
+def machine_review_score_coverage(target_type: str, target_id: int, model_id: str) -> dict[str, Any]:
+    if target_type == "training_job_samples":
+        source_type = "sample_image"
+        where = "job_id = ?"
+    elif target_type == "validation_run_images":
+        source_type = "validation_image"
+        where = "validation_run_id = ?"
+    else:
+        source_type = ""
+        where = "0"
+    total = len(sources_for_target(target_type, target_id))
+    row = fetch_one(
+        f"""
+        SELECT COUNT(DISTINCT source_id) AS count
+        FROM machine_review_scores
+        WHERE source_type = ? AND embedding_model_id = ? AND {where}
+        """,
+        (source_type, model_id, target_id),
+    )
+    ready = int(row["count"] or 0) if row else 0
+    return {"total": total, "ready": ready, "missing": max(total - ready, 0), "ready_rate": (ready / total) if total else 0}
+
+
+def readiness_label(coverage: dict[str, Any] | None) -> str:
+    if not coverage or int(coverage.get("total") or 0) == 0:
+        return "missing"
+    if int(coverage.get("ready") or 0) >= int(coverage.get("total") or 0):
+        return "ok"
+    if int(coverage.get("ready") or 0) > 0:
+        return "partial"
+    return "missing"
+
+
+def machine_review_readiness(target_type: str, target_id: int) -> dict[str, Any]:
+    context, model = machine_review_context(target_type, target_id)
+    model_id = model.get("id") or "mock_image_512"
+    provider = model.get("provider") or "mock"
+    reference_version_id = context.get("reference_set_version_id")
+    dataset_version_id = context.get("dataset_version_id")
+    reference_coverage = embedding_coverage("reference_set_version", int(reference_version_id)) if reference_version_id else None
+    dataset_coverage = embedding_coverage("dataset_version", int(dataset_version_id)) if dataset_version_id else None
+    if target_type == "training_job_samples":
+        target_coverage = embedding_coverage("training_job_samples", target_id)
+        target_label = "サンプル画像"
+    else:
+        target_coverage = embedding_coverage("validation_run", target_id)
+        target_label = "検証画像"
+    score_coverage = machine_review_score_coverage(target_type, target_id, model_id)
+    reference_set = fetch_one("SELECT * FROM reference_sets WHERE id = ?", (context["reference_set_id"],)) if context.get("reference_set_id") else None
+    reference_version = fetch_one("SELECT * FROM reference_set_versions WHERE id = ?", (reference_version_id,)) if reference_version_id else None
+    reference_count = int(reference_coverage.get("total", 0) if reference_coverage else 0)
+
+    warnings: list[str] = []
+    actions: list[str] = []
+    if provider == "mock":
+        warnings.append("mock providerのスコアは意味的な画像評価ではありません。機能経路テスト用です。")
+    if not reference_version_id:
+        actions.append("Reference Setを作成し、基準画像を登録してください。")
+    elif reference_count < int(load_machine_review_settings().get("minimum_reference_images_character") or 3):
+        warnings.append("Reference Setの枚数が少ないため、機械補助レビューは低信頼になります。")
+        actions.append("可能ならReference Setを増やしてください。")
+    if readiness_label(reference_coverage) != "ok":
+        actions.append("Reference画像Embeddingを計算してください。")
+    if readiness_label(dataset_coverage) != "ok":
+        actions.append("Dataset画像Embeddingを計算してください。")
+    if readiness_label(target_coverage) != "ok":
+        actions.append(f"{target_label}Embeddingを計算してください。")
+    if score_coverage["ready"] < score_coverage["total"]:
+        actions.append("機械補助レビューを実行してください。")
+    if not actions:
+        actions.append("Review Queueまたは検証画像で機械補助レビュー結果を確認してください。")
+
+    return {
+        "target_type": target_type,
+        "target_id": target_id,
+        "context": context,
+        "model": model,
+        "model_id": model_id,
+        "provider": provider,
+        "reference_set": dict(reference_set) if reference_set else None,
+        "reference_version": dict(reference_version) if reference_version else None,
+        "reference_count": reference_count,
+        "reference_coverage": reference_coverage,
+        "dataset_coverage": dataset_coverage,
+        "target_coverage": target_coverage,
+        "target_label": target_label,
+        "score_coverage": score_coverage,
+        "reference_label": readiness_label(reference_coverage),
+        "dataset_label": readiness_label(dataset_coverage),
+        "target_embedding_label": readiness_label(target_coverage),
+        "score_label": "ok" if score_coverage["ready"] >= score_coverage["total"] and score_coverage["total"] else "missing",
+        "warnings": warnings,
+        "next_actions": actions,
+    }
 
 
 def scores_for_job(job_id: int) -> list[dict[str, Any]]:

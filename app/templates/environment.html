@@ -5,7 +5,8 @@
     <button type="submit">環境情報を再読み込み</button>
   </form>
 </header>
-{% if request.query_params.get('refreshed') %}
+{% set query_params = request.query_params if request is defined and request else {} %}
+{% if query_params.get('refreshed') %}
 <p class="notice">環境情報を再読み込みしました。</p>
 {% endif %}
 <p class="muted">この画面は保存済みの環境情報を表示します。Python / Torch / GPU情報を取り直す場合だけ「環境情報を再読み込み」を押してください。</p>

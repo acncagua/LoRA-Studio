@@ -123,6 +123,37 @@
   </div>
 </section>
 
+<section id="machine-review-jobs">
+  <h2>機械補助レビューJob</h2>
+  <p class="muted">機械補助レビューはbackground jobとして実行します。mock providerの結果は意味的な画像評価ではなく、機能経路確認用です。</p>
+  <table>
+    <thead><tr><th>ID</th><th>対象種別</th><th>対象ID</th><th>状態</th><th>進捗</th><th>経過秒</th><th>ログ</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for job in machine_review_jobs %}
+      <tr>
+        <td>#{{ job.id }}</td>
+        <td>{{ job.target_type }}</td>
+        <td>{{ job.target_id }}</td>
+        <td><span class="label {{ job.status }}">{{ job.status }}</span></td>
+        <td>{{ job.processed_count }} / {{ job.total_count }} 処理済み / スコア {{ job.scored_count }} / スキップ {{ job.skipped_count }} / 失敗 {{ job.failed_count }}</td>
+        <td>{{ job.elapsed_seconds if job.elapsed_seconds is not none else '-' }}</td>
+        <td>{{ job.log_path or '-' }}</td>
+        <td>
+          {% if job.status == 'running' %}
+          <form method="post" action="/machine-review/jobs/{{ job.id }}/stop">
+            <input type="hidden" name="return_to" value="/settings/embeddings#machine-review-jobs">
+            <button class="danger" type="submit">停止</button>
+          </form>
+          {% else %}-{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="muted">機械補助レビューJobはまだありません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
 <section>
   <h2>Embedding Jobs</h2>
   <table>

@@ -52,13 +52,23 @@
     </div>
   </aside>
   <main class="content">
-    {% if request.query_params.get('embedding_error') %}
-    <p class="notice warning">{{ request.query_params.get('embedding_error') }}</p>
+    {% set query_params = request.query_params if request is defined and request else {} %}
+    {% if query_params.get('embedding_error') %}
+    <p class="notice warning">{{ query_params.get('embedding_error') }}</p>
     {% endif %}
-    {% if request.query_params.get('embedding_message') %}
-    <p class="notice" data-embedding-job-status data-embedding-job-id="{{ request.query_params.get('embedding_job_id') }}">
-      {{ request.query_params.get('embedding_message') }}
+    {% if query_params.get('embedding_message') %}
+    <p class="notice" data-embedding-job-status data-embedding-job-id="{{ query_params.get('embedding_job_id') }}">
+      {{ query_params.get('embedding_message') }}
       <span data-embedding-job-status-text>処理中...</span>
+    </p>
+    {% endif %}
+    {% if query_params.get('machine_review_error') %}
+    <p class="notice warning">{{ query_params.get('machine_review_error') }}</p>
+    {% endif %}
+    {% if query_params.get('machine_review_message') %}
+    <p class="notice" data-machine-review-job-status data-machine-review-job-id="{{ query_params.get('machine_review_job_id') }}">
+      {{ query_params.get('machine_review_message') }}
+      <span data-machine-review-job-status-text>処理中...</span>
     </p>
     {% endif %}
     {% block content %}{% endblock %}
