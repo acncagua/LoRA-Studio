@@ -425,6 +425,7 @@ def monitor_generation(
     if status == "completed":
         try:
             imported = import_generated_images(int(run_id), generation_id)
+            auto_machine_review_after_generation(run_id, log_path)
             write_validation_matrix(run_id)
         except Exception as exc:
             status = "failed"
@@ -561,6 +562,8 @@ def reconcile_stale_validation_generations() -> int:
         if completed:
             try:
                 import_generated_images(run_id, generation_id)
+                auto_machine_review_after_generation(run_id, Path(row["log_path"]) if row["log_path"] else None)
+                write_validation_matrix(run_id)
             except Exception as exc:
                 # Keep the generation completed if sd-scripts finished; record import trouble.
                 with connect() as conn:
@@ -614,9 +617,63 @@ def count_generated_images(output_dir: Path) -> int:
     return sum(1 for path in output_dir.rglob("*") if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES)
 
 
+def auto_machine_review_after_generation(run_id: int, log_path: Path | None = None) -> None:
+    """Run the light mock-only assist path after sd-scripts validation generation."""
+    try:
+        from app.services.embedding_service import active_embedding_model, create_embedding_job
+        from app.services.embedding_worker import run_embedding_job
+        from app.services.machine_review import context_for_validation_run, run_machine_review
+    except Exception as exc:
+        append_generation_note(log_path, f"Machine assist auto step skipped: import failed: {exc}")
+        return
+
+    try:
+        model = active_embedding_model()
+        if (model.get("provider") or "mock") != "mock":
+            append_generation_note(log_path, "Machine assist auto step skipped: active embedding provider is not mock.")
+            return
+        running_embedding = fetch_one("SELECT id FROM embedding_jobs WHERE status = 'running' LIMIT 1")
+        if running_embedding:
+            append_generation_note(log_path, f"Machine assist auto step skipped: Embedding Job #{running_embedding['id']} is running.")
+            return
+
+        context = context_for_validation_run(run_id)
+        targets: list[tuple[str, int]] = []
+        if context.get("reference_set_version_id"):
+            targets.append(("reference_set_version", int(context["reference_set_version_id"])))
+        targets.append(("validation_run", run_id))
+
+        for job_type, target_id in targets:
+            embedding_job_id = create_embedding_job(job_type, target_id, recompute="missing")
+            embedding_job = fetch_one("SELECT total_count FROM embedding_jobs WHERE id = ?", (embedding_job_id,))
+            total = int(embedding_job["total_count"] or 0) if embedding_job else 0
+            if total:
+                append_generation_note(log_path, f"Auto embedding: {job_type} #{target_id}, {total} item(s).")
+                run_embedding_job(embedding_job_id)
+            else:
+                append_generation_note(log_path, f"Auto embedding: {job_type} #{target_id}, no missing item.")
+
+        result = run_machine_review("validation_run_images", run_id)
+        append_generation_note(log_path, f"Auto machine assist completed: scored={result.get('scored')} failed={result.get('failed')}.")
+    except Exception as exc:
+        append_generation_note(log_path, f"Machine assist auto step failed: {exc}")
+
+
+def append_generation_note(log_path: Path | None, message: str) -> None:
+    if not log_path:
+        return
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8", errors="replace") as handle:
+            handle.write(f"\n[LoRA-Studio] {message}\n")
+    except OSError:
+        pass
+
+
 def write_validation_matrix(run_id: int) -> str:
     conditions = [dict(row) for row in fetch_all("SELECT * FROM validation_expected_conditions WHERE validation_run_id = ? ORDER BY prompt_key, hires_enabled, seed, lora_weight", (run_id,))]
     images = [dict(row) for row in fetch_all("SELECT * FROM validation_images WHERE validation_run_id = ? ORDER BY prompt_key, hires_enabled, seed, lora_weight, id", (run_id,))]
+    score_by_image_id = validation_machine_score_map([run_id])
     images_by_condition: dict[int, list[dict[str, Any]]] = {}
     grid_images = []
     for image in images:
@@ -634,7 +691,7 @@ def write_validation_matrix(run_id: int) -> str:
         "<!doctype html>",
         "<meta charset=\"utf-8\">",
         f"<title>検証Matrix #{run_id}</title>",
-        "<style>body{font-family:'Segoe UI','Yu Gothic UI',sans-serif;background:#f6f7f4;color:#20231f;margin:24px;overflow-x:auto}table{border-collapse:collapse;width:max-content;min-width:100%;margin:16px 0;background:white}th,td{border:1px solid #d8ddd4;padding:8px;vertical-align:top}th{background:#eef2eb}.cell{min-width:1040px}.missing{color:#8b4f39;font-weight:700}img{width:auto;max-width:none;border-radius:6px;display:block;margin-bottom:6px}.muted{color:#657064;font-size:12px}.matrix-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 18px}.button{display:inline-flex;align-items:center;min-height:34px;padding:7px 12px;border-radius:6px;background:#2f7668;color:white;text-decoration:none;font-weight:700;border:0;cursor:pointer;font:inherit}.button.secondary{background:#dce4df;color:#20231f}.matrix-review{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr)) auto auto;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid #d8ddd4;align-items:end}.matrix-review label{display:grid;gap:3px;font-size:12px;color:#4a554f}.matrix-review input,.matrix-review select,.matrix-review textarea{box-sizing:border-box;width:100%;border:1px solid #cfd8d1;border-radius:5px;padding:5px;font:inherit}.matrix-review textarea{min-height:34px;resize:vertical}.matrix-review button{border:0;border-radius:6px;background:#2f7668;color:white;font-weight:700;padding:7px 9px;cursor:pointer}.matrix-review button:disabled{background:#cfd8d1;cursor:wait}.matrix-review .save-status{font-size:12px;color:#2f7668;font-weight:700;min-height:16px}.matrix-review.saved{outline:2px solid #b8ded0;border-radius:6px}</style>",
+        "<style>body{font-family:'Segoe UI','Yu Gothic UI',sans-serif;background:#f6f7f4;color:#20231f;margin:24px;overflow-x:auto}table{border-collapse:collapse;width:max-content;min-width:100%;margin:16px 0;background:white}th,td{border:1px solid #d8ddd4;padding:8px;vertical-align:top}th{background:#eef2eb}.cell{min-width:1040px}.missing{color:#8b4f39;font-weight:700}img{width:auto;max-width:none;border-radius:6px;display:block;margin-bottom:6px}.muted{color:#657064;font-size:12px}.matrix-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 18px}.button{display:inline-flex;align-items:center;min-height:34px;padding:7px 12px;border-radius:6px;background:#2f7668;color:white;text-decoration:none;font-weight:700;border:0;cursor:pointer;font:inherit}.button.secondary{background:#dce4df;color:#20231f}.machine-score{display:grid;gap:4px;margin:8px 0;padding:8px;border:1px solid #d8ddd4;border-radius:6px;background:#f8faf7;font-size:13px}.machine-score .badges{display:flex;flex-wrap:wrap;gap:6px}.badge{display:inline-flex;align-items:center;justify-content:center;min-width:56px;padding:3px 8px;border-radius:6px;background:#dce4df;font-weight:700}.badge.low,.badge.low_confidence,.badge.unavailable,.badge.unknown{background:#dce4df}.badge.primary_candidate,.badge.secondary_candidate{background:#c6e7d8}.badge.possible_overfit,.badge.high{background:#f0c2c2}.matrix-review{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr)) auto auto;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid #d8ddd4;align-items:end}.matrix-review label{display:grid;gap:3px;font-size:12px;color:#4a554f}.matrix-review input,.matrix-review select,.matrix-review textarea{box-sizing:border-box;width:100%;border:1px solid #cfd8d1;border-radius:5px;padding:5px;font:inherit}.matrix-review textarea{min-height:34px;resize:vertical}.matrix-review button{border:0;border-radius:6px;background:#2f7668;color:white;font-weight:700;padding:7px 9px;cursor:pointer}.matrix-review button:disabled{background:#cfd8d1;cursor:wait}.matrix-review .save-status{font-size:12px;color:#2f7668;font-weight:700;min-height:16px}.matrix-review.saved{outline:2px solid #b8ded0;border-radius:6px}</style>",
         f"<h1>検証Matrix #{run_id}</h1>",
         matrix_navigation(run_id),
         "<p class=\"muted\">画像は原寸で表示します。横スクロールしながら細部を比較してください。Matrix上では総合点・強さ・採用判断・メモだけを素早く保存できます。</p>",
@@ -656,6 +713,7 @@ def write_validation_matrix(run_id: int) -> str:
                     if linked:
                         image = linked[-1]
                         lines.append(f"<img src=\"/validation-images/{int(image['id'])}\" alt=\"validation image\">")
+                        lines.append(matrix_machine_score(score_by_image_id.get(int(image['id']))))
                         lines.append(matrix_review_form(run_id, image))
                     else:
                         lines.append("<div class=\"missing\">missing</div>")
@@ -724,6 +782,7 @@ def build_epoch_cross_matrix_html(job_id: int, run_ids: list[int]) -> str:
             tuple(ordered_run_ids),
         )
     ]
+    score_by_image_id = validation_machine_score_map(ordered_run_ids)
     condition_by_key: dict[tuple[int, str, int, int, str], dict[str, Any]] = {}
     sections: dict[tuple[str, int], dict[str, set[Any]]] = {}
     for condition in conditions:
@@ -784,6 +843,7 @@ def build_epoch_cross_matrix_html(job_id: int, run_ids: list[int]) -> str:
                         image = images_by_condition.get(int(condition["id"]))
                         if image:
                             lines.append(f"<img src=\"/validation-images/{int(image['id'])}\" alt=\"validation image\">")
+                            lines.append(matrix_machine_score(score_by_image_id.get(int(image['id']))))
                             lines.append(matrix_review_form(int(run["id"]), image))
                         else:
                             lines.append("<div class=\"missing\">画像未登録</div>")
@@ -817,6 +877,79 @@ def cross_matrix_navigation(job_id: int) -> str:
     )
 
 
+def validation_machine_score_map(run_ids: list[int]) -> dict[int, dict[str, Any]]:
+    if not run_ids:
+        return {}
+    unique_run_ids = list(dict.fromkeys(int(run_id) for run_id in run_ids if int(run_id) > 0))
+    if not unique_run_ids:
+        return {}
+    placeholders = ",".join("?" for _ in unique_run_ids)
+    rows = fetch_all(
+        f"""
+        SELECT *
+        FROM machine_review_scores
+        WHERE source_type = 'validation_image'
+          AND validation_run_id IN ({placeholders})
+        ORDER BY updated_at DESC, id DESC
+        """,
+        tuple(unique_run_ids),
+    )
+    scores: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        source_id = row["source_id"]
+        if source_id is None:
+            continue
+        scores.setdefault(int(source_id), dict(row))
+    return scores
+
+
+def matrix_machine_score(score: dict[str, Any] | None) -> str:
+    if not score:
+        return "<div class=\"machine-score\"><div class=\"muted\">機械補助レビュー: 未計算</div></div>"
+    confidence = str(score.get("confidence_label") or "unknown")
+    assist = str(score.get("assist_label") or "unavailable")
+    overfit = str(score.get("overfit_risk_label") or "unknown")
+    reference = format_score_number(score.get("reference_similarity_max"))
+    dataset = format_score_number(score.get("nearest_dataset_similarity"))
+    nearest_ref = f"#{int(score['nearest_reference_image_id'])}" if score.get("nearest_reference_image_id") is not None else "-"
+    nearest_dataset = f"#{int(score['nearest_dataset_image_id'])}" if score.get("nearest_dataset_image_id") is not None else "-"
+    return (
+        "<div class=\"machine-score\">"
+        "<div class=\"badges\">"
+        f"<span class=\"badge {html.escape(confidence)}\">信頼度 {html.escape(machine_label(confidence))}</span>"
+        f"<span class=\"badge {html.escape(assist)}\">{html.escape(machine_label(assist))}</span>"
+        f"<span class=\"badge {html.escape(overfit)}\">過学習 {html.escape(machine_label(overfit))}</span>"
+        "</div>"
+        f"<div>Reference {reference} ({html.escape(nearest_ref)}) / Dataset {dataset} ({html.escape(nearest_dataset)})</div>"
+        "</div>"
+    )
+
+
+def format_score_number(value: Any) -> str:
+    if value is None:
+        return "-"
+    try:
+        return f"{float(value):.4f}"
+    except (TypeError, ValueError):
+        return "-"
+
+
+def machine_label(value: str) -> str:
+    labels = {
+        "high": "高",
+        "medium": "中",
+        "low": "低",
+        "unknown": "不明",
+        "unavailable": "利用不可",
+        "low_confidence": "低信頼",
+        "primary_candidate": "有力候補",
+        "secondary_candidate": "候補",
+        "check_manually": "要確認",
+        "possible_overfit": "過学習注意",
+    }
+    return labels.get(value, value or "-")
+
+
 def cross_matrix_style() -> str:
     return (
         "<style>"
@@ -827,6 +960,7 @@ def cross_matrix_style() -> str:
         "img{width:auto;max-width:none;border-radius:6px;display:block;margin-bottom:6px}.muted{color:#657064;font-size:12px}"
         ".matrix-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 18px}.button{display:inline-flex;align-items:center;min-height:34px;padding:7px 12px;border-radius:6px;background:#2f7668;color:white;text-decoration:none;font-weight:700;border:0;cursor:pointer;font:inherit}.button.secondary{background:#dce4df;color:#20231f}"
         ".summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:10px 0 20px}.summary-card{background:white;border:1px solid #d8ddd4;border-radius:6px;padding:10px}"
+        ".machine-score{display:grid;gap:4px;margin:8px 0;padding:8px;border:1px solid #d8ddd4;border-radius:6px;background:#f8faf7;font-size:13px}.machine-score .badges{display:flex;flex-wrap:wrap;gap:6px}.badge{display:inline-flex;align-items:center;justify-content:center;min-width:56px;padding:3px 8px;border-radius:6px;background:#dce4df;font-weight:700}.badge.low,.badge.low_confidence,.badge.unavailable,.badge.unknown{background:#dce4df}.badge.primary_candidate,.badge.secondary_candidate{background:#c6e7d8}.badge.possible_overfit,.badge.high{background:#f0c2c2}"
         ".matrix-review{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr)) auto auto;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid #d8ddd4;align-items:end}.matrix-review label{display:grid;gap:3px;font-size:12px;color:#4a554f}.matrix-review input,.matrix-review select,.matrix-review textarea{box-sizing:border-box;width:100%;border:1px solid #cfd8d1;border-radius:5px;padding:5px;font:inherit}.matrix-review textarea{min-height:34px;resize:vertical}.matrix-review button{border:0;border-radius:6px;background:#2f7668;color:white;font-weight:700;padding:7px 9px;cursor:pointer}.matrix-review button:disabled{background:#cfd8d1;cursor:wait}.matrix-review .save-status{font-size:12px;color:#2f7668;font-weight:700;min-height:16px}.matrix-review.saved{outline:2px solid #b8ded0;border-radius:6px}"
         "</style>"
     )

@@ -13,6 +13,7 @@ datasets/*
 !datasets/.gitkeep
 logs/*.log
 logs/*.json
+logs/embeddings/
 server*.log
 runs/job_*/
 runs/comparisons/

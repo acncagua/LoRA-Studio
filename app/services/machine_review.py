@@ -145,6 +145,9 @@ def context_for_validation_run(run_id: int) -> dict[str, Any]:
     }
 
 
+VectorCache = dict[tuple[str, int | None, str, str], tuple[np.ndarray, dict[str, Any]] | None]
+
+
 def vector_for_source(source: EmbeddingSource, model_id: str) -> tuple[np.ndarray, dict[str, Any]] | None:
     if embedding_status_for_source(source, model_id) != "ready":
         return None
@@ -160,6 +163,15 @@ def vector_for_source(source: EmbeddingSource, model_id: str) -> tuple[np.ndarra
     return vector, embedding
 
 
+def cached_vector_for_source(source: EmbeddingSource, model_id: str, cache: VectorCache | None = None) -> tuple[np.ndarray, dict[str, Any]] | None:
+    if cache is None:
+        return vector_for_source(source, model_id)
+    key = (source.source_type, source.source_id, source.source_path, model_id)
+    if key not in cache:
+        cache[key] = vector_for_source(source, model_id)
+    return cache[key]
+
+
 def similarity(a: np.ndarray, b: np.ndarray, normalized: bool) -> float:
     if normalized:
         return float(np.dot(a, b))
@@ -169,10 +181,16 @@ def similarity(a: np.ndarray, b: np.ndarray, normalized: bool) -> float:
     return float(np.dot(a, b) / denom)
 
 
-def scored_neighbors(source_vec: np.ndarray, sources: list[EmbeddingSource], model_id: str, normalized: bool) -> list[dict[str, Any]]:
+def scored_neighbors(
+    source_vec: np.ndarray,
+    sources: list[EmbeddingSource],
+    model_id: str,
+    normalized: bool,
+    vector_cache: VectorCache | None = None,
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for target in sources:
-        loaded = vector_for_source(target, model_id)
+        loaded = cached_vector_for_source(target, model_id, vector_cache)
         if loaded is None:
             continue
         vec, embedding = loaded
@@ -277,9 +295,15 @@ def assist_label(ref_max: float | None, overfit: str, confidence: str, provider:
     return "check_manually", score
 
 
-def score_source(source: EmbeddingSource, context: dict[str, Any], model: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+def score_source(
+    source: EmbeddingSource,
+    context: dict[str, Any],
+    model: dict[str, Any],
+    settings: dict[str, Any],
+    vector_cache: VectorCache | None = None,
+) -> dict[str, Any]:
     model_id = model["id"]
-    loaded = vector_for_source(source, model_id)
+    loaded = cached_vector_for_source(source, model_id, vector_cache)
     if loaded is None:
         raise ValueError(f"Embedding is not ready: {source.source_type}#{source.source_id}")
     source_vec, embedding = loaded
@@ -292,7 +316,7 @@ def score_source(source: EmbeddingSource, context: dict[str, Any], model: dict[s
     if context.get("reference_set_version_id"):
         ver = fetch_one("SELECT completeness_label FROM reference_set_versions WHERE id = ?", (context["reference_set_version_id"],))
         ref_label = ver["completeness_label"] if ver else None
-    ref_scores = scored_neighbors(source_vec, refs, model_id, normalized)
+    ref_scores = scored_neighbors(source_vec, refs, model_id, normalized, vector_cache)
     ref_values = [row["similarity"] for row in ref_scores]
     ref_avg = sum(ref_values) / len(ref_values) if ref_values else None
     ref_max = ref_values[0] if ref_values else None
@@ -300,7 +324,7 @@ def score_source(source: EmbeddingSource, context: dict[str, Any], model: dict[s
 
     dataset_scores: list[dict[str, Any]] = []
     if settings.get("include_dataset_nearest_check") and context.get("dataset_version_id"):
-        dataset_scores = scored_neighbors(source_vec, dataset_image_sources(int(context["dataset_version_id"])), model_id, normalized)
+        dataset_scores = scored_neighbors(source_vec, dataset_image_sources(int(context["dataset_version_id"])), model_id, normalized, vector_cache)
     dataset_values = [row["similarity"] for row in dataset_scores]
     dataset_avg = sum(dataset_values) / len(dataset_values) if dataset_values else None
     nearest_dataset = dataset_scores[0] if dataset_scores else None
@@ -483,6 +507,7 @@ def run_machine_review(target_type: str, target_id: int, reference_set_version_i
             context["reference_set_id"] = ref["reference_set_id"]
     job_id = create_machine_review_job(target_type, target_id, context, model_id)
     sources = sources_for_target(target_type, target_id)
+    vector_cache: VectorCache = {}
     now = utc_now()
     started = time.time()
     scored = skipped = failed = processed = 0
@@ -492,7 +517,7 @@ def run_machine_review(target_type: str, target_id: int, reference_set_version_i
     for source in sources:
         processed += 1
         try:
-            score_source(source, context, model, settings)
+            score_source(source, context, model, settings, vector_cache)
             scored += 1
         except Exception as exc:
             message = str(exc)

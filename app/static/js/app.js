@@ -70,6 +70,266 @@ document.addEventListener("submit", async (event) => {
   await submitAdoptionForm(form);
 });
 
+document.addEventListener("submit", (event) => {
+  const form = event.target.closest("[data-embedding-job-form]");
+  if (!form) {
+    return;
+  }
+  const button = form.querySelector("button[type='submit']");
+  if (button) {
+    button.disabled = true;
+    button.dataset.originalText = button.textContent;
+    button.textContent = "処理開始中...";
+  }
+  document.querySelectorAll("[data-embedding-job-form] button[type='submit']").forEach((otherButton) => {
+    otherButton.disabled = true;
+  });
+});
+
+document.addEventListener("submit", async (event) => {
+  const form = event.target.closest("[data-reference-candidate-form]");
+  if (!form) {
+    return;
+  }
+  event.preventDefault();
+  await addReferenceCandidate(form);
+});
+
+document.addEventListener("submit", async (event) => {
+  const form = event.target.closest("[data-reference-image-delete-form]");
+  if (!form) {
+    return;
+  }
+  event.preventDefault();
+  await deleteReferenceImage(form);
+});
+
+function initEmbeddingJobStatusPolling() {
+  const panel = document.querySelector("[data-embedding-job-status]");
+  if (!panel) {
+    return;
+  }
+  const jobId = panel.getAttribute("data-embedding-job-id");
+  const statusText = panel.querySelector("[data-embedding-job-status-text]");
+  if (!jobId || !statusText) {
+    return;
+  }
+
+  const poll = async () => {
+    try {
+      const response = await fetch(`/embeddings/jobs/${jobId}/status`, {
+        headers: { "Accept": "application/json" },
+      });
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      const payload = await response.json();
+      const total = payload.total_count ?? 0;
+      const processed = payload.processed_count ?? 0;
+      if (payload.status === "completed") {
+        statusText.textContent = `完了: ${payload.ready_count ?? processed} / ${total} 件`;
+        panel.classList.remove("warning");
+        window.setTimeout(() => {
+          const url = new URL(window.location.href);
+          url.searchParams.delete("embedding_message");
+          url.searchParams.delete("embedding_job_id");
+          url.searchParams.delete("embedding_error");
+          window.location.href = url.toString();
+        }, 900);
+        return true;
+      }
+      if (payload.status === "failed") {
+        statusText.textContent = `失敗: ${payload.error_message || ""}`;
+        panel.classList.add("warning");
+        return true;
+      }
+      if (payload.status === "stopped") {
+        statusText.textContent = `停止: ${processed} / ${total} 件`;
+        panel.classList.add("warning");
+        return true;
+      }
+      statusText.textContent = `処理中: ${processed} / ${total} 件`;
+      return false;
+    } catch (error) {
+      statusText.textContent = `状態確認に失敗: ${error.message}`;
+      panel.classList.add("warning");
+      return true;
+    }
+  };
+
+  poll().then((done) => {
+    if (done) {
+      return;
+    }
+    const timer = window.setInterval(async () => {
+      const donePolling = await poll();
+      if (donePolling) {
+        window.clearInterval(timer);
+      }
+    }, 2500);
+  });
+}
+
+async function addReferenceCandidate(form) {
+  const button = form.querySelector("button[type='submit']");
+  const row = form.closest("tr");
+  const originalText = button ? button.textContent : "";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "追加中...";
+  }
+  try {
+    const response = await fetch(form.action, {
+      method: "POST",
+      body: new FormData(form),
+      headers: { "X-Requested-With": "fetch", "Accept": "application/json" },
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.ok === false) {
+      throw new Error(payload.message || await response.text());
+    }
+    row?.classList.add("reference-candidate-added");
+    appendReferenceImageCard(payload, form);
+    updateReferenceCompleteness(payload.completeness);
+    const select = form.querySelector("select");
+    if (select) {
+      select.disabled = true;
+    }
+    if (button) {
+      button.textContent = "追加済み";
+      button.disabled = true;
+    }
+  } catch (error) {
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalText || "追加";
+    }
+    alert(`Reference画像の追加に失敗しました: ${error.message}`);
+  }
+}
+
+function appendReferenceImageCard(payload, form) {
+  const grid = document.querySelector("[data-reference-image-grid]");
+  if (!grid || !payload.image_id || !payload.image_url) {
+    return;
+  }
+  grid.querySelector("p.muted")?.remove();
+  if (grid.querySelector(`[data-reference-image-card="${payload.image_id}"]`)) {
+    return;
+  }
+
+  const selectedOption = form.querySelector("select[name='image_role'] option:checked");
+  const roleLabel = selectedOption ? selectedOption.textContent : (payload.image_role || "-");
+  const figure = document.createElement("figure");
+  figure.className = "reference-image-new";
+  figure.setAttribute("data-reference-image-card", payload.image_id);
+
+  const img = document.createElement("img");
+  img.src = payload.image_url;
+  img.alt = `Reference #${payload.image_id}`;
+  img.setAttribute("data-lightbox-src", payload.image_url);
+  img.setAttribute("data-lightbox-title", `Reference #${payload.image_id}`);
+
+  const caption = document.createElement("figcaption");
+  caption.className = "reference-caption";
+  const sizeText = `${payload.width || "-"} x ${payload.height || "-"} / ${payload.file_size || "-"} bytes`;
+  caption.append(
+    document.createTextNode(`#${payload.image_id} / ${roleLabel}`),
+    document.createElement("br"),
+    document.createTextNode(sizeText),
+    document.createElement("br"),
+    document.createTextNode(payload.caption || "")
+  );
+
+  const deleteForm = document.createElement("form");
+  deleteForm.method = "post";
+  deleteForm.action = `/reference-images/${payload.image_id}/delete`;
+  deleteForm.setAttribute("data-reference-image-delete-form", "");
+  const referenceSetInput = document.querySelector("[data-reference-set-id]");
+  const hidden = document.createElement("input");
+  hidden.type = "hidden";
+  hidden.name = "reference_set_id";
+  hidden.value = referenceSetInput ? referenceSetInput.value : "";
+  const deleteButton = document.createElement("button");
+  deleteButton.type = "submit";
+  deleteButton.className = "danger";
+  deleteButton.textContent = "取り消し";
+  deleteForm.append(hidden, deleteButton);
+
+  figure.append(img, caption, deleteForm);
+  grid.prepend(figure);
+}
+
+async function deleteReferenceImage(form) {
+  const button = form.querySelector("button[type='submit']");
+  const figure = form.closest("[data-reference-image-card]");
+  const originalText = button ? button.textContent : "";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "取り消し中...";
+  }
+  try {
+    const response = await fetch(form.action, {
+      method: "POST",
+      body: new FormData(form),
+      headers: { "X-Requested-With": "fetch", "Accept": "application/json" },
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.ok === false) {
+      throw new Error(payload.message || await response.text());
+    }
+    figure?.remove();
+    updateReferenceCompleteness(payload.completeness);
+  } catch (error) {
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalText || "取り消し";
+    }
+    alert(`Reference画像の取り消しに失敗しました: ${error.message}`);
+  }
+}
+
+function updateReferenceCompleteness(completeness) {
+  if (!completeness) {
+    return;
+  }
+  const label = document.querySelector("[data-reference-completeness-label]");
+  if (label) {
+    const text = completeness.label || "UNKNOWN";
+    label.textContent = text;
+    label.className = `label ${text.toLowerCase()}`;
+  }
+  const message = document.querySelector("[data-reference-completeness-message]");
+  if (message) {
+    message.textContent = completeness.message || "-";
+  }
+  const tbody = document.querySelector("[data-reference-role-counts]");
+  if (!tbody) {
+    return;
+  }
+  tbody.textContent = "";
+  const roles = completeness.roles || [];
+  if (!roles.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 2;
+    cell.className = "muted";
+    cell.textContent = "役割はまだ登録されていません。";
+    row.append(cell);
+    tbody.append(row);
+    return;
+  }
+  roles.forEach((role) => {
+    const row = document.createElement("tr");
+    const name = document.createElement("td");
+    const count = document.createElement("td");
+    name.textContent = role.label || role.role || "-";
+    count.textContent = role.count ?? 0;
+    row.append(name, count);
+    tbody.append(row);
+  });
+}
+
 async function submitAdoptionForm(form) {
   const status = form.querySelector("[data-adoption-status]") || form.querySelector(".save-status");
   const button = form.querySelector("button[type='submit']");
@@ -447,3 +707,4 @@ function applyValidationGenerationDetailStatus(panel, payload) {
 
 document.addEventListener("DOMContentLoaded", initValidationGenerationPolling);
 document.addEventListener("DOMContentLoaded", initValidationGenerationDetailPolling);
+document.addEventListener("DOMContentLoaded", initEmbeddingJobStatusPolling);

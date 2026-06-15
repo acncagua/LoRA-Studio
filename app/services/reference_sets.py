@@ -269,6 +269,41 @@ def update_reference_image(
             refresh_reference_version_summary(conn, int(row["reference_set_version_id"]))
 
 
+def delete_reference_image(image_id: int) -> dict[str, Any]:
+    row = fetch_one("SELECT * FROM reference_images WHERE id = ?", (image_id,))
+    if row is None:
+        raise ValueError("Reference画像が見つかりません。")
+    reference_set_id = int(row["reference_set_id"])
+    version_id = int(row["reference_set_version_id"]) if row["reference_set_version_id"] else None
+    image_path = Path(row["image_path"])
+    embedding_rows = fetch_all(
+        "SELECT embedding_path FROM image_embeddings WHERE source_type = 'reference_image' AND source_id = ?",
+        (image_id,),
+    )
+    with connect() as conn:
+        conn.execute("DELETE FROM machine_review_scores WHERE nearest_reference_image_id = ?", (image_id,))
+        conn.execute("DELETE FROM image_embeddings WHERE source_type = 'reference_image' AND source_id = ?", (image_id,))
+        conn.execute("DELETE FROM reference_images WHERE id = ?", (image_id,))
+        if version_id:
+            refresh_reference_version_summary(conn, version_id)
+        conn.execute("UPDATE reference_sets SET updated_at = ? WHERE id = ?", (utc_now(), reference_set_id))
+    try:
+        root = reference_images_root().resolve()
+        resolved = image_path.resolve()
+        if resolved.exists() and (resolved == root or root in resolved.parents):
+            resolved.unlink()
+    except OSError:
+        pass
+    for embedding in embedding_rows:
+        try:
+            path = Path(embedding["embedding_path"]).resolve()
+            if path.exists():
+                path.unlink()
+        except (OSError, TypeError):
+            pass
+    return {"reference_set_id": reference_set_id, "version_id": version_id}
+
+
 def refresh_reference_version_summary(conn: Any, version_id: int) -> None:
     version = conn.execute("SELECT * FROM reference_set_versions WHERE id = ?", (version_id,)).fetchone()
     if version is None:
@@ -329,6 +364,7 @@ def dataset_image_candidates(dataset_id: int, limit: int = 60) -> list[dict[str,
         caption = caption_for_image(image_path)
         rows.append(
             {
+                "candidate_id": len(rows),
                 "path": str(image_path),
                 "name": image_path.name,
                 "caption": caption,

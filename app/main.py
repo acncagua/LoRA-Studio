@@ -7,7 +7,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 from fastapi import FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
@@ -60,11 +60,14 @@ from app.services.output_collector import collect_job_results
 from app.services.recommendations import create_draft_job_from_recommendation, list_recommendations, regenerate_recommendations, set_recommendation_status, write_recommendation_report
 from app.services.review_candidates import ensure_epoch_candidates, regenerate_epoch_candidates
 from app.services.reference_sets import (
+    ROLE_LABELS,
     REFERENCE_TYPE_LABELS,
     add_reference_image,
     archive_reference_set,
     create_reference_set,
+    delete_reference_image,
     export_reference_artifacts,
+    dataset_image_candidates,
     reference_detail,
     reference_set_rows,
     set_project_default,
@@ -183,6 +186,19 @@ VALIDATION_RUN_STATUS_LABELS = {
     "archived": "アーカイブ",
 }
 
+MACHINE_LABELS = {
+    "primary_candidate": "第一候補",
+    "secondary_candidate": "候補",
+    "check_manually": "要確認",
+    "possible_overfit": "過学習注意",
+    "low_confidence": "低信頼",
+    "unavailable": "利用不可",
+    "high": "高",
+    "medium": "中",
+    "low": "低",
+    "unknown": "不明",
+}
+
 templates = Environment(
     loader=FileSystemLoader(settings.ROOT_DIR / "app" / "templates"),
     autoescape=select_autoescape(["html", "xml"]),
@@ -209,7 +225,18 @@ def render(request: Request, template: str, **context: Any) -> HTMLResponse:
     context.setdefault("display_validation_status", display_validation_status)
     context.setdefault("validation_run_status_options", list(VALIDATION_RUN_STATUS_LABELS.items()))
     context.setdefault("display_status_text", display_status_text)
+    context.setdefault("display_machine_label", display_machine_label)
     return HTMLResponse(tpl.render(**context))
+
+
+def add_query_param(url: str, **params: Any) -> str:
+    target = url or "/settings/embeddings"
+    parts = urlsplit(target)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    for key, value in params.items():
+        if value is not None:
+            query[key] = str(value)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
 def display_preset_name(preset: Any) -> str:
@@ -268,6 +295,10 @@ def display_status_text(text: str | None) -> str:
     for old, new in STATUS_TEXT_REPLACEMENTS.items():
         value = value.replace(old, new)
     return value
+
+
+def display_machine_label(value: str | None) -> str:
+    return MACHINE_LABELS.get(value or "", value or "-")
 
 
 def job_filter_where(view: str) -> str:
@@ -1359,10 +1390,15 @@ def recommended_workflow(request: Request) -> HTMLResponse:
 
 @app.get("/environment", response_class=HTMLResponse)
 def environment(request: Request) -> HTMLResponse:
-    import_latest_environment()
     settings_rows = fetch_all("SELECT * FROM app_settings ORDER BY key")
     environments = fetch_all("SELECT * FROM environments ORDER BY id DESC")
     return render(request, "environment.html", settings_rows=settings_rows, environments=environments, settings=settings)
+
+
+@app.post("/environment/refresh")
+def environment_refresh() -> RedirectResponse:
+    import_latest_environment()
+    return RedirectResponse("/environment?refreshed=1", status_code=303)
 
 
 @app.get("/settings/embeddings", response_class=HTMLResponse)
@@ -1452,6 +1488,13 @@ def embedding_preflight(active_embedding_model_id: str = Form("mock_image_512"))
 
 @app.post("/embeddings/jobs")
 def embedding_job_create(job_type: str = Form(...), target_id: int = Form(...), recompute: str = Form("missing"), return_to: str = Form("")) -> RedirectResponse:
+    destination = return_to or "/settings/embeddings"
+    running_embedding = fetch_one("SELECT id FROM embedding_jobs WHERE status = 'running' LIMIT 1")
+    if running_embedding:
+        return RedirectResponse(
+            add_query_param(destination, embedding_error=f"Embedding Job #{running_embedding['id']} が実行中です。完了後に再実行してください。"),
+            status_code=303,
+        )
     try:
         embedding_model = active_embedding_model()
         if embedding_model.get("provider") != "mock":
@@ -1462,10 +1505,31 @@ def embedding_job_create(job_type: str = Form(...), target_id: int = Form(...), 
         embedding_job_id = create_embedding_job(job_type, target_id, recompute=recompute)
         start_embedding_job(embedding_job_id)
     except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if return_to:
-        return RedirectResponse(return_to, status_code=303)
-    return RedirectResponse("/settings/embeddings", status_code=303)
+        return RedirectResponse(add_query_param(destination, embedding_error=str(exc)), status_code=303)
+    return RedirectResponse(
+        add_query_param(destination, embedding_job_id=embedding_job_id, embedding_message=f"Embedding Job #{embedding_job_id} を開始しました。"),
+        status_code=303,
+    )
+
+
+@app.get("/embeddings/jobs/{embedding_job_id}/status")
+def embedding_job_status(embedding_job_id: int) -> JSONResponse:
+    row = fetch_one("SELECT * FROM embedding_jobs WHERE id = ?", (embedding_job_id,))
+    if row is None:
+        raise HTTPException(status_code=404, detail="Embedding Job not found")
+    return JSONResponse(
+        {
+            "id": row["id"],
+            "status": row["status"],
+            "total_count": row["total_count"],
+            "processed_count": row["processed_count"],
+            "ready_count": row["ready_count"],
+            "failed_count": row["failed_count"],
+            "skipped_count": row["skipped_count"],
+            "error_message": row["error_message"],
+            "ended_at": row["ended_at"],
+        }
+    )
 
 
 @app.post("/embeddings/jobs/{embedding_job_id}/stop")
@@ -3855,15 +3919,58 @@ def reference_image_add(
 
 @app.post("/reference-sets/{set_id}/dataset-images")
 def reference_dataset_image_add(
+    request: Request,
     set_id: int,
     image_path: str = Form(...),
     image_role: str = Form("other"),
-) -> RedirectResponse:
+):
     try:
-        add_reference_image(reference_set_id=set_id, image_path=image_path, image_role=image_role, source_type="dataset")
+        image_id = add_reference_image(reference_set_id=set_id, image_path=image_path, image_role=image_role, source_type="dataset")
     except ValueError as exc:
+        if request.headers.get("x-requested-with") == "fetch":
+            return JSONResponse({"ok": False, "message": str(exc)}, status_code=400)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if request.headers.get("x-requested-with") == "fetch":
+        image = fetch_one("SELECT * FROM reference_images WHERE id = ?", (image_id,))
+        return JSONResponse(
+            {
+                "ok": True,
+                "image_id": image_id,
+                "image_url": f"/reference-images/{image_id}",
+                "image_role": image["image_role"] if image else image_role,
+                "width": image["width"] if image else None,
+                "height": image["height"] if image else None,
+                "file_size": image["file_size"] if image else None,
+                "caption": (image["caption_snapshot"] or image["caption"] or "") if image else "",
+                "completeness": reference_completeness_payload(set_id),
+                "message": "追加済み",
+            }
+        )
     return RedirectResponse(f"/reference-sets/{set_id}", status_code=303)
+
+
+@app.get("/reference-sets/{set_id}/dataset-candidates/{candidate_id}")
+def reference_dataset_candidate_image(set_id: int, candidate_id: int) -> FileResponse:
+    reference_set = fetch_one("SELECT * FROM reference_sets WHERE id = ?", (set_id,))
+    if reference_set is None or not reference_set["dataset_id"]:
+        raise HTTPException(status_code=404, detail="Reference Set dataset not found")
+    candidates = dataset_image_candidates(int(reference_set["dataset_id"]), 80)
+    candidate = next((item for item in candidates if int(item["candidate_id"]) == candidate_id), None)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="Dataset candidate image not found")
+    dataset = fetch_one("SELECT * FROM datasets WHERE id = ?", (reference_set["dataset_id"],))
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    try:
+        path = ensure_allowed_file(candidate["path"], Path(dataset["path"]), "Dataset candidate image")
+        verify_image_file(path)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Dataset candidate image file not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Dataset candidate image file not found or invalid") from exc
+    return FileResponse(path)
 
 
 @app.post("/reference-images/{image_id}/edit")
@@ -3890,6 +3997,31 @@ def reference_image_update(
     return RedirectResponse(f"/reference-sets/{reference_set_id}", status_code=303)
 
 
+@app.post("/reference-images/{image_id}/delete")
+def reference_image_delete(
+    request: Request,
+    image_id: int,
+    reference_set_id: int = Form(...),
+):
+    try:
+        result = delete_reference_image(image_id)
+    except ValueError as exc:
+        if request.headers.get("x-requested-with") == "fetch":
+            return JSONResponse({"ok": False, "message": str(exc)}, status_code=404)
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    target_set_id = result.get("reference_set_id") or reference_set_id
+    if request.headers.get("x-requested-with") == "fetch":
+        return JSONResponse(
+            {
+                "ok": True,
+                "image_id": image_id,
+                "completeness": reference_completeness_payload(int(target_set_id)),
+                "message": "取り消しました",
+            }
+        )
+    return RedirectResponse(f"/reference-sets/{target_set_id}", status_code=303)
+
+
 @app.post("/reference-sets/{set_id}/set-default")
 def reference_set_default(set_id: int) -> RedirectResponse:
     try:
@@ -3903,6 +4035,20 @@ def reference_set_default(set_id: int) -> RedirectResponse:
 def reference_set_archive(set_id: int) -> RedirectResponse:
     archive_reference_set(set_id, True)
     return RedirectResponse("/reference-sets", status_code=303)
+
+
+def reference_completeness_payload(set_id: int) -> dict[str, Any]:
+    detail = reference_detail(set_id)
+    reference_set = detail["reference_set"]
+    roles = detail["current_roles"]
+    return {
+        "label": reference_set["completeness_label"] or "UNKNOWN",
+        "message": reference_set["completeness_message"] or "-",
+        "roles": [
+            {"role": role, "label": ROLE_LABELS.get(role, role), "count": count}
+            for role, count in roles.items()
+        ],
+    }
 
 
 @app.post("/reference-sets/{set_id}/restore")

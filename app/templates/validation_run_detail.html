@@ -95,30 +95,30 @@
 
 {% if validation_embedding_coverage %}
 <section class="notice embedding-coverage">
-  <h2>Validation Image Embedding Coverage</h2>
+  <h2>検証画像Embedding状況</h2>
   <p>モデル: {{ validation_embedding_coverage.model_name }}</p>
   <div class="summary-grid">
     <div><span>登録画像</span><strong>{{ validation_embedding_coverage.total }}</strong></div>
-    <div><span>ready</span><strong>{{ validation_embedding_coverage.ready }}</strong></div>
-    <div><span>stale</span><strong>{{ validation_embedding_coverage.stale }}</strong></div>
-    <div><span>failed</span><strong>{{ validation_embedding_coverage.failed }}</strong></div>
-    <div><span>missing</span><strong>{{ validation_embedding_coverage.missing }}</strong></div>
+    <div><span>計算済み</span><strong>{{ validation_embedding_coverage.ready }}</strong></div>
+    <div><span>再計算必要</span><strong>{{ validation_embedding_coverage.stale }}</strong></div>
+    <div><span>失敗</span><strong>{{ validation_embedding_coverage.failed }}</strong></div>
+    <div><span>元画像なし</span><strong>{{ validation_embedding_coverage.missing }}</strong></div>
     <div><span>未計算</span><strong>{{ validation_embedding_coverage.not_computed }}</strong></div>
   </div>
   <div class="actions compact-actions">
-    <form method="post" action="/embeddings/jobs">
+    <form method="post" action="/embeddings/jobs" data-embedding-job-form>
       <input type="hidden" name="job_type" value="validation_run">
       <input type="hidden" name="target_id" value="{{ run.id }}">
       <input type="hidden" name="recompute" value="missing">
       <input type="hidden" name="return_to" value="/validation-runs/{{ run.id }}">
-      <button type="submit">Validation Embeddingを計算</button>
+      <button type="submit">検証画像Embeddingを計算</button>
     </form>
-    <form method="post" action="/embeddings/jobs">
+    <form method="post" action="/embeddings/jobs" data-embedding-job-form>
       <input type="hidden" name="job_type" value="validation_run">
       <input type="hidden" name="target_id" value="{{ run.id }}">
       <input type="hidden" name="recompute" value="stale">
       <input type="hidden" name="return_to" value="/validation-runs/{{ run.id }}">
-      <button type="submit">Staleのみ再計算</button>
+      <button type="submit">古いEmbeddingのみ再計算</button>
     </form>
   </div>
 </section>
@@ -127,6 +127,7 @@
 <section id="machine-assist" class="notice">
   <h2>機械補助レビュー</h2>
   <p>機械補助判定は参考情報です。最終判断は人間評価を優先してください。mock providerのスコアは意味的な画像評価ではありません。Hiresあり結果は強いパラメータ提案には使わないでください。</p>
+  <p class="muted">Reference類似度は、検証画像がリファレンス画像にどれだけ近いかの参考値です。大きいほどReferenceに近く、小さい値やマイナス値はReferenceから遠い可能性を示します。Dataset近傍類似度は、学習元画像のどれかに近すぎないかを見る参考値です。高い値で、かつ1枚だけ突出して近い場合は、過学習や構図固定の疑いがあります。</p>
   <div class="actions compact-actions">
     <form method="post" action="/machine-review/jobs">
       <input type="hidden" name="target_type" value="validation_run_images">
@@ -136,7 +137,7 @@
     </form>
   </div>
   <table>
-    <thead><tr><th>weight</th><th>prompt</th><th>件数</th><th>Reference</th><th>Dataset Nearest</th><th>Overfit</th><th>Assist</th><th>Confidence</th></tr></thead>
+    <thead><tr><th>weight</th><th>prompt</th><th>件数</th><th>Reference類似度</th><th>Dataset近傍</th><th>過学習リスク</th><th>補助判定</th><th>信頼度</th></tr></thead>
     <tbody>
       {% for row in machine_weight_summary %}
       <tr>
@@ -145,12 +146,12 @@
         <td>{{ row.count }}</td>
         <td>{{ '%.4f'|format(row.reference_similarity_avg) if row.reference_similarity_avg is not none else '-' }}</td>
         <td>{{ '%.4f'|format(row.nearest_dataset_similarity) if row.nearest_dataset_similarity is not none else '-' }}</td>
-        <td><span class="label {{ row.overfit_risk_label }}">{{ row.overfit_risk_label }}</span></td>
-        <td><span class="label {{ row.assist_label }}">{{ row.assist_label }}</span></td>
-        <td><span class="label {{ row.confidence_label }}">{{ row.confidence_label }}</span></td>
+        <td><span class="label {{ row.overfit_risk_label }}">{{ display_machine_label(row.overfit_risk_label) }}</span></td>
+        <td><span class="label {{ row.assist_label }}">{{ display_machine_label(row.assist_label) }}</span></td>
+        <td><span class="label {{ row.confidence_label }}">{{ display_machine_label(row.confidence_label) }}</span></td>
       </tr>
       {% else %}
-      <tr><td colspan="8" class="muted">Machine Reviewはまだ実行されていません。</td></tr>
+      <tr><td colspan="8" class="muted">機械補助レビューはまだ実行されていません。</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -259,9 +260,9 @@
         条件: {{ image.expected_condition_id or '未一致 / グリッド' }}
         {% set m = machine_score_map.get(image.id) %}
         {% if m %}
-        <br><span class="label {{ m.assist_label }}">{{ m.assist_label }}</span>
-        <span class="label {{ m.confidence_label }}">{{ m.confidence_label }}</span>
-        <br><span class="muted">Ref {{ '%.3f'|format(m.reference_similarity_max) if m.reference_similarity_max is not none else '-' }} (#{{ m.nearest_reference_image_id or '-' }}) / Dataset {{ '%.3f'|format(m.nearest_dataset_similarity) if m.nearest_dataset_similarity is not none else '-' }} (#{{ m.nearest_dataset_image_id or '-' }}) / overfit {{ m.overfit_risk_label }}</span>
+        <br><span class="label {{ m.assist_label }}">{{ display_machine_label(m.assist_label) }}</span>
+        <span class="label {{ m.confidence_label }}">{{ display_machine_label(m.confidence_label) }}</span>
+        <br><span class="muted">Reference {{ '%.3f'|format(m.reference_similarity_max) if m.reference_similarity_max is not none else '-' }} (#{{ m.nearest_reference_image_id or '-' }}) / Dataset {{ '%.3f'|format(m.nearest_dataset_similarity) if m.nearest_dataset_similarity is not none else '-' }} (#{{ m.nearest_dataset_image_id or '-' }}) / 過学習 {{ display_machine_label(m.overfit_risk_label) }}</span>
         {% endif %}
       </figcaption>
       <form method="post" action="/validation-runs/{{ run.id }}/images/{{ image.id }}/review" class="review-form" data-review-form>

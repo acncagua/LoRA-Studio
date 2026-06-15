@@ -1,5 +1,14 @@
 {% extends "base.html" %}{% block content %}
-<header class="page-head"><h1>環境</h1></header>
+<header class="page-head">
+  <h1>環境</h1>
+  <form method="post" action="/environment/refresh" class="actions">
+    <button type="submit">環境情報を再読み込み</button>
+  </form>
+</header>
+{% if request.query_params.get('refreshed') %}
+<p class="notice">環境情報を再読み込みしました。</p>
+{% endif %}
+<p class="muted">この画面は保存済みの環境情報を表示します。Python / Torch / GPU情報を取り直す場合だけ「環境情報を再読み込み」を押してください。</p>
 <section class="panel-grid">
   <div><h2>sd-scripts</h2><dl><dt>リポジトリ</dt><dd>{{ settings.SD_SCRIPTS_REPO_URL }}</dd><dt>リリース</dt><dd>{{ settings.SD_SCRIPTS_RELEASE_TAG }}</dd><dt>コミット</dt><dd>{{ settings.SD_SCRIPTS_RELEASE_COMMIT }}</dd><dt>パス</dt><dd>{{ settings.SD_SCRIPTS_DIR }}</dd></dl></div>
   <div><h2>セットアップコマンド</h2><pre>powershell -ExecutionPolicy Bypass -File .\scripts\setup_sd_scripts.ps1 -ReleaseTag v0.10.5</pre></div>

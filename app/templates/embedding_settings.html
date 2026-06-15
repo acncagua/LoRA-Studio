@@ -9,6 +9,18 @@
   <p>Embedding model weights may need to be downloaded. LoRA Studio will not download them automatically unless explicitly enabled.</p>
 </section>
 
+<section class="notice">
+  <h2>機械補助レビューの導線</h2>
+  <p>この画面はEmbeddingモデルと機械補助レビューの設定画面です。画像そのものはここでは登録しません。画像はリファレンスセット、学習ジョブのサンプル、検証Runの登録画像から使います。</p>
+  <ol class="workflow-list">
+    <li>リファレンスセット詳細で基準画像を登録し、Embeddingを計算します。</li>
+    <li>学習ジョブ詳細または検証Run詳細で対象画像のEmbeddingを計算します。</li>
+    <li>同じ画面の「機械補助レビューを実行」から、Reference類似度とDataset近傍類似度を計算します。</li>
+    <li>結果は学習ジョブ詳細、検証Run詳細、候補epoch表示に参考情報として表示されます。</li>
+  </ol>
+  <p class="muted">Reference類似度が高いほど基準画像に近い可能性があります。Dataset近傍が高すぎる場合は学習元画像に寄りすぎている可能性があります。ただしmock providerは動作確認用なので、意味的な画像評価には使えません。</p>
+</section>
+
 <section id="machine-review-settings" class="notice">
   <h2>機械補助レビュー設定</h2>
   <p>機械補助判定は参考情報です。最終判断は人間評価を優先してください。mock providerのスコアは意味的な画像評価ではありません。</p>
@@ -21,15 +33,15 @@
         {% endfor %}
       </select>
     </label>
-    <label>Reference similarity方式
+    <label>Reference類似度方式
       <select name="reference_similarity_method">
         {% for value in ['avg', 'max', 'avg_max_blend'] %}
         <option value="{{ value }}" {{ 'selected' if machine_review_settings.reference_similarity_method == value else '' }}>{{ value }}</option>
         {% endfor %}
       </select>
     </label>
-    <label>Overfit nearest閾値<input type="number" step="0.01" name="overfit_nearest_threshold" value="{{ machine_review_settings.overfit_nearest_threshold }}"></label>
-    <label>Top1 margin閾値<input type="number" step="0.01" name="overfit_margin_threshold" value="{{ machine_review_settings.overfit_margin_threshold }}"></label>
+    <label>過学習近傍しきい値<input type="number" step="0.01" name="overfit_nearest_threshold" value="{{ machine_review_settings.overfit_nearest_threshold }}"></label>
+    <label>Top1差分しきい値<input type="number" step="0.01" name="overfit_margin_threshold" value="{{ machine_review_settings.overfit_margin_threshold }}"></label>
     <label>Reference low閾値<input type="number" step="0.01" name="reference_low_threshold" value="{{ machine_review_settings.reference_low_threshold }}"></label>
     <label>キャラReference最低枚数<input type="number" name="minimum_reference_images_character" value="{{ machine_review_settings.minimum_reference_images_character }}"></label>
     <label>画風Reference最低枚数<input type="number" name="minimum_reference_images_style" value="{{ machine_review_settings.minimum_reference_images_style }}"></label>
@@ -105,7 +117,7 @@
     <h2>Cleanup Preview</h2>
     <dl>
       <dt>Failed embeddings</dt><dd>{{ failed_cleanup.count }}件 / {{ failed_cleanup.label }}</dd>
-      <dt>Stale embeddings</dt><dd>{{ stale_cleanup.count }}件 / {{ stale_cleanup.label }}</dd>
+      <dt>古いEmbedding</dt><dd>{{ stale_cleanup.count }}件 / {{ stale_cleanup.label }}</dd>
     </dl>
     <p class="muted">初期版ではpreviewのみです。必要な削除対象を確認してからcleanup実装を拡張します。</p>
   </div>
@@ -123,7 +135,7 @@
         <td>{{ job.target_id }}</td>
         <td>{{ job.provider }}</td>
         <td><span class="label {{ job.status }}">{{ job.status }}</span></td>
-        <td>{{ job.processed_count }} / {{ job.total_count }} ready {{ job.ready_count }} failed {{ job.failed_count }}</td>
+        <td>{{ job.processed_count }} / {{ job.total_count }} 計算済み {{ job.ready_count }} 失敗 {{ job.failed_count }}</td>
         <td>{{ job.started_at or '-' }}</td>
         <td>{{ job.ended_at or '-' }}</td>
         <td>

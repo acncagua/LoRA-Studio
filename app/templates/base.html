@@ -37,6 +37,7 @@
         <a href="/lora-library">LoRAライブラリ</a>
         <a href="/validation-presets">検証プリセット</a>
         <a href="/reference-sets">リファレンスセット</a>
+        <a href="/settings/embeddings#machine-review-settings">機械補助レビュー</a>
       </div>
       <div class="nav-group">
         <div class="nav-heading">運用</div>
@@ -50,6 +51,17 @@
       sd-scripts {{ sd_scripts_release_tag }} / {{ app_meta.sd_scripts_commit_hash }}
     </div>
   </aside>
-  <main class="content">{% block content %}{% endblock %}</main>
+  <main class="content">
+    {% if request.query_params.get('embedding_error') %}
+    <p class="notice warning">{{ request.query_params.get('embedding_error') }}</p>
+    {% endif %}
+    {% if request.query_params.get('embedding_message') %}
+    <p class="notice" data-embedding-job-status data-embedding-job-id="{{ request.query_params.get('embedding_job_id') }}">
+      {{ request.query_params.get('embedding_message') }}
+      <span data-embedding-job-status-text>処理中...</span>
+    </p>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
 </body>
 </html>

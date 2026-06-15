@@ -133,20 +133,20 @@
 <section>
   <h2>整理 / 削除</h2>
   <p class="muted">実行済み学習ジョブは再現性維持のため、通常は削除ではなくアーカイブ推奨です。下書き・準備済みの未実行ジョブだけ安全に論理削除できます。</p>
-  <div class="actions">
-    {% if action_state.archive %}<form method="post" action="/jobs/{{ job.id }}/archive" class="inline-form"><input name="archived_reason" placeholder="理由（任意）"><button type="submit">アーカイブ</button></form>{% endif %}
+  <div class="actions cleanup-actions">
+    {% if action_state.archive %}<form method="post" action="/jobs/{{ job.id }}/archive" class="cleanup-inline-form"><input name="archived_reason" placeholder="理由（任意）"><button type="submit">アーカイブ</button></form>{% endif %}
     {% if action_state.restore %}<form method="post" action="/jobs/{{ job.id }}/restore"><button type="submit">復元</button></form>{% endif %}
-    <a class="button danger" href="/jobs/{{ job.id }}/delete-preview">削除Previewを開く</a>
+    <a class="button danger" href="/jobs/{{ job.id }}/delete-preview">削除プレビューを開く</a>
   </div>
 </section>
 <section>
   <h2>runsファイル整理</h2>
   <p class="muted">params、metrics、logs、reports、DB記録は残し、大きいモデル出力やsample画像だけを明示操作でTrashへ移動します。採用LoRAは通常の未採用LoRA整理では対象外です。</p>
   <div class="actions">
-    <a class="button danger" href="/jobs/{{ job.id }}/cleanup/unselected-models">未採用LoRA削除Preview</a>
-    <a class="button danger" href="/jobs/{{ job.id }}/cleanup/exported-selected">Export済み採用LoRAのruns側削除Preview</a>
-    {% if job.status in ['failed', 'stopped'] %}<a class="button danger" href="/jobs/{{ job.id }}/cleanup/failed-outputs">失敗/停止出力削除Preview</a>{% endif %}
-    <a class="button danger" href="/jobs/{{ job.id }}/cleanup/samples">Sample Cleanup Preview</a>
+    <a class="button danger" href="/jobs/{{ job.id }}/cleanup/unselected-models">未採用LoRA削除プレビュー</a>
+    <a class="button danger" href="/jobs/{{ job.id }}/cleanup/exported-selected">Export済み採用LoRAのruns側削除プレビュー</a>
+    {% if job.status in ['failed', 'stopped'] %}<a class="button danger" href="/jobs/{{ job.id }}/cleanup/failed-outputs">失敗/停止出力削除プレビュー</a>{% endif %}
+    <a class="button danger" href="/jobs/{{ job.id }}/cleanup/samples">サンプル画像整理プレビュー</a>
   </div>
 </section>
 <section>
@@ -362,7 +362,8 @@
 <section id="machine-assist" class="notice">
   <h2>機械補助レビュー</h2>
   <p>機械補助判定は参考情報です。最終判断は人間評価を優先してください。mock providerのスコアは意味的な画像評価ではありません。</p>
-  <p>Reference Setが1枚だけの場合、判定が偏る可能性があります。Machine Assistだけで採用epochを自動決定しません。</p>
+  <p>Reference Setが1枚だけの場合、判定が偏る可能性があります。機械補助レビューだけで採用epochを自動決定しません。</p>
+  <p class="muted">Reference類似度はリファレンス画像への近さ、Dataset近傍は学習元画像への近さです。Referenceが高いほど基準画像に近く、Dataset近傍が高すぎる場合は過学習や元画像への寄りすぎを疑います。</p>
   <div class="actions compact-actions">
     <form method="post" action="/machine-review/jobs">
       <input type="hidden" name="target_type" value="training_job_samples">
@@ -372,7 +373,7 @@
     </form>
   </div>
   <table>
-    <thead><tr><th>Epoch</th><th>件数</th><th>Reference Max</th><th>Dataset Nearest</th><th>Overfit</th><th>Assist</th><th>Confidence</th></tr></thead>
+    <thead><tr><th>Epoch</th><th>件数</th><th>Reference最大</th><th>Dataset近傍</th><th>過学習リスク</th><th>補助判定</th><th>信頼度</th></tr></thead>
     <tbody>
       {% for epoch, score in machine_epoch_summary.items() %}
       <tr>
@@ -380,12 +381,12 @@
         <td>{{ score.count }}</td>
         <td>{{ '%.4f'|format(score.reference_similarity_max) if score.reference_similarity_max is not none else '-' }}</td>
         <td>{{ '%.4f'|format(score.nearest_dataset_similarity) if score.nearest_dataset_similarity is not none else '-' }}</td>
-        <td><span class="label {{ score.overfit_risk_label }}">{{ score.overfit_risk_label }}</span></td>
-        <td><span class="label {{ score.assist_label }}">{{ score.assist_label }}</span></td>
-        <td><span class="label {{ score.confidence_label }}">{{ score.confidence_label }}</span></td>
+        <td><span class="label {{ score.overfit_risk_label }}">{{ display_machine_label(score.overfit_risk_label) }}</span></td>
+        <td><span class="label {{ score.assist_label }}">{{ display_machine_label(score.assist_label) }}</span></td>
+        <td><span class="label {{ score.confidence_label }}">{{ display_machine_label(score.confidence_label) }}</span></td>
       </tr>
       {% else %}
-      <tr><td colspan="7" class="muted">Machine Reviewはまだ実行されていません。</td></tr>
+      <tr><td colspan="7" class="muted">機械補助レビューはまだ実行されていません。</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -402,7 +403,7 @@
     <button type="button" data-save-all-ratings>表示中の評価を一括保存</button>
   </div>
   <table>
-    <thead><tr><th>Rank</th><th>Epoch</th><th>候補</th><th>Score</th><th>理由</th><th>Loss</th><th>Sample</th><th>Machine Assist</th><th>出力LoRA</th><th>採用</th></tr></thead>
+    <thead><tr><th>順位</th><th>Epoch</th><th>候補</th><th>スコア</th><th>理由</th><th>Loss</th><th>サンプル</th><th>機械補助</th><th>出力LoRA</th><th>採用</th></tr></thead>
     <tbody>
       {% for candidate in review_candidates %}
       {% set epoch = (epoch_visual_summaries | selectattr('epoch', 'equalto', candidate.epoch) | list | first) %}
@@ -414,7 +415,7 @@
         <td>{{ candidate.reason_text }}</td>
         <td>{{ '%.6f'|format(epoch.avg_loss) if epoch and epoch.avg_loss is not none else '-' }}</td>
         <td>{{ epoch.sample_count if epoch else '-' }}</td>
-        <td>{% if epoch and epoch.machine %}<span class="label {{ epoch.machine.assist_label }}">{{ epoch.machine.assist_label }}</span><br><span class="label {{ epoch.machine.confidence_label }}">{{ epoch.machine.confidence_label }}</span>{% if epoch.output_selected %}<br><span class="muted">人間評価を優先</span>{% endif %}{% else %}-{% endif %}</td>
+        <td>{% if epoch and epoch.machine %}<span class="label {{ epoch.machine.assist_label }}">{{ display_machine_label(epoch.machine.assist_label) }}</span><br><span class="label {{ epoch.machine.confidence_label }}">{{ display_machine_label(epoch.machine.confidence_label) }}</span>{% if epoch.output_selected %}<br><span class="muted">人間評価を優先</span>{% endif %}{% else %}-{% endif %}</td>
         <td>{{ epoch.output_file if epoch else '-' }}</td>
         <td>{{ '採用中' if epoch and epoch.output_selected else '-' }}</td>
       </tr>
@@ -427,7 +428,7 @@
 <section id="outputs">
   <h2>出力LoRA</h2>
   <table>
-    <thead><tr><th>ID</th><th>Epoch</th><th>Step</th><th>サイズ</th><th>SHA256</th><th>採用</th><th>Export</th><th>整理状態</th><th>Metadataエラー</th><th>パス</th><th></th></tr></thead>
+    <thead><tr><th>ID</th><th>Epoch</th><th>Step</th><th>サイズ</th><th>SHA256</th><th>採用</th><th>Export</th><th>整理状態</th><th>メタデータエラー</th><th>パス</th><th></th></tr></thead>
     <tbody>
       {% for output in outputs %}
       <tr data-output-row="{{ output.id }}">
@@ -458,8 +459,8 @@
           {{ sample.filename }}<br>
           <span class="muted">{{ sample.auto_review_label or '-' }} / {{ sample.auto_review_reason or '' }}</span>
           {% if sample.machine_score %}
-          <br><span class="label {{ sample.machine_score.assist_label }}">{{ sample.machine_score.assist_label }}</span>
-          <span class="label {{ sample.machine_score.confidence_label }}">{{ sample.machine_score.confidence_label }}</span>
+          <br><span class="label {{ sample.machine_score.assist_label }}">{{ display_machine_label(sample.machine_score.assist_label) }}</span>
+          <span class="label {{ sample.machine_score.confidence_label }}">{{ display_machine_label(sample.machine_score.confidence_label) }}</span>
           <br><span class="muted">Ref {{ '%.3f'|format(sample.machine_score.reference_similarity_max) if sample.machine_score.reference_similarity_max is not none else '-' }} (#{{ sample.machine_score.nearest_reference_image_id or '-' }}) / Dataset {{ '%.3f'|format(sample.machine_score.nearest_dataset_similarity) if sample.machine_score.nearest_dataset_similarity is not none else '-' }} (#{{ sample.machine_score.nearest_dataset_image_id or '-' }}) / overfit {{ sample.machine_score.overfit_risk_label }}</span>
           {% endif %}
         </figcaption>
@@ -495,30 +496,30 @@
 <section id="validation-runs">
   {% if sample_embedding_coverage %}
   <div class="notice embedding-coverage">
-    <h2>Sample Embedding Coverage</h2>
+    <h2>サンプル画像Embedding状況</h2>
     <p>モデル: {{ sample_embedding_coverage.model_name }}</p>
     <div class="summary-grid">
       <div><span>サンプル</span><strong>{{ sample_embedding_coverage.total }}</strong></div>
-      <div><span>ready</span><strong>{{ sample_embedding_coverage.ready }}</strong></div>
-      <div><span>stale</span><strong>{{ sample_embedding_coverage.stale }}</strong></div>
-      <div><span>failed</span><strong>{{ sample_embedding_coverage.failed }}</strong></div>
-      <div><span>missing</span><strong>{{ sample_embedding_coverage.missing }}</strong></div>
+      <div><span>計算済み</span><strong>{{ sample_embedding_coverage.ready }}</strong></div>
+      <div><span>再計算必要</span><strong>{{ sample_embedding_coverage.stale }}</strong></div>
+      <div><span>失敗</span><strong>{{ sample_embedding_coverage.failed }}</strong></div>
+      <div><span>元画像なし</span><strong>{{ sample_embedding_coverage.missing }}</strong></div>
       <div><span>未計算</span><strong>{{ sample_embedding_coverage.not_computed }}</strong></div>
     </div>
     <div class="actions compact-actions">
-      <form method="post" action="/embeddings/jobs">
+      <form method="post" action="/embeddings/jobs" data-embedding-job-form>
         <input type="hidden" name="job_type" value="training_job_samples">
         <input type="hidden" name="target_id" value="{{ job.id }}">
         <input type="hidden" name="recompute" value="missing">
         <input type="hidden" name="return_to" value="/jobs/{{ job.id }}#validation-runs">
-        <button type="submit">Sample Embeddingを計算</button>
+        <button type="submit">サンプル画像Embeddingを計算</button>
       </form>
-      <form method="post" action="/embeddings/jobs">
+      <form method="post" action="/embeddings/jobs" data-embedding-job-form>
         <input type="hidden" name="job_type" value="training_job_samples">
         <input type="hidden" name="target_id" value="{{ job.id }}">
         <input type="hidden" name="recompute" value="stale">
         <input type="hidden" name="return_to" value="/jobs/{{ job.id }}#validation-runs">
-        <button type="submit">Staleのみ再計算</button>
+        <button type="submit">古いEmbeddingのみ再計算</button>
       </form>
     </div>
   </div>

@@ -384,16 +384,22 @@ def timestamp() -> str:
 
 
 def trash_entries() -> list[dict[str, Any]]:
-    root = trash_root()
+    trash_root()
     history = fetch_all("SELECT * FROM file_cleanup_history ORDER BY id DESC LIMIT 100")
-    return [
-        {
-            **dict(row),
-            "file_size_label": format_bytes(row["file_size"]),
-            "trash_exists": bool(row["trash_path"] and Path(row["trash_path"]).exists()),
-        }
-        for row in history
-    ]
+    entries: list[dict[str, Any]] = []
+    for row in history:
+        trash_path = row["trash_path"]
+        trash_exists = bool(trash_path and Path(trash_path).exists())
+        if not trash_exists:
+            continue
+        entries.append(
+            {
+                **dict(row),
+                "file_size_label": format_bytes(row["file_size"]),
+                "trash_exists": trash_exists,
+            }
+        )
+    return entries
 
 
 def purge_trash() -> int:
