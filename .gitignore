@@ -6,6 +6,8 @@ __pycache__/
 # Local runtime data
 data/*.db
 data/*.db-*
+data/embeddings/
+data/embedding_acceptance/
 models/
 datasets/*
 !datasets/.gitkeep
