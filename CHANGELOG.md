@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.2.0-beta - 2026-06-15
+
+Release Version: v0.2.0-beta
+Internal Milestone: Phase 10.11.1
+
+LoRA Studio v0.2.0-beta は、Phase 10.11.1 時点の運用ベータリリースです。
+
+### 主な変更
+
+- sd-scripts `gen_img.py` を使ったValidation画像生成を安定化しました。
+- Validation生成時のsampler表記をsd-scripts互換値へ正規化しました。
+- 生成中ログの簡易表示とAJAX更新を改善しました。
+- 生成完了後に画像生成ボタンが復帰しないUI問題を修正しました。
+- Validation Run / Matrix / レビューまわりの操作導線を改善しました。
+- READMEのOSS向けスクリーンショットと説明を整理しました。
+- one-offのローカル移行処理をアプリ本体から分離しました。
+
+### 注意
+
+- WebUI / reForge APIによる自動生成は未実装です。
+- sd-scripts `gen_img.py` による標準Validation画像生成には対応しています。
+- ChatGPT API連携、AI画像評価、FLUX、LyCORIS/LoConは未実装です。
+
 ## v0.1-beta - 2026-06-12
 
 LoRA-Studioを運用ベータ前の安定化状態として記録します。目的は、SDXL/SD1.5の2DキャラクターLoRA学習を、Dataset整備から学習、sample確認、採用LoRA管理、外部Validation、次回実験提案までローカルで一貫して追跡できるようにすることです。

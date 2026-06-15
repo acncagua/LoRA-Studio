@@ -2,7 +2,7 @@
 
 Stable Diffusion系LoRA、特にSDXL/SD1.5の2Dキャラクター顔LoRA学習をローカルで管理するための支援ツールです。Phase10系の運用ベータでは自動最適化ではなく、学習実験の作成、実行準備、ログ、loss健全性、サンプル画像比較、採用epoch判断、Validation、次回実験提案を一元管理することを目的にします。
 
-現在の運用ベータ記録は `CHANGELOG.md` の `v0.1-beta` を参照してください。
+現在の運用ベータ記録は `CHANGELOG.md` の `v0.2.0-beta` を参照してください。
 
 ## Screenshots
 
