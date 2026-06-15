@@ -86,6 +86,14 @@ def build_context(job_id: int) -> dict[str, Any]:
     )
     validation_run = fetch_one("SELECT * FROM validation_runs WHERE job_id = ? ORDER BY id DESC LIMIT 1", (job_id,))
     validation_counts = validation_run_counts(validation_run["id"]) if validation_run else None
+    machine_scores = fetch_all(
+        """
+        SELECT provider, confidence_label, assist_label, reason_json
+        FROM machine_review_scores
+        WHERE job_id = ?
+        """,
+        (job_id,),
+    )
     dataset_analysis = fetch_one("SELECT * FROM dataset_analysis WHERE dataset_id = ?", (job["dataset_id"],))
     params = json.loads(job["params_json"])
     return {
@@ -98,6 +106,7 @@ def build_context(job_id: int) -> dict[str, Any]:
         "weight_reviews": weight_reviews,
         "validation_run": validation_run,
         "validation_counts": validation_counts,
+        "machine_scores": machine_scores,
         "dataset_analysis": dataset_analysis,
         "params": params,
     }
@@ -118,6 +127,7 @@ def build_recommendations(context: dict[str, Any]) -> list[dict[str, Any]]:
     weight_rubric = weight_review_rubric_summary(context["weight_reviews"])
     validation_scope = validation_condition_scope(context["weight_reviews"])
     validation_completeness_note = validation_completeness_warning(context)
+    machine_review_note = machine_review_warning(context)
     epoch_label = summary["epoch_trend_label"] if summary else "UNKNOWN"
     health_label = summary["health_label"] if summary else "UNKNOWN"
     visual_good = selected_epoch_has_good_rating(context, selected_epoch) or selected_epoch_is_candidate(context, selected_epoch)
@@ -135,6 +145,20 @@ def build_recommendations(context: dict[str, Any]) -> list[dict[str, Any]]:
                 {},
                 "学習パラメータを触る前に呼び出し安定性を改善できる可能性があります。",
                 "Dataset修正後は既存Jobとの比較条件が変わります。",
+            )
+        )
+
+    if machine_review_note:
+        recs.append(
+            recommendation(
+                "machine_review_notice",
+                "low",
+                "機械補助レビューの信頼度に注意",
+                "Machine Review Assistは参考情報として扱ってください。",
+                machine_review_note,
+                {},
+                "Reference Setやembedding条件を整えると、補助情報として見やすくなります。",
+                "mock providerやReference不足の結果は、強いパラメータ提案の根拠には使いません。",
             )
         )
 
@@ -436,6 +460,22 @@ def validation_completeness_warning(context: dict[str, Any]) -> str:
     if counts and counts["expected"] and counts["registered"] < counts["expected"]:
         return f"Validation incomplete: {counts['registered']}/{counts['expected']} conditions registered."
     return "Validation completeness: OK."
+
+
+def machine_review_warning(context: dict[str, Any]) -> str:
+    rows = context.get("machine_scores") or []
+    if not rows:
+        return ""
+    providers = {row["provider"] for row in rows if "provider" in row.keys() and row["provider"]}
+    confidences = {row["confidence_label"] for row in rows if "confidence_label" in row.keys() and row["confidence_label"]}
+    notes: list[str] = []
+    if "mock" in providers:
+        notes.append("mock providerのMachine Assist結果は意味的な画像評価ではありません。")
+    if confidences & {"low", "unavailable"}:
+        notes.append("Reference Set不足またはembedding条件により、Machine Assistは低信頼度です。")
+    if notes:
+        notes.append("最終判断は人間評価、Validation画像、loss健全性を優先してください。")
+    return " ".join(notes)
 
 
 def parse_tags(value: str | None) -> list[str]:

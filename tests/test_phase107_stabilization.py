@@ -1553,6 +1553,7 @@ class EmbeddingPhase112Tests(IsolatedDbTest):
     def test_machine_review_scores_samples_and_validation_images(self) -> None:
         from app.services.embedding_service import embedding_coverage
         from app.services.machine_review import load_machine_review_settings, reference_set_readiness, run_machine_review
+        from app.services.recommendations import regenerate_recommendations
 
         dataset_id, version_id, dataset_dir = self.make_dataset_version()
         self.make_png(dataset_dir / "img002.png")
@@ -1598,6 +1599,8 @@ class EmbeddingPhase112Tests(IsolatedDbTest):
         coverage = embedding_coverage("reference_set_version", reference["current_version_id"])
         readiness = reference_set_readiness(reference_detail(reference_set_id)["reference_set"], coverage)
         self.assertIn(readiness["label"], {"OK", "WARNING"})
+        recommendations = regenerate_recommendations(job_id)
+        self.assertTrue(any(row["recommendation_type"] == "machine_review_notice" for row in recommendations))
 
     def test_machine_review_pages_render(self) -> None:
         from app.main import embedding_settings_page, job_detail, reference_set_detail as reference_page, validation_run_detail as validation_page
@@ -1612,6 +1615,31 @@ class EmbeddingPhase112Tests(IsolatedDbTest):
         self.assertIn("機械補助レビュー", job_detail(request=None, job_id=job_id).body.decode("utf-8"))
         self.assertIn("Machine Review readiness", reference_page(request=None, set_id=reference_set_id).body.decode("utf-8"))
         self.assertIn("機械補助レビュー", validation_page(request=None, run_id=run_id).body.decode("utf-8"))
+
+    def test_machine_review_skips_stale_or_missing_embeddings(self) -> None:
+        from app.services.machine_review import run_machine_review
+
+        dataset_id, version_id, dataset_dir = self.make_dataset_version()
+        reference_set_id = create_reference_set(
+            name="Machine Review Reference",
+            reference_type="character",
+            dataset_id=dataset_id,
+            dataset_version_id=version_id,
+        )
+        add_reference_image(reference_set_id=reference_set_id, image_path=str(dataset_dir / "img001.png"), image_role="face_front")
+        reference = fetch_one("SELECT current_version_id FROM reference_sets WHERE id = ?", (reference_set_id,))
+        job_id = self.make_sample_job(dataset_id, version_id)
+        self.run_embedding_job_sync("dataset_version", version_id)
+        self.run_embedding_job_sync("reference_set_version", reference["current_version_id"])
+        self.run_embedding_job_sync("training_job_samples", job_id)
+
+        sample = fetch_one("SELECT image_path FROM sample_images WHERE job_id = ? LIMIT 1", (job_id,))
+        Path(sample["image_path"]).unlink()
+        result = run_machine_review("training_job_samples", job_id)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["scored"], 0)
+        self.assertEqual(fetch_one("SELECT skipped_count, failed_count FROM machine_review_jobs WHERE id = ?", (result["job_id"],))["skipped_count"], 1)
+        self.assertEqual(fetch_one("SELECT failed_count FROM machine_review_jobs WHERE id = ?", (result["job_id"],))["failed_count"], 0)
 
 
 class StartHelperTests(unittest.TestCase):

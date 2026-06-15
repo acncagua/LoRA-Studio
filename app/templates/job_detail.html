@@ -402,7 +402,7 @@
     <button type="button" data-save-all-ratings>表示中の評価を一括保存</button>
   </div>
   <table>
-    <thead><tr><th>Rank</th><th>Epoch</th><th>候補</th><th>Score</th><th>理由</th><th>Loss</th><th>Sample</th><th>出力LoRA</th><th>採用</th></tr></thead>
+    <thead><tr><th>Rank</th><th>Epoch</th><th>候補</th><th>Score</th><th>理由</th><th>Loss</th><th>Sample</th><th>Machine Assist</th><th>出力LoRA</th><th>採用</th></tr></thead>
     <tbody>
       {% for candidate in review_candidates %}
       {% set epoch = (epoch_visual_summaries | selectattr('epoch', 'equalto', candidate.epoch) | list | first) %}
@@ -414,11 +414,12 @@
         <td>{{ candidate.reason_text }}</td>
         <td>{{ '%.6f'|format(epoch.avg_loss) if epoch and epoch.avg_loss is not none else '-' }}</td>
         <td>{{ epoch.sample_count if epoch else '-' }}</td>
+        <td>{% if epoch and epoch.machine %}<span class="label {{ epoch.machine.assist_label }}">{{ epoch.machine.assist_label }}</span><br><span class="label {{ epoch.machine.confidence_label }}">{{ epoch.machine.confidence_label }}</span>{% if epoch.output_selected %}<br><span class="muted">人間評価を優先</span>{% endif %}{% else %}-{% endif %}</td>
         <td>{{ epoch.output_file if epoch else '-' }}</td>
         <td>{{ '採用中' if epoch and epoch.output_selected else '-' }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="9" class="muted">候補epochはまだありません。結果を再取り込み、または候補epochを再生成してください。</td></tr>
+      <tr><td colspan="10" class="muted">候補epochはまだありません。結果を再取り込み、または候補epochを再生成してください。</td></tr>
       {% endfor %}
     </tbody>
   </table>

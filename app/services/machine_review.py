@@ -495,8 +495,13 @@ def run_machine_review(target_type: str, target_id: int, reference_set_version_i
             score_source(source, context, model, settings)
             scored += 1
         except Exception as exc:
-            failed += 1
-            error_message = str(exc)
+            message = str(exc)
+            if "Embedding is not ready" in message:
+                skipped += 1
+                error_message = message
+            else:
+                failed += 1
+                error_message = message
     elapsed = int(time.time() - started)
     ended = utc_now()
     status = "completed" if failed == 0 else "failed"
