@@ -359,6 +359,38 @@
     <pre class="compact-log">{{ log_tail or 'train.logはまだありません。' }}</pre>
   </details>
 </section>
+<section id="machine-assist" class="notice">
+  <h2>機械補助レビュー</h2>
+  <p>機械補助判定は参考情報です。最終判断は人間評価を優先してください。mock providerのスコアは意味的な画像評価ではありません。</p>
+  <p>Reference Setが1枚だけの場合、判定が偏る可能性があります。Machine Assistだけで採用epochを自動決定しません。</p>
+  <div class="actions compact-actions">
+    <form method="post" action="/machine-review/jobs">
+      <input type="hidden" name="target_type" value="training_job_samples">
+      <input type="hidden" name="target_id" value="{{ job.id }}">
+      <input type="hidden" name="return_to" value="/jobs/{{ job.id }}#machine-assist">
+      <button type="submit">サンプル画像の機械補助レビューを実行</button>
+    </form>
+  </div>
+  <table>
+    <thead><tr><th>Epoch</th><th>件数</th><th>Reference Max</th><th>Dataset Nearest</th><th>Overfit</th><th>Assist</th><th>Confidence</th></tr></thead>
+    <tbody>
+      {% for epoch, score in machine_epoch_summary.items() %}
+      <tr>
+        <td>{{ epoch }}</td>
+        <td>{{ score.count }}</td>
+        <td>{{ '%.4f'|format(score.reference_similarity_max) if score.reference_similarity_max is not none else '-' }}</td>
+        <td>{{ '%.4f'|format(score.nearest_dataset_similarity) if score.nearest_dataset_similarity is not none else '-' }}</td>
+        <td><span class="label {{ score.overfit_risk_label }}">{{ score.overfit_risk_label }}</span></td>
+        <td><span class="label {{ score.assist_label }}">{{ score.assist_label }}</span></td>
+        <td><span class="label {{ score.confidence_label }}">{{ score.confidence_label }}</span></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="muted">Machine Reviewはまだ実行されていません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
 <section id="review-queue">
   <h2>Review Queue</h2>
   <p class="muted">lossとepoch summaryから候補epochを先に出します。自動候補は画像内容AI判定ではなく、人間評価の入口を軽くするための補助です。</p>
@@ -424,6 +456,11 @@
           epoch {{ sample.epoch or '-' }} / step {{ sample.step or '-' }} / prompt {{ sample.prompt_id or '-' }}<br>
           {{ sample.filename }}<br>
           <span class="muted">{{ sample.auto_review_label or '-' }} / {{ sample.auto_review_reason or '' }}</span>
+          {% if sample.machine_score %}
+          <br><span class="label {{ sample.machine_score.assist_label }}">{{ sample.machine_score.assist_label }}</span>
+          <span class="label {{ sample.machine_score.confidence_label }}">{{ sample.machine_score.confidence_label }}</span>
+          <br><span class="muted">Ref {{ '%.3f'|format(sample.machine_score.reference_similarity_max) if sample.machine_score.reference_similarity_max is not none else '-' }} (#{{ sample.machine_score.nearest_reference_image_id or '-' }}) / Dataset {{ '%.3f'|format(sample.machine_score.nearest_dataset_similarity) if sample.machine_score.nearest_dataset_similarity is not none else '-' }} (#{{ sample.machine_score.nearest_dataset_image_id or '-' }}) / overfit {{ sample.machine_score.overfit_risk_label }}</span>
+          {% endif %}
         </figcaption>
         <form method="post" action="/jobs/{{ job.id }}/samples/{{ sample.id }}/review" class="review-form" data-review-form>
           <div class="rating-grid">

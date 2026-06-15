@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased - Phase 11.3
+
+- Reference Similarity Assist / Machine Review Assist初期版を追加しました。
+- `machine_review_scores`、`machine_review_jobs`、`machine_review_settings` を追加しました。
+- Sample画像とValidation画像について、Reference Setとの平均/最大類似度、nearest reference、Dataset nearest similarity、top1 margin、overfit risk、assist label、confidence labelを保存できるようにしました。
+- mock provider利用時は、スコアを意味評価として扱わないようlow confidence表示にしました。
+- Job詳細、Validation Run詳細、Reference Set詳細、Embedding設定にMachine Review Assist関連の表示と実行導線を追加しました。
+- READMEにMachine Review Assist、Reference Similarity、Dataset Nearest Similarity、mock providerの注意、人間評価優先の説明を追加しました。
+
 ## Unreleased - Phase 11.2
 
 - Embedding Cache / Feature Extraction Foundationを追加しました。

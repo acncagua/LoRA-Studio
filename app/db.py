@@ -58,6 +58,7 @@ def init_db() -> None:
         seed_evaluation_rubrics(conn)
         seed_validation_presets(conn)
         seed_embedding_models(conn)
+        seed_machine_review_settings(conn)
         import_latest_environment(conn)
     from app.services.validation_runs import backfill_validation_runs
 
@@ -390,6 +391,14 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             ON embedding_jobs(status);
         CREATE INDEX IF NOT EXISTS idx_embedding_job_items_job
             ON embedding_job_items(embedding_job_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_machine_review_scores_source
+            ON machine_review_scores(source_type, source_id, embedding_model_id, reference_set_version_id, dataset_version_id);
+        CREATE INDEX IF NOT EXISTS idx_machine_review_scores_job
+            ON machine_review_scores(job_id);
+        CREATE INDEX IF NOT EXISTS idx_machine_review_scores_validation
+            ON machine_review_scores(validation_run_id);
+        CREATE INDEX IF NOT EXISTS idx_machine_review_jobs_status
+            ON machine_review_jobs(status);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_selected_lora_profiles_job_output
             ON selected_lora_profiles(job_id, selected_output_id);
         CREATE INDEX IF NOT EXISTS idx_selected_lora_profiles_project
@@ -1006,6 +1015,26 @@ def seed_embedding_models(conn: sqlite3.Connection) -> None:
             """,
             (str(settings.EMBEDDINGS_DIR), now, now),
         )
+
+
+def seed_machine_review_settings(conn: sqlite3.Connection) -> None:
+    now = utc_now()
+    existing = conn.execute("SELECT id FROM machine_review_settings ORDER BY id LIMIT 1").fetchone()
+    if existing is not None:
+        return
+    conn.execute(
+        """
+        INSERT INTO machine_review_settings(
+            active_embedding_model_id, reference_similarity_method,
+            overfit_nearest_threshold, overfit_margin_threshold,
+            reference_low_threshold, low_confidence_when_mock_provider,
+            minimum_reference_images_character, minimum_reference_images_style,
+            include_dataset_nearest_check, created_at, updated_at
+        )
+        VALUES ('mock_image_512', 'avg_max_blend', 0.90, 0.05, 0.20, 1, 3, 6, 1, ?, ?)
+        """,
+        (now, now),
+    )
 
 
 def seed_legacy_validation_run(conn: sqlite3.Connection) -> None:
@@ -1758,6 +1787,48 @@ CREATE TABLE IF NOT EXISTS embedding_job_items (
     source_type TEXT NOT NULL, source_id INTEGER, source_path TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending', embedding_id INTEGER,
     error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS machine_review_settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    active_embedding_model_id TEXT,
+    reference_similarity_method TEXT NOT NULL DEFAULT 'avg_max_blend',
+    overfit_nearest_threshold REAL NOT NULL DEFAULT 0.90,
+    overfit_margin_threshold REAL NOT NULL DEFAULT 0.05,
+    reference_low_threshold REAL NOT NULL DEFAULT 0.20,
+    low_confidence_when_mock_provider INTEGER NOT NULL DEFAULT 1,
+    minimum_reference_images_character INTEGER NOT NULL DEFAULT 3,
+    minimum_reference_images_style INTEGER NOT NULL DEFAULT 6,
+    include_dataset_nearest_check INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS machine_review_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    target_type TEXT NOT NULL, target_id INTEGER,
+    reference_set_id INTEGER, reference_set_version_id INTEGER,
+    dataset_id INTEGER, dataset_version_id INTEGER,
+    embedding_model_id TEXT, status TEXT NOT NULL DEFAULT 'planned',
+    total_count INTEGER NOT NULL DEFAULT 0, processed_count INTEGER NOT NULL DEFAULT 0,
+    scored_count INTEGER NOT NULL DEFAULT 0, skipped_count INTEGER NOT NULL DEFAULT 0,
+    failed_count INTEGER NOT NULL DEFAULT 0, log_path TEXT,
+    started_at TEXT, ended_at TEXT, elapsed_seconds INTEGER,
+    error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS machine_review_scores (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_type TEXT NOT NULL, source_id INTEGER NOT NULL,
+    project_id INTEGER, job_id INTEGER, validation_run_id INTEGER,
+    reference_set_id INTEGER, reference_set_version_id INTEGER,
+    dataset_id INTEGER, dataset_version_id INTEGER,
+    embedding_model_id TEXT NOT NULL, provider TEXT,
+    prompt_key TEXT, prompt_role TEXT, epoch INTEGER, lora_weight REAL,
+    reference_similarity_avg REAL, reference_similarity_max REAL,
+    nearest_reference_image_id INTEGER, nearest_reference_similarity REAL,
+    dataset_similarity_avg REAL, nearest_dataset_image_id INTEGER,
+    nearest_dataset_similarity REAL, dataset_top1_margin REAL,
+    overfit_risk_label TEXT NOT NULL DEFAULT 'unknown',
+    assist_score REAL, assist_label TEXT NOT NULL DEFAULT 'unavailable',
+    confidence_label TEXT NOT NULL DEFAULT 'unavailable',
+    reason_json TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS recommendation_rules (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, recommendation_type TEXT NOT NULL,

@@ -9,6 +9,36 @@
   <p>Embedding model weights may need to be downloaded. LoRA Studio will not download them automatically unless explicitly enabled.</p>
 </section>
 
+<section id="machine-review-settings" class="notice">
+  <h2>機械補助レビュー設定</h2>
+  <p>機械補助判定は参考情報です。最終判断は人間評価を優先してください。mock providerのスコアは意味的な画像評価ではありません。</p>
+  <p>Reference Setが1枚だけの場合、判定が偏る可能性があります。画風LoRAでは広めのReference Setを推奨します。</p>
+  <form method="post" action="/settings/machine-review" class="form-grid">
+    <label>使用Embeddingモデル
+      <select name="active_embedding_model_id">
+        {% for model in models %}
+        <option value="{{ model.id }}" {{ 'selected' if machine_review_settings.active_embedding_model_id == model.id else '' }}>{{ model.name }} / {{ model.provider }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Reference similarity方式
+      <select name="reference_similarity_method">
+        {% for value in ['avg', 'max', 'avg_max_blend'] %}
+        <option value="{{ value }}" {{ 'selected' if machine_review_settings.reference_similarity_method == value else '' }}>{{ value }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Overfit nearest閾値<input type="number" step="0.01" name="overfit_nearest_threshold" value="{{ machine_review_settings.overfit_nearest_threshold }}"></label>
+    <label>Top1 margin閾値<input type="number" step="0.01" name="overfit_margin_threshold" value="{{ machine_review_settings.overfit_margin_threshold }}"></label>
+    <label>Reference low閾値<input type="number" step="0.01" name="reference_low_threshold" value="{{ machine_review_settings.reference_low_threshold }}"></label>
+    <label>キャラReference最低枚数<input type="number" name="minimum_reference_images_character" value="{{ machine_review_settings.minimum_reference_images_character }}"></label>
+    <label>画風Reference最低枚数<input type="number" name="minimum_reference_images_style" value="{{ machine_review_settings.minimum_reference_images_style }}"></label>
+    <label class="inline-check"><input type="checkbox" name="low_confidence_when_mock_provider" value="1" {{ 'checked' if machine_review_settings.low_confidence_when_mock_provider else '' }}> mock providerは低信頼として扱う</label>
+    <label class="inline-check"><input type="checkbox" name="include_dataset_nearest_check" value="1" {{ 'checked' if machine_review_settings.include_dataset_nearest_check else '' }}> Dataset nearest similarityを計算する</label>
+    <button type="submit">機械補助レビュー設定を保存</button>
+  </form>
+</section>
+
 <section class="panel-grid">
   <form method="post" action="/settings/embeddings" class="form-grid">
     <h2>設定</h2>

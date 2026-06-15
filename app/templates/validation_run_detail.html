@@ -124,6 +124,38 @@
 </section>
 {% endif %}
 
+<section id="machine-assist" class="notice">
+  <h2>機械補助レビュー</h2>
+  <p>機械補助判定は参考情報です。最終判断は人間評価を優先してください。mock providerのスコアは意味的な画像評価ではありません。Hiresあり結果は強いパラメータ提案には使わないでください。</p>
+  <div class="actions compact-actions">
+    <form method="post" action="/machine-review/jobs">
+      <input type="hidden" name="target_type" value="validation_run_images">
+      <input type="hidden" name="target_id" value="{{ run.id }}">
+      <input type="hidden" name="return_to" value="/validation-runs/{{ run.id }}#machine-assist">
+      <button type="submit">検証画像の機械補助レビューを実行</button>
+    </form>
+  </div>
+  <table>
+    <thead><tr><th>weight</th><th>prompt</th><th>件数</th><th>Reference</th><th>Dataset Nearest</th><th>Overfit</th><th>Assist</th><th>Confidence</th></tr></thead>
+    <tbody>
+      {% for row in machine_weight_summary %}
+      <tr>
+        <td>{{ row.lora_weight if row.lora_weight is not none else '-' }}</td>
+        <td>{{ row.prompt_key or '-' }}</td>
+        <td>{{ row.count }}</td>
+        <td>{{ '%.4f'|format(row.reference_similarity_avg) if row.reference_similarity_avg is not none else '-' }}</td>
+        <td>{{ '%.4f'|format(row.nearest_dataset_similarity) if row.nearest_dataset_similarity is not none else '-' }}</td>
+        <td><span class="label {{ row.overfit_risk_label }}">{{ row.overfit_risk_label }}</span></td>
+        <td><span class="label {{ row.assist_label }}">{{ row.assist_label }}</span></td>
+        <td><span class="label {{ row.confidence_label }}">{{ row.confidence_label }}</span></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="muted">Machine Reviewはまだ実行されていません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
 <nav class="validation-tabs" aria-label="検証Runページ内ナビ">
   <a href="#overview">概要</a>
   <a href="#images">画像確認</a>
@@ -225,6 +257,12 @@
       <figcaption>
         #{{ image.id }} {{ image.image_role }} / {{ image.prompt_key or '-' }} / seed {{ image.seed or '-' }} / weight {{ image.lora_weight if image.lora_weight is not none else '-' }} / Hires {{ 'あり' if image.hires_enabled else 'なし' }}<br>
         条件: {{ image.expected_condition_id or '未一致 / グリッド' }}
+        {% set m = machine_score_map.get(image.id) %}
+        {% if m %}
+        <br><span class="label {{ m.assist_label }}">{{ m.assist_label }}</span>
+        <span class="label {{ m.confidence_label }}">{{ m.confidence_label }}</span>
+        <br><span class="muted">Ref {{ '%.3f'|format(m.reference_similarity_max) if m.reference_similarity_max is not none else '-' }} (#{{ m.nearest_reference_image_id or '-' }}) / Dataset {{ '%.3f'|format(m.nearest_dataset_similarity) if m.nearest_dataset_similarity is not none else '-' }} (#{{ m.nearest_dataset_image_id or '-' }}) / overfit {{ m.overfit_risk_label }}</span>
+        {% endif %}
       </figcaption>
       <form method="post" action="/validation-runs/{{ run.id }}/images/{{ image.id }}/review" class="review-form" data-review-form>
         <div class="rating-grid">

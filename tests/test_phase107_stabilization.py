@@ -1550,6 +1550,69 @@ class EmbeddingPhase112Tests(IsolatedDbTest):
         self.assertIn("Reference Embedding Coverage", reference_page(request=None, set_id=reference_set_id).body.decode("utf-8"))
         self.assertIn("Validation Image Embedding Coverage", validation_page(request=None, run_id=run_id).body.decode("utf-8"))
 
+    def test_machine_review_scores_samples_and_validation_images(self) -> None:
+        from app.services.embedding_service import embedding_coverage
+        from app.services.machine_review import load_machine_review_settings, reference_set_readiness, run_machine_review
+
+        dataset_id, version_id, dataset_dir = self.make_dataset_version()
+        self.make_png(dataset_dir / "img002.png")
+        (dataset_dir / "img002.txt").write_text("testchar, full body", encoding="utf-8")
+        reference_set_id = create_reference_set(
+            name="Machine Review Reference",
+            reference_type="character",
+            dataset_id=dataset_id,
+            dataset_version_id=version_id,
+            trigger_word="testchar",
+        )
+        add_reference_image(reference_set_id=reference_set_id, image_path=str(dataset_dir / "img001.png"), image_role="face_front", source_type="dataset")
+        reference = fetch_one("SELECT current_version_id FROM reference_sets WHERE id = ?", (reference_set_id,))
+        job_id = self.make_sample_job(dataset_id, version_id)
+        run_id = self.make_validation_run_with_image(job_id)
+
+        self.run_embedding_job_sync("dataset_version", version_id)
+        self.run_embedding_job_sync("reference_set_version", reference["current_version_id"])
+        self.run_embedding_job_sync("training_job_samples", job_id)
+        self.run_embedding_job_sync("validation_run", run_id)
+
+        settings_row = load_machine_review_settings()
+        self.assertEqual(settings_row["active_embedding_model_id"], "mock_image_512")
+        sample_result = run_machine_review("training_job_samples", job_id)
+        validation_result = run_machine_review("validation_run_images", run_id)
+        self.assertEqual(sample_result["scored"], 1)
+        self.assertEqual(validation_result["scored"], 1)
+
+        sample_score = fetch_one("SELECT * FROM machine_review_scores WHERE source_type = 'sample_image' AND job_id = ?", (job_id,))
+        validation_score = fetch_one("SELECT * FROM machine_review_scores WHERE source_type = 'validation_image' AND validation_run_id = ?", (run_id,))
+        self.assertIsNotNone(sample_score)
+        self.assertIsNotNone(validation_score)
+        self.assertEqual(sample_score["provider"], "mock")
+        self.assertEqual(sample_score["confidence_label"], "low")
+        self.assertEqual(sample_score["assist_label"], "low_confidence")
+        self.assertEqual(sample_score["overfit_risk_label"], "unknown")
+        self.assertIsNotNone(sample_score["nearest_reference_image_id"])
+        self.assertIsNotNone(sample_score["nearest_dataset_image_id"])
+        self.assertIsNotNone(sample_score["nearest_dataset_similarity"])
+        self.assertIsNotNone(sample_score["dataset_top1_margin"])
+        self.assertIsNotNone(validation_score["nearest_dataset_image_id"])
+
+        coverage = embedding_coverage("reference_set_version", reference["current_version_id"])
+        readiness = reference_set_readiness(reference_detail(reference_set_id)["reference_set"], coverage)
+        self.assertIn(readiness["label"], {"OK", "WARNING"})
+
+    def test_machine_review_pages_render(self) -> None:
+        from app.main import embedding_settings_page, job_detail, reference_set_detail as reference_page, validation_run_detail as validation_page
+
+        dataset_id, version_id, dataset_dir = self.make_dataset_version()
+        reference_set_id = create_reference_set(name="Machine Review Reference", reference_type="character", dataset_id=dataset_id, dataset_version_id=version_id)
+        add_reference_image(reference_set_id=reference_set_id, image_path=str(dataset_dir / "img001.png"), image_role="face_front")
+        job_id = self.make_sample_job(dataset_id, version_id)
+        run_id = self.make_validation_run_with_image(job_id)
+
+        self.assertIn("機械補助レビュー設定", embedding_settings_page(request=None).body.decode("utf-8"))
+        self.assertIn("機械補助レビュー", job_detail(request=None, job_id=job_id).body.decode("utf-8"))
+        self.assertIn("Machine Review readiness", reference_page(request=None, set_id=reference_set_id).body.decode("utf-8"))
+        self.assertIn("機械補助レビュー", validation_page(request=None, run_id=run_id).body.decode("utf-8"))
+
 
 class StartHelperTests(unittest.TestCase):
     def test_start_lora_studio_does_not_release_7865_by_default(self) -> None:

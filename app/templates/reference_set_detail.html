@@ -87,6 +87,20 @@
 </section>
 {% endif %}
 
+{% if machine_review_readiness %}
+<section class="notice">
+  <h2>Machine Review readiness</h2>
+  <p>Reference Setの枚数・Completeness・Embedding coverageから、Machine Review Assistに使える状態かを確認します。</p>
+  <div class="summary-grid">
+    <div><span>ready</span><strong><span class="label {{ machine_review_readiness.label|lower }}">{{ machine_review_readiness.label }}</span></strong></div>
+    <div><span>Completeness</span><strong>{{ machine_review_readiness.completeness_label }}</strong></div>
+    <div><span>Reference画像</span><strong>{{ machine_review_readiness.image_count }}</strong></div>
+    <div><span>Embedding</span><strong>{{ machine_review_readiness.ready }} / {{ machine_review_readiness.total }}</strong></div>
+  </div>
+  <p class="muted">Reference Setが1枚だけの場合、判定が偏る可能性があります。キャラLoRAは3〜5枚、画風LoRAは6〜12枚程度を推奨します。</p>
+</section>
+{% endif %}
+
 <section>
   <h2>画像を追加</h2>
   <form method="post" action="/reference-sets/{{ reference_set.id }}/images" class="form-grid">

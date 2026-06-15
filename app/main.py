@@ -44,6 +44,18 @@ from app.services.image_store import (
     verify_image_file,
 )
 from app.services.maintenance import create_app_backup, export_diagnostics, maintenance_summary
+from app.services.machine_review import (
+    epoch_machine_summary,
+    load_machine_review_settings,
+    reference_set_readiness,
+    run_machine_review,
+    score_map_for_samples,
+    score_map_for_validation,
+    scores_for_job,
+    scores_for_validation_run,
+    update_machine_review_settings,
+    validation_weight_summary,
+)
 from app.services.output_collector import collect_job_results
 from app.services.recommendations import create_draft_job_from_recommendation, list_recommendations, regenerate_recommendations, set_recommendation_status, write_recommendation_report
 from app.services.review_candidates import ensure_epoch_candidates, regenerate_epoch_candidates
@@ -1366,6 +1378,7 @@ def embedding_settings_page(request: Request, preflight_model_id: str | None = N
         models=models,
         embedding_settings=settings_row,
         active_model=active_embedding_model(),
+        machine_review_settings=load_machine_review_settings(),
         preflight=preflight,
         embedding_jobs=latest_embedding_jobs(),
         cache_size=embedding_cache_size(),
@@ -1403,6 +1416,34 @@ def embedding_settings_save(
     return RedirectResponse("/settings/embeddings", status_code=303)
 
 
+@app.post("/settings/machine-review")
+def machine_review_settings_save(
+    active_embedding_model_id: str = Form("mock_image_512"),
+    reference_similarity_method: str = Form("avg_max_blend"),
+    overfit_nearest_threshold: float = Form(0.90),
+    overfit_margin_threshold: float = Form(0.05),
+    reference_low_threshold: float = Form(0.20),
+    low_confidence_when_mock_provider: str = Form(""),
+    minimum_reference_images_character: int = Form(3),
+    minimum_reference_images_style: int = Form(6),
+    include_dataset_nearest_check: str = Form(""),
+) -> RedirectResponse:
+    update_machine_review_settings(
+        {
+            "active_embedding_model_id": active_embedding_model_id,
+            "reference_similarity_method": reference_similarity_method,
+            "overfit_nearest_threshold": overfit_nearest_threshold,
+            "overfit_margin_threshold": overfit_margin_threshold,
+            "reference_low_threshold": reference_low_threshold,
+            "low_confidence_when_mock_provider": low_confidence_when_mock_provider == "1",
+            "minimum_reference_images_character": minimum_reference_images_character,
+            "minimum_reference_images_style": minimum_reference_images_style,
+            "include_dataset_nearest_check": include_dataset_nearest_check == "1",
+        }
+    )
+    return RedirectResponse("/settings/embeddings#machine-review-settings", status_code=303)
+
+
 @app.post("/settings/embeddings/preflight")
 def embedding_preflight(active_embedding_model_id: str = Form("mock_image_512")) -> RedirectResponse:
     provider_preflight(active_embedding_model_id)
@@ -1430,6 +1471,15 @@ def embedding_job_create(job_type: str = Form(...), target_id: int = Form(...), 
 @app.post("/embeddings/jobs/{embedding_job_id}/stop")
 def embedding_job_stop(embedding_job_id: int, return_to: str = Form("")) -> RedirectResponse:
     stop_embedding_job(embedding_job_id)
+    return RedirectResponse(return_to or "/settings/embeddings", status_code=303)
+
+
+@app.post("/machine-review/jobs")
+def machine_review_run(target_type: str = Form(...), target_id: int = Form(...), reference_set_version_id: int | None = Form(None), return_to: str = Form("")) -> RedirectResponse:
+    try:
+        run_machine_review(target_type, target_id, reference_set_version_id=reference_set_version_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return RedirectResponse(return_to or "/settings/embeddings", status_code=303)
 
 
@@ -2145,6 +2195,8 @@ def job_detail(
     validation_summary = build_validation_summary(validation_results)
     selected_lora_profile = ensure_selected_lora_profile(job_id) if selected_output else None
     recommendations = list_recommendations(job_id)
+    machine_score_map = score_map_for_samples(job_id)
+    machine_epoch_summary = epoch_machine_summary(job_id)
     dataset_version = fetch_one("SELECT * FROM dataset_versions WHERE id = ?", (job["dataset_version_id"],)) if job["dataset_version_id"] else None
     params = json.loads(job["params_json"])
     project = fetch_one("SELECT * FROM lora_projects WHERE id = ?", (job["project_id"],)) if "project_id" in job.keys() and job["project_id"] else None
@@ -2159,14 +2211,16 @@ def job_detail(
         outputs=outputs,
         samples=samples,
         sample_prompts=sample_prompts,
-        sample_groups=group_samples(sample_prompts, samples, candidate_map, review_filter),
+        sample_groups=group_samples(sample_prompts, samples, candidate_map, review_filter, machine_score_map),
         metrics=metrics,
         metric_rows=metric_table["rows"],
         metric_table=metric_table,
         metric_summary=metric_summary,
         epoch_summaries=decorated_epochs,
-        epoch_visual_summaries=build_epoch_visual_summaries(decorated_epochs, samples, candidate_map),
+        epoch_visual_summaries=build_epoch_visual_summaries(decorated_epochs, samples, candidate_map, machine_epoch_summary),
         review_candidates=review_candidates,
+        machine_review_scores=scores_for_job(job_id),
+        machine_epoch_summary=machine_epoch_summary,
         candidate_map=candidate_map,
         candidate_epochs=candidate_epochs,
         review_filter=review_filter if review_filter in {"candidates", "all", "unrated"} else "candidates",
@@ -3082,6 +3136,9 @@ def validation_run_detail(request: Request, run_id: int, generation_error: str |
         generation_error=generation_error,
         running_generation=current_running_validation_generation(),
         validation_embedding_coverage=embedding_coverage("validation_run", run_id),
+        machine_review_scores=scores_for_validation_run(run_id),
+        machine_score_map=score_map_for_validation(run_id),
+        machine_weight_summary=validation_weight_summary(run_id),
     )
 
 
@@ -3111,6 +3168,9 @@ def validation_run_export_report(request: Request, run_id: int) -> HTMLResponse:
         apply_result=None,
         report_path=report_path,
         validation_embedding_coverage=embedding_coverage("validation_run", run_id),
+        machine_review_scores=scores_for_validation_run(run_id),
+        machine_score_map=score_map_for_validation(run_id),
+        machine_weight_summary=validation_weight_summary(run_id),
     )
 
 
@@ -3140,6 +3200,9 @@ def validation_run_apply_to_profile(request: Request, run_id: int) -> HTMLRespon
         apply_result=apply_result,
         report_path=None,
         validation_embedding_coverage=embedding_coverage("validation_run", run_id),
+        machine_review_scores=scores_for_validation_run(run_id),
+        machine_score_map=score_map_for_validation(run_id),
+        machine_weight_summary=validation_weight_summary(run_id),
     )
 
 
@@ -3738,13 +3801,15 @@ def reference_set_detail(request: Request, set_id: int) -> HTMLResponse:
         "SELECT * FROM dataset_versions WHERE dataset_id = ? ORDER BY version_no DESC",
         (detail["reference_set"]["dataset_id"],),
     ) if detail["reference_set"]["dataset_id"] else []
+    ref_coverage = embedding_coverage("reference_set_version", detail["reference_set"]["current_version_id"]) if detail["reference_set"]["current_version_id"] else None
     return render(
         request,
         "reference_set_detail.html",
         **detail,
         dataset_versions=dataset_versions,
         default_project_path=str(settings.ROOT_DIR),
-        reference_embedding_coverage=embedding_coverage("reference_set_version", detail["reference_set"]["current_version_id"]) if detail["reference_set"]["current_version_id"] else None,
+        reference_embedding_coverage=ref_coverage,
+        machine_review_readiness=reference_set_readiness(detail["reference_set"], ref_coverage),
     )
 
 
@@ -3853,6 +3918,7 @@ def reference_set_export(request: Request, set_id: int) -> HTMLResponse:
         detail = reference_detail(set_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    ref_coverage = embedding_coverage("reference_set_version", detail["reference_set"]["current_version_id"]) if detail["reference_set"]["current_version_id"] else None
     return render(
         request,
         "reference_set_detail.html",
@@ -3860,7 +3926,8 @@ def reference_set_export(request: Request, set_id: int) -> HTMLResponse:
         dataset_versions=[],
         default_project_path=str(settings.ROOT_DIR),
         export_paths=paths,
-        reference_embedding_coverage=embedding_coverage("reference_set_version", detail["reference_set"]["current_version_id"]) if detail["reference_set"]["current_version_id"] else None,
+        reference_embedding_coverage=ref_coverage,
+        machine_review_readiness=reference_set_readiness(detail["reference_set"], ref_coverage),
     )
 
 
@@ -4543,8 +4610,9 @@ def base_model_label(path_value: str) -> str:
     return Path(path_value).stem
 
 
-def build_epoch_visual_summaries(epoch_rows: list[dict[str, Any]], samples: list[Any], candidate_map: dict[int, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+def build_epoch_visual_summaries(epoch_rows: list[dict[str, Any]], samples: list[Any], candidate_map: dict[int, dict[str, Any]] | None = None, machine_epoch_summary: dict[int, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     candidate_map = candidate_map or {}
+    machine_epoch_summary = machine_epoch_summary or {}
     samples_by_epoch: dict[int, list[Any]] = {}
     for sample in samples:
         if sample["epoch"] is not None:
@@ -4560,6 +4628,7 @@ def build_epoch_visual_summaries(epoch_rows: list[dict[str, Any]], samples: list
                 "candidate_label": candidate_map.get(epoch, {}).get("candidate_label"),
                 "candidate_rank": candidate_map.get(epoch, {}).get("candidate_rank"),
                 "candidate_reason": candidate_map.get(epoch, {}).get("reason_text"),
+                "machine": machine_epoch_summary.get(epoch),
                 "avg_loss": loss_row.get("avg_loss"),
                 "moving_avg_final_loss": loss_row.get("moving_avg_final_loss"),
                 "sample_count": len(epoch_samples),
@@ -4846,14 +4915,16 @@ def parse_json_list(value: Any) -> list[str]:
     return payload if isinstance(payload, list) else []
 
 
-def group_samples(sample_prompts: list[Any], samples: list[Any], candidate_map: dict[int, dict[str, Any]] | None = None, review_filter: str = "all") -> list[dict[str, Any]]:
+def group_samples(sample_prompts: list[Any], samples: list[Any], candidate_map: dict[int, dict[str, Any]] | None = None, review_filter: str = "all", machine_score_map: dict[int, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     candidate_map = candidate_map or {}
+    machine_score_map = machine_score_map or {}
     candidate_epochs = {epoch for epoch, row in candidate_map.items() if row.get("candidate_label") in {"primary", "secondary", "check"}}
     prompt_map = {row["id"]: row for row in sample_prompts}
     groups: dict[int, dict[str, Any]] = {}
     fallback_key = 0
     for sample in samples:
         sample_item = dict(sample)
+        sample_item["machine_score"] = machine_score_map.get(int(sample["id"]))
         epoch = sample_item["epoch"]
         candidate = candidate_map.get(int(epoch)) if epoch is not None else None
         sample_item["candidate_label"] = candidate.get("candidate_label") if candidate else "low_priority"
