@@ -135,6 +135,38 @@
 </section>
 
 <section>
+  <h2>リファレンスセット</h2>
+  <p class="muted">採用LoRAやValidation Runを人間が確認するときの基準画像です。Machine Review Assistの前段階として、顔・全身・styleなどの役割を固定します。</p>
+  <div class="actions">
+    <a class="button" href="/reference-sets">リファレンスセット一覧</a>
+  </div>
+  <table>
+    <thead><tr><th>ID</th><th>名前</th><th>種別</th><th>Version</th><th>画像</th><th>Completeness</th><th>標準</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for ref in reference_sets %}
+      <tr>
+        <td>#{{ ref.id }}</td>
+        <td><a href="/reference-sets/{{ ref.id }}">{{ ref.name }}</a></td>
+        <td>{{ ref.reference_type }}</td>
+        <td>{% if ref.current_version_no %}v{{ ref.current_version_no }}{% else %}-{% endif %}</td>
+        <td>{{ ref.image_count if ref.image_count is not none else 0 }}</td>
+        <td><span class="label {{ (ref.completeness_label or 'unknown')|lower }}">{{ ref.completeness_label or 'UNKNOWN' }}</span><br>{{ ref.completeness_message or '' }}</td>
+        <td>{{ '標準' if ref.is_default else '-' }}</td>
+        <td>
+          <div class="actions compact-actions">
+            <a class="button small-button" href="/reference-sets/{{ ref.id }}">開く</a>
+            {% if not ref.is_default %}<form method="post" action="/reference-sets/{{ ref.id }}/set-default"><button class="small-button" type="submit">Project標準</button></form>{% endif %}
+          </div>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="muted">このProjectに紐づくリファレンスセットはまだありません。リファレンスセット画面から作成してください。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section>
   <h2>次回実験提案</h2>
   <table>
     <thead><tr><th>優先度</th><th>種別</th><th>タイトル</th><th>状態</th><th>作成ジョブ</th><th>操作</th></tr></thead>

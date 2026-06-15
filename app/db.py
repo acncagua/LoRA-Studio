@@ -71,6 +71,8 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "selected_lora_profile_id": "INTEGER",
             "recommended_weight_min": "REAL",
             "recommended_weight_max": "REAL",
+            "default_reference_set_id": "INTEGER",
+            "default_reference_set_version_id": "INTEGER",
             "memo": "TEXT",
             "archived_at": "TEXT",
             "deleted_at": "TEXT",
@@ -247,6 +249,7 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "last_validation_preset_id": "TEXT",
             "validation_policy_memo": "TEXT",
             "reference_set_id": "INTEGER",
+            "reference_set_version_id": "INTEGER",
             "project_id": "INTEGER",
         },
     )
@@ -262,6 +265,49 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "profile_applied_at": "TEXT",
             "preset_snapshot_json": "TEXT",
             "project_id": "INTEGER",
+            "reference_set_id": "INTEGER",
+            "reference_set_version_id": "INTEGER",
+        },
+    )
+    ensure_columns(
+        conn,
+        "reference_sets",
+        {
+            "project_id": "INTEGER",
+            "dataset_id": "INTEGER",
+            "current_dataset_version_id": "INTEGER",
+            "current_version_id": "INTEGER",
+            "reference_type": "TEXT NOT NULL DEFAULT 'character'",
+            "selection_mode": "TEXT NOT NULL DEFAULT 'manual'",
+            "trigger_word": "TEXT",
+            "description": "TEXT",
+            "is_default": "INTEGER NOT NULL DEFAULT 0",
+            "is_archived": "INTEGER NOT NULL DEFAULT 0",
+            "memo": "TEXT",
+        },
+    )
+    ensure_columns(
+        conn,
+        "reference_images",
+        {
+            "reference_set_version_id": "INTEGER",
+            "dataset_id": "INTEGER",
+            "dataset_version_id": "INTEGER",
+            "source_type": "TEXT NOT NULL DEFAULT 'manual'",
+            "source_image_path": "TEXT",
+            "image_role": "TEXT NOT NULL DEFAULT 'other'",
+            "prompt_role_hint": "TEXT",
+            "caption": "TEXT",
+            "caption_snapshot": "TEXT",
+            "tags_json": "TEXT",
+            "width": "INTEGER",
+            "height": "INTEGER",
+            "file_size": "INTEGER",
+            "sha256": "TEXT",
+            "include_in_machine_review": "INTEGER NOT NULL DEFAULT 1",
+            "exclude_reason": "TEXT",
+            "memo": "TEXT",
+            "updated_at": "TEXT",
         },
     )
     ensure_columns(conn, "experiment_recommendations", {"project_id": "INTEGER"})
@@ -331,6 +377,10 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             ON validation_generation_runs(status);
         CREATE INDEX IF NOT EXISTS idx_reference_images_set
             ON reference_images(reference_set_id);
+        CREATE INDEX IF NOT EXISTS idx_reference_images_version
+            ON reference_images(reference_set_version_id);
+        CREATE INDEX IF NOT EXISTS idx_reference_set_versions_set
+            ON reference_set_versions(reference_set_id);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_selected_lora_profiles_job_output
             ON selected_lora_profiles(job_id, selected_output_id);
         CREATE INDEX IF NOT EXISTS idx_selected_lora_profiles_project
@@ -342,6 +392,7 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         """
     )
     backfill_project_ids(conn)
+    backfill_reference_set_versions(conn)
 
 
 def ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
@@ -440,6 +491,116 @@ def infer_project_id_for_job(conn: sqlite3.Connection, job_id: int) -> int | Non
         ),
     )
     return int(cur.lastrowid)
+
+
+def backfill_reference_set_versions(conn: sqlite3.Connection) -> None:
+    """Create a v1 snapshot for legacy reference sets and connect existing images to it."""
+    now = utc_now()
+    for row in conn.execute("SELECT * FROM reference_sets ORDER BY id").fetchall():
+        set_id = int(row["id"])
+        dataset_version_id = None
+        if "current_dataset_version_id" in row.keys():
+            dataset_version_id = row["current_dataset_version_id"]
+        if not dataset_version_id and "dataset_version_id" in row.keys():
+            dataset_version_id = row["dataset_version_id"]
+        if dataset_version_id and not row["current_dataset_version_id"]:
+            conn.execute("UPDATE reference_sets SET current_dataset_version_id = ? WHERE id = ?", (dataset_version_id, set_id))
+
+        reference_type = row["reference_type"] or "character"
+        if reference_type not in {"character", "style", "mixed", "other"}:
+            reference_type = "other"
+            conn.execute("UPDATE reference_sets SET reference_type = ? WHERE id = ?", (reference_type, set_id))
+
+        version = conn.execute(
+            "SELECT * FROM reference_set_versions WHERE reference_set_id = ? ORDER BY version_no LIMIT 1",
+            (set_id,),
+        ).fetchone()
+        if version is None:
+            image_count = int(conn.execute("SELECT COUNT(*) AS count FROM reference_images WHERE reference_set_id = ?", (set_id,)).fetchone()["count"] or 0)
+            roles = reference_role_counts(conn, set_id, None)
+            label, message = reference_completeness(reference_type, image_count, roles)
+            cur = conn.execute(
+                """
+                INSERT INTO reference_set_versions(
+                    reference_set_id, version_no, dataset_id, dataset_version_id, trigger_word,
+                    reference_type, image_count, roles_json, completeness_label,
+                    completeness_message, locked_at, memo, created_at, updated_at
+                )
+                VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    set_id,
+                    row["dataset_id"],
+                    dataset_version_id,
+                    row["trigger_word"] or "",
+                    reference_type,
+                    image_count,
+                    json.dumps(roles, ensure_ascii=False, sort_keys=True),
+                    label,
+                    message,
+                    now,
+                    row["memo"] or "Legacy Reference Set v1",
+                    row["created_at"] or now,
+                    now,
+                ),
+            )
+            version_id = int(cur.lastrowid)
+            conn.execute("UPDATE reference_sets SET current_version_id = ?, updated_at = ? WHERE id = ?", (version_id, now, set_id))
+        else:
+            version_id = int(version["id"])
+            if not row["current_version_id"]:
+                conn.execute("UPDATE reference_sets SET current_version_id = ? WHERE id = ?", (version_id, set_id))
+
+        conn.execute(
+            """
+            UPDATE reference_images
+            SET reference_set_version_id = COALESCE(reference_set_version_id, ?),
+                dataset_id = COALESCE(dataset_id, ?),
+                dataset_version_id = COALESCE(dataset_version_id, ?),
+                source_type = COALESCE(NULLIF(source_type, ''), 'manual'),
+                image_role = COALESCE(NULLIF(image_role, ''), 'other'),
+                include_in_machine_review = COALESCE(include_in_machine_review, 1),
+                updated_at = COALESCE(updated_at, created_at, ?)
+            WHERE reference_set_id = ?
+            """,
+            (version_id, row["dataset_id"], dataset_version_id, now, set_id),
+        )
+
+
+def reference_role_counts(conn: sqlite3.Connection, reference_set_id: int, version_id: int | None) -> dict[str, int]:
+    if version_id is None:
+        rows = conn.execute(
+            "SELECT image_role, COUNT(*) AS count FROM reference_images WHERE reference_set_id = ? GROUP BY image_role",
+            (reference_set_id,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT image_role, COUNT(*) AS count FROM reference_images WHERE reference_set_version_id = ? GROUP BY image_role",
+            (version_id,),
+        ).fetchall()
+    return {str(row["image_role"] or "other"): int(row["count"] or 0) for row in rows}
+
+
+def reference_completeness(reference_type: str, image_count: int, roles: dict[str, int]) -> tuple[str, str]:
+    if image_count <= 0:
+        return "ERROR", "リファレンス画像がありません。"
+    if reference_type == "style":
+        coverage = sum(1 for key in ("close_up", "upper_body", "full_body", "background_scene") if roles.get(key, 0) > 0)
+        if image_count >= 6 and coverage >= 3:
+            return "OK", "style確認に必要な役割が概ね揃っています。"
+        if image_count <= 2:
+            return "ERROR", "style確認には画像が少なすぎます。"
+        return "WARNING", "style確認用の画像数または役割に偏りがあります。"
+    if reference_type == "character":
+        coverage = sum(1 for key in ("face_front", "upper_body", "full_body") if roles.get(key, 0) > 0)
+        if image_count >= 3 and coverage >= 2:
+            return "OK", "character確認に必要な役割が概ね揃っています。"
+        return "WARNING", "顔・上半身・全身のいずれかが不足している可能性があります。"
+    if reference_type == "mixed":
+        if image_count >= 4:
+            return "OK", "mixed用途として最低限の画像数があります。"
+        return "WARNING", "mixed用途としては画像数が少なめです。"
+    return "UNKNOWN", "reference_typeが未分類のため、手動確認してください。"
 
 
 def seed_app_settings(conn: sqlite3.Connection) -> None:
@@ -1411,14 +1572,30 @@ CREATE TABLE IF NOT EXISTS selected_lora_profiles (
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS reference_sets (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, dataset_id INTEGER,
-    dataset_version_id INTEGER, trigger_word TEXT, description TEXT,
+    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, project_id INTEGER,
+    dataset_id INTEGER, dataset_version_id INTEGER, current_dataset_version_id INTEGER,
+    current_version_id INTEGER, reference_type TEXT NOT NULL DEFAULT 'character',
+    selection_mode TEXT NOT NULL DEFAULT 'manual', trigger_word TEXT, description TEXT,
+    is_default INTEGER NOT NULL DEFAULT 0, is_archived INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, memo TEXT
+);
+CREATE TABLE IF NOT EXISTS reference_set_versions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, reference_set_id INTEGER NOT NULL,
+    version_no INTEGER NOT NULL, dataset_id INTEGER, dataset_version_id INTEGER,
+    trigger_word TEXT, reference_type TEXT, image_count INTEGER NOT NULL DEFAULT 0,
+    roles_json TEXT, completeness_label TEXT, completeness_message TEXT,
+    locked_at TEXT, memo TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    UNIQUE(reference_set_id, version_no)
 );
 CREATE TABLE IF NOT EXISTS reference_images (
     id INTEGER PRIMARY KEY AUTOINCREMENT, reference_set_id INTEGER NOT NULL,
-    image_path TEXT NOT NULL, image_role TEXT NOT NULL DEFAULT 'other',
-    caption TEXT, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
+    reference_set_version_id INTEGER, dataset_id INTEGER, dataset_version_id INTEGER,
+    image_path TEXT NOT NULL, source_type TEXT NOT NULL DEFAULT 'manual',
+    source_image_path TEXT, image_role TEXT NOT NULL DEFAULT 'other',
+    prompt_role_hint TEXT, caption TEXT, caption_snapshot TEXT, tags_json TEXT,
+    width INTEGER, height INTEGER, file_size INTEGER, sha256 TEXT,
+    include_in_machine_review INTEGER NOT NULL DEFAULT 1, exclude_reason TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT, memo TEXT
 );
 CREATE TABLE IF NOT EXISTS recommendation_rules (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, recommendation_type TEXT NOT NULL,

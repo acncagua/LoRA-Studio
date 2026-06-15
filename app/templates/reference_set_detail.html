@@ -1,53 +1,156 @@
 {% extends "base.html" %}{% block content %}
+<nav class="breadcrumbs"><a href="/">ダッシュボード</a><a href="/reference-sets">リファレンスセット</a><span>#{{ reference_set.id }}</span></nav>
 <header class="page-head">
   <h1>リファレンスセット #{{ reference_set.id }} {{ reference_set.name }}</h1>
-  <a class="button" href="/reference-sets">一覧へ戻る</a>
+  <div class="actions">
+    <a class="button" href="/reference-sets">一覧へ戻る</a>
+    {% if reference_set.project_id %}<a class="button" href="/projects/{{ reference_set.project_id }}">Projectへ</a>{% endif %}
+    <form method="post" action="/reference-sets/{{ reference_set.id }}/export"><button type="submit">Contact Sheet / Report出力</button></form>
+    {% if reference_set.project_id and not reference_set.is_default %}
+    <form method="post" action="/reference-sets/{{ reference_set.id }}/set-default"><button type="submit">Project標準にする</button></form>
+    {% endif %}
+  </div>
 </header>
+
+{% if export_paths %}
+<section class="notice">
+  <strong>出力しました。</strong>
+  <p>HTML: {{ export_paths.html }}</p>
+  <p>Markdown: {{ export_paths.markdown }}</p>
+</section>
+{% endif %}
+
 <section class="panel-grid">
   <div>
-    <h2>基本情報</h2>
+    <h2>Summary</h2>
     <dl>
-      <dt>Dataset</dt><dd>{{ reference_set.dataset_name or '-' }}</dd>
-      <dt>Dataset version</dt><dd>{{ reference_set.dataset_version_id or '-' }}</dd>
+      <dt>Project</dt><dd>{% if reference_set.project_id %}<a href="/projects/{{ reference_set.project_id }}">#{{ reference_set.project_id }} {{ reference_set.project_name or '' }}</a>{% else %}-{% endif %}</dd>
+      <dt>データセット</dt><dd>{{ reference_set.dataset_name or '-' }}</dd>
+      <dt>データセットVersion</dt><dd>{% if reference_set.dataset_version_no %}v{{ reference_set.dataset_version_no }} (#{{ reference_set.current_dataset_version_id }}){% else %}-{% endif %}</dd>
+      <dt>Reference Version</dt><dd>{% if reference_set.current_version_no %}v{{ reference_set.current_version_no }} (#{{ reference_set.current_version_id }}){% else %}-{% endif %}</dd>
+      <dt>種別</dt><dd>{{ reference_type_labels.get(reference_set.reference_type, reference_set.reference_type or '-') }}</dd>
+      <dt>選択モード</dt><dd>{{ reference_set.selection_mode or '-' }}</dd>
       <dt>トリガー</dt><dd>{{ reference_set.trigger_word or '-' }}</dd>
       <dt>説明</dt><dd>{{ reference_set.description or '-' }}</dd>
       <dt>メモ</dt><dd>{{ reference_set.memo or '-' }}</dd>
     </dl>
   </div>
   <div>
-    <h2>画像登録</h2>
-    <form method="post" action="/reference-sets/{{ reference_set.id }}/images" class="form-grid">
-      <label class="wide-field">画像パス
-        <span class="path-picker">
-          <input id="reference-image-path" name="image_path" required>
-          <button type="button" data-browse-target="#reference-image-path" data-browse-kind="image" data-browse-title="Reference画像を選択" data-browse-initial="{{ default_project_path }}">参照</button>
-        </span>
-      </label>
-      <label>Role<select name="image_role">
-        <option value="face">face</option>
-        <option value="upper_body">upper_body</option>
-        <option value="full_body">full_body</option>
-        <option value="expression">expression</option>
-        <option value="style">style</option>
-        <option value="other">other</option>
-      </select></label>
-      <label>Sort<input type="number" name="sort_order" value="0"></label>
-      <label class="wide-field">Caption<textarea name="caption"></textarea></label>
-      <button type="submit">画像を登録</button>
-    </form>
+    <h2>Completeness</h2>
+    <p><span class="label {{ (reference_set.completeness_label or 'unknown')|lower }}">{{ reference_set.completeness_label or 'UNKNOWN' }}</span></p>
+    <p>{{ reference_set.completeness_message or '-' }}</p>
+    <table>
+      <thead><tr><th>役割</th><th>枚数</th></tr></thead>
+      <tbody>
+        {% for role, count in current_roles.items() %}
+        <tr><td>{{ roles.get(role, role) }}</td><td>{{ count }}</td></tr>
+        {% else %}
+        <tr><td colspan="2" class="muted">役割はまだ登録されていません。</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="muted">Completenessは画像数と役割の偏りを見る補助表示です。品質評価やAI判定ではありません。</p>
   </div>
 </section>
+
 <section>
-  <h2>登録画像</h2>
-  <div class="sample-grid">
+  <h2>画像を追加</h2>
+  <form method="post" action="/reference-sets/{{ reference_set.id }}/images" class="form-grid">
+    <label class="wide-field">画像パス
+      <span class="path-picker">
+        <input id="reference-image-path" name="image_path" required>
+        <button type="button" data-browse-target="#reference-image-path" data-browse-kind="image" data-browse-title="リファレンス画像を選択" data-browse-initial="{{ default_project_path }}">参照</button>
+      </span>
+    </label>
+    <label>役割<select name="image_role">
+      {% for role, label in roles.items() %}<option value="{{ role }}">{{ label }}</option>{% endfor %}
+    </select></label>
+    <label>Prompt role hint<input name="prompt_role_hint" placeholder="例: basic_face"></label>
+    <label>Source<select name="source_type"><option value="manual">手動</option><option value="dataset">データセット</option><option value="external">外部</option></select></label>
+    <label>Sort<input type="number" name="sort_order" value="0"></label>
+    <label class="inline-check"><input type="checkbox" name="include_in_machine_review" value="1" checked> 将来のMachine Review対象に含める</label>
+    <label class="wide-field">Caption snapshot<textarea name="caption"></textarea></label>
+    <label class="wide-field">除外理由<textarea name="exclude_reason"></textarea></label>
+    <label class="wide-field">メモ<textarea name="memo"></textarea></label>
+    <button type="submit">画像を登録</button>
+  </form>
+</section>
+
+{% if candidates %}
+<section>
+  <h2>データセット候補</h2>
+  <p class="muted">captionとファイル名から軽く役割候補を出しています。embeddingや画像AI評価は使っていません。</p>
+  <table>
+    <thead><tr><th>画像</th><th>推定役割</th><th>caption preview</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for item in candidates %}
+      <tr>
+        <td>{{ item.name }}</td>
+        <td>{{ roles.get(item.suggested_role, item.suggested_role) }}</td>
+        <td>{{ item.caption[:180] }}</td>
+        <td>
+          <form method="post" action="/reference-sets/{{ reference_set.id }}/dataset-images" class="inline-form">
+            <input type="hidden" name="image_path" value="{{ item.path }}">
+            <select name="image_role">
+              {% for role, label in roles.items() %}<option value="{{ role }}" {{ 'selected' if role == item.suggested_role else '' }}>{{ label }}</option>{% endfor %}
+            </select>
+            <button type="submit">追加</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<section>
+  <h2>Reference Images</h2>
+  <div class="sample-grid reference-grid">
     {% for image in images %}
     <figure>
-      <img src="/reference-images/{{ image.id }}" alt="reference image {{ image.id }}">
-      <figcaption>#{{ image.id }} {{ image.image_role }} / sort {{ image.sort_order }}<br>{{ image.caption or '' }}</figcaption>
+      <img src="/reference-images/{{ image.id }}" alt="リファレンス画像 {{ image.id }}" data-lightbox-src="/reference-images/{{ image.id }}" data-lightbox-title="Reference #{{ image.id }}">
+      <figcaption>
+        #{{ image.id }} / {{ roles.get(image.image_role, image.image_role) }}<br>
+        {{ image.width or '-' }} x {{ image.height or '-' }} / {{ image.file_size or '-' }} bytes<br>
+        {{ image.caption_snapshot or image.caption or '' }}
+      </figcaption>
+      <form method="post" action="/reference-images/{{ image.id }}/edit" class="form-grid compact-form">
+        <input type="hidden" name="reference_set_id" value="{{ reference_set.id }}">
+        <label>役割<select name="image_role">
+          {% for role, label in roles.items() %}<option value="{{ role }}" {{ 'selected' if image.image_role == role else '' }}>{{ label }}</option>{% endfor %}
+        </select></label>
+        <label>Prompt hint<input name="prompt_role_hint" value="{{ image.prompt_role_hint or '' }}"></label>
+        <label class="inline-check"><input type="checkbox" name="include_in_machine_review" value="1" {{ 'checked' if image.include_in_machine_review else '' }}> Machine Review対象</label>
+        <label>除外理由<input name="exclude_reason" value="{{ image.exclude_reason or '' }}"></label>
+        <label>メモ<input name="memo" value="{{ image.memo or '' }}"></label>
+        <button type="submit">保存</button>
+      </form>
     </figure>
     {% else %}
     <p class="muted">Reference画像はまだありません。</p>
     {% endfor %}
   </div>
+</section>
+
+<section>
+  <h2>Version History</h2>
+  <table>
+    <thead><tr><th>Version</th><th>画像</th><th>Completeness</th><th>Roles</th><th>Locked</th><th>メモ</th></tr></thead>
+    <tbody>
+      {% for version in versions %}
+      <tr>
+        <td>v{{ version.version_no }} (#{{ version.id }})</td>
+        <td>{{ version.image_count }}</td>
+        <td><span class="label {{ (version.completeness_label or 'unknown')|lower }}">{{ version.completeness_label or 'UNKNOWN' }}</span><br>{{ version.completeness_message or '' }}</td>
+        <td>{{ version.roles_json }}</td>
+        <td>{{ version.locked_at or '-' }}</td>
+        <td>{{ version.memo or '-' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">Version履歴はまだありません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </section>
 {% endblock %}

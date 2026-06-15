@@ -14,7 +14,14 @@ from PIL import Image
 
 from app import settings
 from app.db import connect, fetch_all, fetch_one, init_db, utc_now
-from app.main import build_loss_chart, build_metric_table
+from app.main import build_loss_chart, build_metric_table, reference_set_detail, reference_sets
+from app.services.reference_sets import (
+    add_reference_image,
+    create_reference_set,
+    export_reference_artifacts,
+    reference_detail,
+    set_project_default,
+)
 from app.services.validation_generation import (
     common_gen_img_args,
     normalize_sd_scripts_sampler,
@@ -137,6 +144,148 @@ class ReviewSemanticsTests(IsolatedDbTest):
     def test_init_db_does_not_seed_zuihou_project_from_hardcoded_ids(self) -> None:
         source = Path("app/db.py").read_text(encoding="utf-8")
         self.assertNotIn("seed_zuihou_project(conn)", source)
+
+
+class ReferenceSetPhase111Tests(IsolatedDbTest):
+    def create_dataset_fixture(self) -> tuple[int, int, Path]:
+        now = utc_now()
+        dataset_dir = self.root / "dataset"
+        dataset_dir.mkdir()
+        image_path = self.make_png(dataset_dir / "face_front.png")
+        image_path.with_suffix(".txt").write_text("testchar, 1girl, face, upper body", encoding="utf-8")
+        with connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO datasets(
+                    name, path, model_family, trigger_word, class_token, image_count,
+                    caption_count, missing_caption_count, resolution_summary_json,
+                    tag_summary_json, scan_status, memo, created_at, updated_at
+                )
+                VALUES ('ref dataset', ?, 'SDXL', 'testchar', 'person', 1, 1, 0, '{}', '{}', 'ok', '', ?, ?)
+                """,
+                (str(dataset_dir), now, now),
+            )
+            dataset_id = int(cur.lastrowid)
+            cur = conn.execute(
+                """
+                INSERT INTO dataset_versions(dataset_id, version_no, trigger_word, image_count, caption_count, created_at, memo)
+                VALUES (?, 1, 'testchar', 1, 1, ?, 'v1')
+                """,
+                (dataset_id, now),
+            )
+            version_id = int(cur.lastrowid)
+        return dataset_id, version_id, image_path
+
+    def test_legacy_reference_set_gets_v1_version(self) -> None:
+        now = utc_now()
+        with connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO reference_sets(name, trigger_word, created_at, updated_at, memo) VALUES ('legacy', 'testchar', ?, ?, '')",
+                (now, now),
+            )
+            set_id = int(cur.lastrowid)
+            conn.execute(
+                "INSERT INTO reference_images(reference_set_id, image_path, image_role, caption, sort_order, created_at) VALUES (?, ?, 'face_front', '', 0, ?)",
+                (set_id, str(self.make_png(self.root / "legacy.png")), now),
+            )
+        init_db()
+        ref = fetch_one("SELECT current_version_id FROM reference_sets WHERE id = ?", (set_id,))
+        self.assertIsNotNone(ref["current_version_id"])
+        image = fetch_one("SELECT reference_set_version_id, include_in_machine_review FROM reference_images WHERE reference_set_id = ?", (set_id,))
+        self.assertEqual(image["reference_set_version_id"], ref["current_version_id"])
+        self.assertEqual(image["include_in_machine_review"], 1)
+
+    def test_create_character_reference_set_add_image_and_completeness_warning(self) -> None:
+        dataset_id, version_id, image_path = self.create_dataset_fixture()
+        set_id = create_reference_set(
+            name="character ref",
+            reference_type="character",
+            dataset_id=dataset_id,
+            dataset_version_id=version_id,
+            trigger_word="testchar",
+        )
+        add_reference_image(reference_set_id=set_id, image_path=str(image_path), image_role="face_front", source_type="dataset")
+        detail = reference_detail(set_id)
+        self.assertEqual(detail["reference_set"]["reference_type"], "character")
+        self.assertEqual(detail["reference_set"]["completeness_label"], "WARNING")
+        self.assertEqual(len(detail["images"]), 1)
+        self.assertIn("testchar", detail["images"][0]["caption_snapshot"])
+
+    def test_style_reference_set_can_reach_ok_completeness(self) -> None:
+        dataset_id, version_id, _ = self.create_dataset_fixture()
+        set_id = create_reference_set(name="style ref", reference_type="style", dataset_id=dataset_id, dataset_version_id=version_id)
+        roles = ["close_up", "upper_body", "full_body", "background_scene", "color_palette", "lighting"]
+        for index, role in enumerate(roles):
+            image_path = self.make_png(self.root / f"style_{index}.png")
+            add_reference_image(reference_set_id=set_id, image_path=str(image_path), image_role=role)
+        detail = reference_detail(set_id)
+        self.assertEqual(detail["reference_set"]["completeness_label"], "OK")
+
+    def test_reference_set_pages_render(self) -> None:
+        dataset_id, version_id, image_path = self.create_dataset_fixture()
+        set_id = create_reference_set(name="render ref", reference_type="character", dataset_id=dataset_id, dataset_version_id=version_id)
+        add_reference_image(reference_set_id=set_id, image_path=str(image_path), image_role="face_front")
+        listing = reference_sets(request=None)
+        detail = reference_set_detail(request=None, set_id=set_id)
+        self.assertEqual(listing.status_code, 200)
+        self.assertEqual(detail.status_code, 200)
+        self.assertIn("Completeness", detail.body.decode("utf-8"))
+
+    def test_project_profile_validation_link_reference_version(self) -> None:
+        dataset_id, version_id, image_path = self.create_dataset_fixture()
+        now = utc_now()
+        with connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO lora_projects(name, dataset_id, current_dataset_version_id, trigger_word, base_model_path, status, created_at, updated_at, memo)
+                VALUES ('project', ?, ?, 'testchar', 'base.safetensors', 'active', ?, ?, '')
+                """,
+                (dataset_id, version_id, now, now),
+            )
+            project_id = int(cur.lastrowid)
+        set_id = create_reference_set(name="project ref", reference_type="character", dataset_id=dataset_id, dataset_version_id=version_id, project_id=project_id)
+        add_reference_image(reference_set_id=set_id, image_path=str(image_path), image_role="face_front")
+        set_project_default(set_id)
+        ref = fetch_one("SELECT current_version_id FROM reference_sets WHERE id = ?", (set_id,))
+        with connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO training_jobs(project_id, name, dataset_id, preset_id, status, model_family, training_script, base_model_path, output_name, output_dir, run_dir, params_json, dataset_version_id, created_at, updated_at)
+                VALUES (?, 'job', ?, 'sdxl_2d_face_adamw8bit_standard', 'completed', 'SDXL', 'sdxl_train_network.py', 'base.safetensors', 'out', 'out', 'run', '{}', ?, ?, ?)
+                """,
+                (project_id, dataset_id, version_id, now, now),
+            )
+            job_id = int(cur.lastrowid)
+            cur = conn.execute(
+                """
+                INSERT INTO training_outputs(job_id, epoch, file_path, file_type, selected, created_at)
+                VALUES (?, 1, 'model.safetensors', 'model', 1, ?)
+                """,
+                (job_id, now),
+            )
+            output_id = int(cur.lastrowid)
+            cur = conn.execute(
+                """
+                INSERT INTO selected_lora_profiles(project_id, job_id, selected_output_id, profile_name, selected_model_path, default_validation_preset_id, reference_set_id, reference_set_version_id, created_at, updated_at)
+                VALUES (?, ?, ?, 'profile', 'model.safetensors', 'standard_validation_v1', ?, ?, ?, ?)
+                """,
+                (project_id, job_id, output_id, set_id, ref["current_version_id"], now, now),
+            )
+            profile_id = int(cur.lastrowid)
+        from app.services.validation_runs import create_validation_run
+
+        run_id = create_validation_run(job_id, "standard_validation_v1", "base", "testchar", "", profile_id=profile_id)
+        run = fetch_one("SELECT reference_set_id, reference_set_version_id FROM validation_runs WHERE id = ?", (run_id,))
+        self.assertEqual(run["reference_set_id"], set_id)
+        self.assertEqual(run["reference_set_version_id"], ref["current_version_id"])
+
+    def test_reference_contact_sheet_and_report_export(self) -> None:
+        dataset_id, version_id, image_path = self.create_dataset_fixture()
+        set_id = create_reference_set(name="export ref", reference_type="character", dataset_id=dataset_id, dataset_version_id=version_id)
+        add_reference_image(reference_set_id=set_id, image_path=str(image_path), image_role="face_front")
+        paths = export_reference_artifacts(set_id)
+        self.assertTrue(Path(paths["html"]).exists())
+        self.assertTrue(Path(paths["markdown"]).exists())
 
 
 class Phase107StabilizationTests(IsolatedDbTest):

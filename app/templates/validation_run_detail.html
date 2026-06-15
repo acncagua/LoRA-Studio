@@ -274,6 +274,8 @@
     <dl>
       <dt>ID</dt><dd>#{{ reference_set.id }}</dd>
       <dt>名前</dt><dd>{{ reference_set.name }}</dd>
+      <dt>Version</dt><dd>{% if run.reference_set_version_id %}#{{ run.reference_set_version_id }}{% if reference_set.current_version_no %} / v{{ reference_set.current_version_no }}{% endif %}{% else %}-{% endif %}</dd>
+      <dt>Completeness</dt><dd><span class="label {{ (reference_set.completeness_label or 'unknown')|lower }}">{{ reference_set.completeness_label or 'UNKNOWN' }}</span> {{ reference_set.completeness_message or '' }}</dd>
       <dt>トリガー</dt><dd>{{ reference_set.trigger_word or '-' }}</dd>
       <dt>メモ</dt><dd>{{ reference_set.memo or '-' }}</dd>
     </dl>

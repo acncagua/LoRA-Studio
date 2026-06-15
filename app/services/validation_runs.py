@@ -163,6 +163,11 @@ def create_validation_run(
     ).name
     base_model_value = base_model.strip() or (profile_defaults["base_model"] if profile_defaults else "") or Path(job["base_model_path"]).stem
     trigger_value = trigger_word.strip() or (profile_defaults["trigger_word"] if profile_defaults else "") or job["trigger_word_at_creation"] or ""
+    reference_set_id = profile_defaults["reference_set_id"] if profile_defaults and "reference_set_id" in profile_defaults.keys() else None
+    reference_set_version_id = profile_defaults["reference_set_version_id"] if profile_defaults and "reference_set_version_id" in profile_defaults.keys() else None
+    if reference_set_id and not reference_set_version_id:
+        ref = fetch_one("SELECT current_version_id FROM reference_sets WHERE id = ?", (reference_set_id,))
+        reference_set_version_id = ref["current_version_id"] if ref else None
     expected = preset_expected_count(preset)
     preset_snapshot = json.dumps(dict(preset), ensure_ascii=False, sort_keys=True)
     now = utc_now()
@@ -176,9 +181,10 @@ def create_validation_run(
                 validation_preset_id, name, validation_level, base_model,
                 trigger_word, lora_filename, recommended_weight_min,
                 recommended_weight_max, expected_image_count, actual_image_count,
-                status, preset_snapshot_json, created_at, updated_at, memo
+                status, preset_snapshot_json, reference_set_id, reference_set_version_id,
+                created_at, updated_at, memo
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'planned', ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'planned', ?, ?, ?, ?, ?, ?)
             """,
             (
                 job["project_id"] if "project_id" in job.keys() else None,
@@ -195,6 +201,8 @@ def create_validation_run(
                 profile_defaults["recommended_weight_max"] if profile_defaults else None,
                 expected,
                 preset_snapshot,
+                reference_set_id,
+                reference_set_version_id,
                 now,
                 now,
                 memo.strip(),
@@ -478,9 +486,25 @@ def load_validation_run_bundle(run_id: int) -> dict[str, Any]:
     profile = fetch_one("SELECT * FROM selected_lora_profiles WHERE id = ?", (run["selected_lora_profile_id"],)) if run["selected_lora_profile_id"] else None
     reference_set = None
     reference_images = []
-    if profile and profile["reference_set_id"]:
-        reference_set = fetch_one("SELECT * FROM reference_sets WHERE id = ?", (profile["reference_set_id"],))
-        reference_images = fetch_all("SELECT * FROM reference_images WHERE reference_set_id = ? ORDER BY sort_order, id", (profile["reference_set_id"],))
+    reference_set_id = run["reference_set_id"] if "reference_set_id" in run.keys() and run["reference_set_id"] else None
+    reference_set_version_id = run["reference_set_version_id"] if "reference_set_version_id" in run.keys() and run["reference_set_version_id"] else None
+    if not reference_set_id and profile and profile["reference_set_id"]:
+        reference_set_id = profile["reference_set_id"]
+        reference_set_version_id = profile["reference_set_version_id"] if "reference_set_version_id" in profile.keys() else None
+    if reference_set_id:
+        reference_set = fetch_one(
+            """
+            SELECT r.*, v.version_no AS current_version_no, v.completeness_label, v.completeness_message
+            FROM reference_sets r
+            LEFT JOIN reference_set_versions v ON v.id = COALESCE(?, r.current_version_id) AND v.reference_set_id = r.id
+            WHERE r.id = ?
+            """,
+            (reference_set_version_id, reference_set_id),
+        )
+        if reference_set_version_id:
+            reference_images = fetch_all("SELECT * FROM reference_images WHERE reference_set_version_id = ? ORDER BY sort_order, id", (reference_set_version_id,))
+        else:
+            reference_images = fetch_all("SELECT * FROM reference_images WHERE reference_set_id = ? ORDER BY sort_order, id", (reference_set_id,))
     return {
         "run": run,
         "preset": preset,

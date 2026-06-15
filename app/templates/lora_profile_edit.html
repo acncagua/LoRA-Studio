@@ -30,9 +30,10 @@
     <label>リファレンスセット<select name="reference_set_id">
       <option value="">未指定</option>
       {% for ref in reference_sets %}
-      <option value="{{ ref.id }}" {{ 'selected' if profile.reference_set_id == ref.id else '' }}>#{{ ref.id }} {{ ref.name }}</option>
+      <option value="{{ ref.id }}" {{ 'selected' if profile.reference_set_id == ref.id else '' }}>#{{ ref.id }} {{ ref.name }}{% if ref.current_version_no %} / v{{ ref.current_version_no }}{% endif %}{% if ref.completeness_label %} / {{ ref.completeness_label }}{% endif %}</option>
       {% endfor %}
     </select></label>
+    <label>Reference Version ID<input name="reference_set_version_id" value="{{ profile.reference_set_version_id or '' }}" placeholder="空なら選択セットのcurrent version"></label>
     <label class="wide-field">検証方針メモ<textarea name="validation_policy_memo">{{ profile.validation_policy_memo or '' }}</textarea></label>
     <label class="wide-field">検証メモ<textarea name="validation_memo">{{ profile.validation_memo or '' }}</textarea></label>
     <label class="wide-field">ライブラリメモ<textarea name="library_memo">{{ profile.library_memo or '' }}</textarea></label>

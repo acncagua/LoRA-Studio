@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased - Phase 11.1
+
+- Reference Set / Reference Version管理を追加しました。
+- 既存Reference Setをv1へ移行し、既存Reference画像をversionへ紐づけるmigrationを追加しました。
+- Reference画像にsource、caption snapshot、tags、画像サイズ、file size、sha256、Machine Review対象フラグ、除外理由、メモを保存できるようにしました。
+- Character / Style / Mixed向けの役割とCompleteness表示を追加しました。
+- Reference Set一覧・詳細・画像追加・役割編集・Project標準設定・Archive/Restore導線を整備しました。
+- Project、LoRA Profile、Validation RunへReference Set / Versionの紐づけを追加しました。
+- Reference Contact Sheet HTMLとMarkdown Report出力を追加しました。
+- Phase11.1ではembedding、CLIP/OpenCLIP/DINO/SigLIP、ChatGPT API、AI画像評価、WebUI API自動生成は未実装です。
+
 ## v0.2.0-beta - 2026-06-15
 
 Release Version: v0.2.0-beta

@@ -32,6 +32,17 @@ from app.services.maintenance import create_app_backup, export_diagnostics, main
 from app.services.output_collector import collect_job_results
 from app.services.recommendations import create_draft_job_from_recommendation, list_recommendations, regenerate_recommendations, set_recommendation_status, write_recommendation_report
 from app.services.review_candidates import ensure_epoch_candidates, regenerate_epoch_candidates
+from app.services.reference_sets import (
+    REFERENCE_TYPE_LABELS,
+    add_reference_image,
+    archive_reference_set,
+    create_reference_set,
+    export_reference_artifacts,
+    reference_detail,
+    reference_set_rows,
+    set_project_default,
+    update_reference_image,
+)
 from app.services.storage_cleanup import (
     cleanup_outputs,
     cleanup_project_outputs,
@@ -1101,13 +1112,18 @@ def project_detail(request: Request, project_id: int) -> HTMLResponse:
         SELECT p.*, d.name AS dataset_name, dv.version_no AS dataset_version_no,
                sj.name AS selected_job_name, so.file_path AS selected_model_path,
                so.epoch AS selected_epoch, sp.profile_name AS selected_profile_name,
-               sp.validation_policy_memo
+               sp.validation_policy_memo,
+               rs.name AS default_reference_set_name,
+               rsv.version_no AS default_reference_version_no,
+               rsv.completeness_label AS default_reference_completeness_label
         FROM lora_projects p
         LEFT JOIN datasets d ON d.id = p.dataset_id
         LEFT JOIN dataset_versions dv ON dv.id = p.current_dataset_version_id
         LEFT JOIN training_jobs sj ON sj.id = p.selected_job_id
         LEFT JOIN training_outputs so ON so.id = p.selected_output_id
         LEFT JOIN selected_lora_profiles sp ON sp.id = p.selected_lora_profile_id
+        LEFT JOIN reference_sets rs ON rs.id = p.default_reference_set_id
+        LEFT JOIN reference_set_versions rsv ON rsv.id = p.default_reference_set_version_id
         WHERE p.id = ?
         """,
         (project_id,),
@@ -1138,6 +1154,17 @@ def project_detail(request: Request, project_id: int) -> HTMLResponse:
         """,
         (project_id,),
     )
+    reference_sets_rows = fetch_all(
+        """
+        SELECT r.*, v.version_no AS current_version_no, v.image_count,
+               v.completeness_label, v.completeness_message
+        FROM reference_sets r
+        LEFT JOIN reference_set_versions v ON v.id = r.current_version_id
+        WHERE r.project_id = ?
+        ORDER BY r.is_default DESC, r.updated_at DESC, r.id DESC
+        """,
+        (project_id,),
+    )
     recommendations = fetch_all(
         """
         SELECT * FROM experiment_recommendations
@@ -1152,6 +1179,7 @@ def project_detail(request: Request, project_id: int) -> HTMLResponse:
         project=project,
         jobs=jobs,
         validation_runs=validation_runs,
+        reference_sets=reference_sets_rows,
         recommendations=recommendations,
         workflow_status=project_workflow_status(project, jobs, validation_runs, recommendations),
         pilot_guidance=pilot_recommendation(project),
@@ -3445,7 +3473,15 @@ def lora_profile_edit(request: Request, profile_id: int) -> HTMLResponse:
     weight_reviews = fetch_all("SELECT * FROM validation_weight_reviews WHERE job_id = ? ORDER BY lora_weight, id", (profile["job_id"],))
     validation_images = fetch_all("SELECT * FROM validation_images WHERE job_id = ? ORDER BY created_at DESC, id DESC", (profile["job_id"],))
     validation_runs = fetch_all("SELECT * FROM validation_runs WHERE selected_lora_profile_id = ? OR job_id = ? ORDER BY id DESC", (profile_id, profile["job_id"]))
-    reference_sets_rows = fetch_all("SELECT * FROM reference_sets ORDER BY updated_at DESC, id DESC")
+    reference_sets_rows = fetch_all(
+        """
+        SELECT r.*, v.version_no AS current_version_no, v.completeness_label
+        FROM reference_sets r
+        LEFT JOIN reference_set_versions v ON v.id = r.current_version_id
+        WHERE COALESCE(r.is_archived, 0) = 0
+        ORDER BY r.is_default DESC, r.updated_at DESC, r.id DESC
+        """
+    )
     recommendations = list_recommendations(int(profile["job_id"]))
     return render(
         request,
@@ -3473,11 +3509,16 @@ def lora_profile_update(
     strong_weight: str = Form(""),
     default_validation_preset_id: str = Form(""),
     reference_set_id: str = Form(""),
+    reference_set_version_id: str = Form(""),
     validation_policy_memo: str = Form(""),
     validation_memo: str = Form(""),
     library_memo: str = Form(""),
 ) -> RedirectResponse:
     now = settings_now()
+    selected_reference_version_id = int(reference_set_version_id) if reference_set_version_id else None
+    if reference_set_id and selected_reference_version_id is None:
+        ref = fetch_one("SELECT current_version_id FROM reference_sets WHERE id = ?", (int(reference_set_id),))
+        selected_reference_version_id = int(ref["current_version_id"]) if ref and ref["current_version_id"] else None
     with connect() as conn:
         cur = conn.execute(
             """
@@ -3485,7 +3526,7 @@ def lora_profile_update(
             SET profile_name = ?, trigger_word = ?, base_model = ?,
                 recommended_weight_min = ?, recommended_weight_max = ?,
                 light_weight = ?, strong_weight = ?,
-                default_validation_preset_id = ?, reference_set_id = ?,
+                default_validation_preset_id = ?, reference_set_id = ?, reference_set_version_id = ?,
                 validation_policy_memo = ?,
                 validation_memo = ?, library_memo = ?, updated_at = ?
             WHERE id = ?
@@ -3500,6 +3541,7 @@ def lora_profile_update(
                 optional_float(strong_weight),
                 default_validation_preset_id.strip() or None,
                 int(reference_set_id) if reference_set_id else None,
+                selected_reference_version_id,
                 validation_policy_memo.strip(),
                 validation_memo.strip(),
                 library_memo.strip(),
@@ -3532,70 +3574,62 @@ def profile_create_validation_run(
 
 @app.get("/reference-sets", response_class=HTMLResponse)
 def reference_sets(request: Request) -> HTMLResponse:
-    rows = fetch_all(
-        """
-        SELECT r.*, d.name AS dataset_name
-        FROM reference_sets r
-        LEFT JOIN datasets d ON d.id = r.dataset_id
-        ORDER BY r.updated_at DESC, r.id DESC
-        """
-    )
+    rows = reference_set_rows()
     datasets = fetch_all("SELECT id, name, trigger_word FROM datasets ORDER BY id DESC")
-    return render(request, "reference_sets.html", reference_sets=rows, datasets=datasets)
+    projects = fetch_all("SELECT id, name, trigger_word, dataset_id, current_dataset_version_id FROM lora_projects WHERE deleted_at IS NULL ORDER BY updated_at DESC, id DESC")
+    return render(
+        request,
+        "reference_sets.html",
+        reference_sets=rows,
+        datasets=datasets,
+        projects=projects,
+        reference_type_labels=REFERENCE_TYPE_LABELS,
+    )
 
 
 @app.post("/reference-sets")
 def reference_set_create(
     name: str = Form(...),
+    reference_type: str = Form("character"),
     dataset_id: str = Form(""),
+    dataset_version_id: str = Form(""),
+    project_id: str = Form(""),
     trigger_word: str = Form(""),
     description: str = Form(""),
+    selection_mode: str = Form("manual"),
     memo: str = Form(""),
 ) -> RedirectResponse:
-    dataset_version_id = None
-    if dataset_id:
-        version = fetch_one("SELECT id FROM dataset_versions WHERE dataset_id = ? ORDER BY version_no DESC LIMIT 1", (int(dataset_id),))
-        dataset_version_id = version["id"] if version else None
-    now = settings_now()
-    with connect() as conn:
-        cur = conn.execute(
-            """
-            INSERT INTO reference_sets(
-                name, dataset_id, dataset_version_id, trigger_word,
-                description, created_at, updated_at, memo
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                name.strip(),
-                int(dataset_id) if dataset_id else None,
-                dataset_version_id,
-                trigger_word.strip(),
-                description.strip(),
-                now,
-                now,
-                memo.strip(),
-            ),
-        )
-        set_id = int(cur.lastrowid)
+    set_id = create_reference_set(
+        name=name,
+        reference_type=reference_type,
+        dataset_id=int(dataset_id) if dataset_id else None,
+        dataset_version_id=int(dataset_version_id) if dataset_version_id else None,
+        project_id=int(project_id) if project_id else None,
+        trigger_word=trigger_word,
+        description=description,
+        selection_mode=selection_mode,
+        memo=memo,
+    )
     return RedirectResponse(f"/reference-sets/{set_id}", status_code=303)
 
 
 @app.get("/reference-sets/{set_id}", response_class=HTMLResponse)
 def reference_set_detail(request: Request, set_id: int) -> HTMLResponse:
-    row = fetch_one(
-        """
-        SELECT r.*, d.name AS dataset_name
-        FROM reference_sets r
-        LEFT JOIN datasets d ON d.id = r.dataset_id
-        WHERE r.id = ?
-        """,
-        (set_id,),
-    )
-    if row is None:
+    try:
+        detail = reference_detail(set_id)
+    except ValueError as exc:
         raise HTTPException(status_code=404, detail="Reference set not found")
-    images = fetch_all("SELECT * FROM reference_images WHERE reference_set_id = ? ORDER BY sort_order, id", (set_id,))
-    return render(request, "reference_set_detail.html", reference_set=row, images=images, default_project_path=str(settings.ROOT_DIR))
+    dataset_versions = fetch_all(
+        "SELECT * FROM dataset_versions WHERE dataset_id = ? ORDER BY version_no DESC",
+        (detail["reference_set"]["dataset_id"],),
+    ) if detail["reference_set"]["dataset_id"] else []
+    return render(
+        request,
+        "reference_set_detail.html",
+        **detail,
+        dataset_versions=dataset_versions,
+        default_project_path=str(settings.ROOT_DIR),
+    )
 
 
 @app.post("/reference-sets/{set_id}/images")
@@ -3603,28 +3637,114 @@ def reference_image_add(
     set_id: int,
     image_path: str = Form(...),
     image_role: str = Form("other"),
+    prompt_role_hint: str = Form(""),
     caption: str = Form(""),
+    source_type: str = Form("manual"),
+    include_in_machine_review: str = Form("1"),
+    exclude_reason: str = Form(""),
     sort_order: int = Form(0),
+    memo: str = Form(""),
 ) -> RedirectResponse:
-    row = fetch_one("SELECT * FROM reference_sets WHERE id = ?", (set_id,))
-    if row is None:
-        raise HTTPException(status_code=404, detail="Reference set not found")
+    if not isinstance(caption, str):
+        sort_order = int(caption)
+        caption = ""
+    prompt_role_hint = prompt_role_hint if isinstance(prompt_role_hint, str) else ""
+    caption = caption if isinstance(caption, str) else ""
+    source_type = source_type if isinstance(source_type, str) else "manual"
+    exclude_reason = exclude_reason if isinstance(exclude_reason, str) else ""
+    memo = memo if isinstance(memo, str) else ""
+    include_flag = include_in_machine_review if isinstance(include_in_machine_review, str) else "1"
     try:
-        managed_path = copy_managed_reference_image(set_id, image_path)
+        add_reference_image(
+            reference_set_id=set_id,
+            image_path=image_path,
+            image_role=image_role,
+            prompt_role_hint=prompt_role_hint,
+            caption=caption,
+            source_type=source_type,
+            include_in_machine_review=include_flag == "1",
+            exclude_reason=exclude_reason,
+            sort_order=sort_order,
+            memo=memo,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    valid_roles = {"face", "upper_body", "full_body", "expression", "style", "other"}
-    now = settings_now()
-    with connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO reference_images(reference_set_id, image_path, image_role, caption, sort_order, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (set_id, managed_path, image_role if image_role in valid_roles else "other", caption.strip(), sort_order, now),
-        )
-        conn.execute("UPDATE reference_sets SET updated_at = ? WHERE id = ?", (now, set_id))
     return RedirectResponse(f"/reference-sets/{set_id}", status_code=303)
+
+
+@app.post("/reference-sets/{set_id}/dataset-images")
+def reference_dataset_image_add(
+    set_id: int,
+    image_path: str = Form(...),
+    image_role: str = Form("other"),
+) -> RedirectResponse:
+    try:
+        add_reference_image(reference_set_id=set_id, image_path=image_path, image_role=image_role, source_type="dataset")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(f"/reference-sets/{set_id}", status_code=303)
+
+
+@app.post("/reference-images/{image_id}/edit")
+def reference_image_update(
+    image_id: int,
+    reference_set_id: int = Form(...),
+    image_role: str = Form("other"),
+    prompt_role_hint: str = Form(""),
+    include_in_machine_review: str = Form(""),
+    exclude_reason: str = Form(""),
+    memo: str = Form(""),
+) -> RedirectResponse:
+    try:
+        update_reference_image(
+            image_id,
+            image_role=image_role,
+            prompt_role_hint=prompt_role_hint,
+            include_in_machine_review=include_in_machine_review == "1",
+            exclude_reason=exclude_reason,
+            memo=memo,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return RedirectResponse(f"/reference-sets/{reference_set_id}", status_code=303)
+
+
+@app.post("/reference-sets/{set_id}/set-default")
+def reference_set_default(set_id: int) -> RedirectResponse:
+    try:
+        set_project_default(set_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(f"/reference-sets/{set_id}", status_code=303)
+
+
+@app.post("/reference-sets/{set_id}/archive")
+def reference_set_archive(set_id: int) -> RedirectResponse:
+    archive_reference_set(set_id, True)
+    return RedirectResponse("/reference-sets", status_code=303)
+
+
+@app.post("/reference-sets/{set_id}/restore")
+def reference_set_restore(set_id: int) -> RedirectResponse:
+    archive_reference_set(set_id, False)
+    return RedirectResponse(f"/reference-sets/{set_id}", status_code=303)
+
+
+@app.post("/reference-sets/{set_id}/export", response_class=HTMLResponse)
+def reference_set_export(request: Request, set_id: int) -> HTMLResponse:
+    try:
+        paths = export_reference_artifacts(set_id)
+        detail = reference_detail(set_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return render(
+        request,
+        "reference_set_detail.html",
+        **detail,
+        dataset_versions=[],
+        default_project_path=str(settings.ROOT_DIR),
+        export_paths=paths,
+    )
 
 
 @app.get("/reference-images/{image_id}")
@@ -4139,6 +4259,12 @@ def ensure_selected_lora_profile(job_id: int) -> Any:
     if existing:
         sync_profile_selected_fields(job, output, int(existing["id"]))
         return fetch_one("SELECT * FROM selected_lora_profiles WHERE id = ?", (existing["id"],))
+    project_defaults = None
+    if "project_id" in job.keys() and job["project_id"]:
+        project_defaults = fetch_one(
+            "SELECT default_reference_set_id, default_reference_set_version_id FROM lora_projects WHERE id = ?",
+            (job["project_id"],),
+        )
     now = settings_now()
     profile_name = f"Job #{job_id} {job['name']} epoch {output['epoch'] or job['adopted_epoch'] or '-'}"
     with connect() as conn:
@@ -4149,9 +4275,10 @@ def ensure_selected_lora_profile(job_id: int) -> Any:
                 selected_model_path, exported_model_path, base_model,
                 recommended_weight_min, recommended_weight_max, light_weight, strong_weight,
                 validation_memo, library_memo, default_validation_preset_id,
-                validation_policy_memo, created_at, updated_at
+                validation_policy_memo, reference_set_id, reference_set_version_id,
+                created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, '', '', ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, '', '', ?, ?, ?, ?, ?, ?)
             """,
             (
                 job["project_id"] if "project_id" in job.keys() else None,
@@ -4165,6 +4292,8 @@ def ensure_selected_lora_profile(job_id: int) -> Any:
                 base_model_label(job["base_model_path"]),
                 "standard_validation_v1",
                 "通常比較はHiresなしの標準検証を基準にする。Hiresありは拡張検証で最終見栄え確認として扱う。",
+                project_defaults["default_reference_set_id"] if project_defaults else None,
+                project_defaults["default_reference_set_version_id"] if project_defaults else None,
                 now,
                 now,
             ),
@@ -4176,6 +4305,12 @@ def ensure_selected_lora_profile(job_id: int) -> Any:
 
 def sync_profile_selected_fields(job: Any, output: Any, profile_id: int) -> None:
     now = settings_now()
+    project_defaults = None
+    if "project_id" in job.keys() and job["project_id"]:
+        project_defaults = fetch_one(
+            "SELECT default_reference_set_id, default_reference_set_version_id FROM lora_projects WHERE id = ?",
+            (job["project_id"],),
+        )
     with connect() as conn:
         conn.execute(
             """
@@ -4184,6 +4319,8 @@ def sync_profile_selected_fields(job: Any, output: Any, profile_id: int) -> None
                 trigger_word = COALESCE(NULLIF(trigger_word, ''), ?),
                 base_model = COALESCE(NULLIF(base_model, ''), ?),
                 project_id = COALESCE(project_id, ?),
+                reference_set_id = COALESCE(reference_set_id, ?),
+                reference_set_version_id = COALESCE(reference_set_version_id, ?),
                 updated_at = ?
             WHERE id = ?
             """,
@@ -4194,6 +4331,8 @@ def sync_profile_selected_fields(job: Any, output: Any, profile_id: int) -> None
                 job["trigger_word_at_creation"] or "",
                 base_model_label(job["base_model_path"]),
                 job["project_id"] if "project_id" in job.keys() else None,
+                project_defaults["default_reference_set_id"] if project_defaults else None,
+                project_defaults["default_reference_set_version_id"] if project_defaults else None,
                 now,
                 profile_id,
             ),
