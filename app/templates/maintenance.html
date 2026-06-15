@@ -58,6 +58,30 @@
 </section>
 
 <section>
+  <h2>Embedding Cache / Jobs</h2>
+  <div class="summary-grid">
+    <div><span>Embedding cache</span><strong>{{ format_bytes(storage.embedding_cache.total) }}</strong></div>
+    <div><span>Failed cleanup候補</span><strong>{{ failed_embedding_cleanup.count }}</strong></div>
+    <div><span>Stale cleanup候補</span><strong>{{ stale_embedding_cleanup.count }}</strong></div>
+  </div>
+  <p><a class="button" href="/settings/embeddings">Embedding設定を開く</a></p>
+  <table>
+    <thead><tr><th>ID</th><th>種別</th><th>対象</th><th>状態</th><th>進捗</th></tr></thead>
+    <tbody>
+      {% for job in embedding_jobs %}
+      <tr>
+        <td>#{{ job.id }}</td><td>{{ job.job_type }}</td><td>{{ job.target_id }}</td>
+        <td><span class="label {{ job.status }}">{{ job.status }}</span></td>
+        <td>{{ job.processed_count }} / {{ job.total_count }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">Embedding Jobはまだありません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section>
   <h2>整理候補</h2>
   <p class="muted">古い下書き、未実行の準備済み、成果物なしの失敗/停止、結合確認、未採用の軽量確認などです。</p>
   <table>

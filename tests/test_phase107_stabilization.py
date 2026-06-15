@@ -39,7 +39,8 @@ class IsolatedDbTest(unittest.TestCase):
         settings.EXPORTS_DIR = self.root / "exports"
         settings.RUNS_DIR = self.root / "runs"
         settings.LOGS_DIR = self.root / "logs"
-        for directory in (settings.DATA_DIR, settings.EXPORTS_DIR, settings.RUNS_DIR, settings.LOGS_DIR):
+        settings.EMBEDDINGS_DIR = settings.DATA_DIR / "embeddings"
+        for directory in (settings.DATA_DIR, settings.EXPORTS_DIR, settings.RUNS_DIR, settings.LOGS_DIR, settings.EMBEDDINGS_DIR):
             directory.mkdir(parents=True, exist_ok=True)
         init_db()
 
@@ -1410,6 +1411,144 @@ class ReviewQueueTests(IsolatedDbTest):
         self.assertIsNone(row["rating_flexibility"])
         self.assertEqual(row["rating_overall"], 4)
         self.assertEqual(row["memo"], "bulk")
+
+
+class EmbeddingPhase112Tests(IsolatedDbTest):
+    def make_dataset_version(self) -> tuple[int, int, Path]:
+        dataset_dir = self.root / "dataset"
+        self.make_png(dataset_dir / "img001.png")
+        (dataset_dir / "img001.txt").write_text("testchar, portrait", encoding="utf-8")
+        now = utc_now()
+        with connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO datasets(name, path, model_family, trigger_word, class_token, image_count, caption_count, created_at, updated_at)
+                VALUES ('Embedding Dataset', ?, 'SDXL', 'testchar', 'person', 1, 1, ?, ?)
+                """,
+                (str(dataset_dir), now, now),
+            )
+            dataset_id = int(cur.lastrowid)
+            cur = conn.execute(
+                """
+                INSERT INTO dataset_versions(dataset_id, version_no, trigger_word, image_count, caption_count, created_at)
+                VALUES (?, 1, 'testchar', 1, 1, ?)
+                """,
+                (dataset_id, now),
+            )
+            version_id = int(cur.lastrowid)
+        return dataset_id, version_id, dataset_dir
+
+    def make_sample_job(self, dataset_id: int, version_id: int) -> int:
+        now = utc_now()
+        image = self.make_png(self.root / "runs" / "job_000001" / "samples" / "sample.png")
+        with connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO training_jobs(name, dataset_id, dataset_version_id, preset_id, status, model_family, training_script,
+                    base_model_path, output_name, output_dir, run_dir, params_json, created_at, updated_at)
+                VALUES ('Embedding Job', ?, ?, 'preset', 'completed', 'SDXL', 'sdxl_train_network.py',
+                    'model.safetensors', 'out', 'out', 'run', '{}', ?, ?)
+                """,
+                (dataset_id, version_id, now, now),
+            )
+            job_id = int(cur.lastrowid)
+            conn.execute("INSERT INTO sample_images(job_id, image_path, created_at) VALUES (?, ?, ?)", (job_id, str(image), now))
+        return job_id
+
+    def make_validation_run_with_image(self, job_id: int) -> int:
+        from app.services.validation_runs import create_validation_run
+
+        run_id = create_validation_run(job_id, "quick_validation_v1", "base", "testchar", "embedding test")
+        image = self.make_png(settings.EXPORTS_DIR / "validation_runs" / f"validation_run_{run_id:06d}" / "images" / "val.png")
+        now = utc_now()
+        with connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO validation_images(job_id, validation_run_id, image_path, image_role, created_at, updated_at)
+                VALUES (?, ?, ?, 'individual', ?, ?)
+                """,
+                (job_id, run_id, str(image), now, now),
+            )
+        return run_id
+
+    def run_embedding_job_sync(self, job_type: str, target_id: int) -> int:
+        from app.services.embedding_service import create_embedding_job
+        from app.services.embedding_worker import run_embedding_job
+
+        embedding_job_id = create_embedding_job(job_type, target_id)
+        self.assertEqual(run_embedding_job(embedding_job_id), 0)
+        return embedding_job_id
+
+    def test_mock_model_and_settings_are_seeded_and_preflight_ok(self) -> None:
+        from app.services.embedding_service import load_embedding_settings, provider_preflight
+
+        model = fetch_one("SELECT * FROM embedding_models WHERE id = 'mock_image_512'")
+        self.assertIsNotNone(model)
+        self.assertEqual(model["provider"], "mock")
+        settings_row = load_embedding_settings()
+        self.assertEqual(settings_row["active_embedding_model_id"], "mock_image_512")
+        result = provider_preflight("mock_image_512")
+        self.assertEqual(result["status"], "OK")
+
+    def test_dataset_reference_sample_and_validation_embeddings_are_created(self) -> None:
+        from app.services.embedding_service import embedding_coverage
+
+        dataset_id, version_id, dataset_dir = self.make_dataset_version()
+        reference_set_id = create_reference_set(name="Embedding Reference", reference_type="character", dataset_id=dataset_id, dataset_version_id=version_id, trigger_word="testchar")
+        ref_image_id = add_reference_image(reference_set_id=reference_set_id, image_path=str(dataset_dir / "img001.png"), image_role="face_front", source_type="dataset")
+        reference = fetch_one("SELECT current_version_id FROM reference_sets WHERE id = ?", (reference_set_id,))
+        job_id = self.make_sample_job(dataset_id, version_id)
+        run_id = self.make_validation_run_with_image(job_id)
+
+        dataset_job_id = self.run_embedding_job_sync("dataset_version", version_id)
+        reference_job_id = self.run_embedding_job_sync("reference_set_version", reference["current_version_id"])
+        sample_job_id = self.run_embedding_job_sync("training_job_samples", job_id)
+        validation_job_id = self.run_embedding_job_sync("validation_run", run_id)
+
+        for embedding_job_id in [dataset_job_id, reference_job_id, sample_job_id, validation_job_id]:
+            job = fetch_one("SELECT status, ready_count FROM embedding_jobs WHERE id = ?", (embedding_job_id,))
+            self.assertEqual(job["status"], "completed")
+            self.assertGreaterEqual(job["ready_count"], 1)
+
+        embeddings = fetch_all("SELECT * FROM image_embeddings ORDER BY id")
+        self.assertEqual({row["source_type"] for row in embeddings}, {"dataset_image", "reference_image", "sample_image", "validation_image"})
+        for row in embeddings:
+            self.assertTrue(Path(row["embedding_path"]).exists())
+            self.assertEqual(row["vector_dim"], 512)
+            self.assertEqual(row["status"], "ready")
+
+        self.assertEqual(embedding_coverage("dataset_version", version_id)["ready"], 1)
+        self.assertEqual(embedding_coverage("reference_set_version", reference["current_version_id"])["ready"], 1)
+        self.assertEqual(embedding_coverage("training_job_samples", job_id)["ready"], 1)
+        self.assertEqual(embedding_coverage("validation_run", run_id)["ready"], 1)
+        self.assertEqual(ref_image_id, fetch_one("SELECT source_id FROM image_embeddings WHERE source_type = 'reference_image'")["source_id"])
+
+    def test_stale_detection_and_recompute_stale(self) -> None:
+        from app.services.embedding_service import create_embedding_job, embedding_coverage
+        from app.services.embedding_worker import run_embedding_job
+
+        _, version_id, dataset_dir = self.make_dataset_version()
+        self.run_embedding_job_sync("dataset_version", version_id)
+        image_path = dataset_dir / "img001.png"
+        Image.new("RGB", (9, 9), color=(200, 10, 40)).save(image_path)
+        self.assertEqual(embedding_coverage("dataset_version", version_id)["stale"], 1)
+        stale_job_id = create_embedding_job("dataset_version", version_id, recompute="stale")
+        run_embedding_job(stale_job_id)
+        self.assertEqual(embedding_coverage("dataset_version", version_id)["ready"], 1)
+
+    def test_embedding_pages_render(self) -> None:
+        from app.main import dataset_detail, embedding_settings_page, reference_set_detail as reference_page, validation_run_detail as validation_page
+
+        dataset_id, version_id, dataset_dir = self.make_dataset_version()
+        reference_set_id = create_reference_set(name="Embedding Reference", reference_type="character", dataset_id=dataset_id, dataset_version_id=version_id)
+        add_reference_image(reference_set_id=reference_set_id, image_path=str(dataset_dir / "img001.png"), image_role="face_front")
+        job_id = self.make_sample_job(dataset_id, version_id)
+        run_id = self.make_validation_run_with_image(job_id)
+
+        self.assertIn("Embedding設定", embedding_settings_page(request=None).body.decode("utf-8"))
+        self.assertIn("Embedding Coverage", dataset_detail(request=None, dataset_id=dataset_id).body.decode("utf-8"))
+        self.assertIn("Reference Embedding Coverage", reference_page(request=None, set_id=reference_set_id).body.decode("utf-8"))
+        self.assertIn("Validation Image Embedding Coverage", validation_page(request=None, run_id=run_id).body.decode("utf-8"))
 
 
 class StartHelperTests(unittest.TestCase):

@@ -3,6 +3,36 @@
   <h1>データセット #{{ dataset.id }} {{ dataset.name }}</h1>
   <form method="post" action="/datasets/{{ dataset.id }}/rescan"><button type="submit">再スキャン</button></form>
 </header>
+{% if embedding_coverage %}
+<section class="notice embedding-coverage">
+  <h2>Embedding Coverage</h2>
+  <p>対象Dataset Version: #{{ embedding_target_id }} / モデル: {{ embedding_coverage.model_name }}</p>
+  <div class="summary-grid">
+    <div><span>画像</span><strong>{{ embedding_coverage.total }}</strong></div>
+    <div><span>ready</span><strong>{{ embedding_coverage.ready }}</strong></div>
+    <div><span>stale</span><strong>{{ embedding_coverage.stale }}</strong></div>
+    <div><span>failed</span><strong>{{ embedding_coverage.failed }}</strong></div>
+    <div><span>missing</span><strong>{{ embedding_coverage.missing }}</strong></div>
+    <div><span>未計算</span><strong>{{ embedding_coverage.not_computed }}</strong></div>
+  </div>
+  <div class="actions compact-actions">
+    <form method="post" action="/embeddings/jobs">
+      <input type="hidden" name="job_type" value="dataset_version">
+      <input type="hidden" name="target_id" value="{{ embedding_target_id }}">
+      <input type="hidden" name="recompute" value="missing">
+      <input type="hidden" name="return_to" value="/datasets/{{ dataset.id }}">
+      <button type="submit">Dataset Embeddingを計算</button>
+    </form>
+    <form method="post" action="/embeddings/jobs">
+      <input type="hidden" name="job_type" value="dataset_version">
+      <input type="hidden" name="target_id" value="{{ embedding_target_id }}">
+      <input type="hidden" name="recompute" value="stale">
+      <input type="hidden" name="return_to" value="/datasets/{{ dataset.id }}">
+      <button type="submit">Staleのみ再計算</button>
+    </form>
+  </div>
+</section>
+{% endif %}
 <section class="panel-grid">
   <div><h2>概要</h2><dl>
     <dt>ID</dt><dd>{{ dataset.id }}</dd>

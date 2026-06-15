@@ -1,0 +1,111 @@
+{% extends "base.html" %}{% block content %}
+<header class="page-head">
+  <h1>Embedding設定</h1>
+  <div class="actions"><a class="button" href="/maintenance">メンテナンスへ</a></div>
+</header>
+
+<section class="notice">
+  <p>Embedding Cacheは、画像をCLIP等の特徴ベクトルへ変換して保存する基盤です。Phase 11.2では計算と保存までを行い、自動採点はまだ行いません。</p>
+  <p>Embedding model weights may need to be downloaded. LoRA Studio will not download them automatically unless explicitly enabled.</p>
+</section>
+
+<section class="panel-grid">
+  <form method="post" action="/settings/embeddings" class="form-grid">
+    <h2>設定</h2>
+    <label>有効なEmbeddingモデル
+      <select name="active_embedding_model_id">
+        {% for model in models %}
+        <option value="{{ model.id }}" {{ 'selected' if embedding_settings.active_embedding_model_id == model.id else '' }}>{{ model.name }} / {{ model.provider }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Python Path<input name="python_path" value="{{ embedding_settings.python_path or '' }}" placeholder="未指定ならLoRA-Studio起動中のPython"></label>
+    <label>Device<select name="device">
+      {% for value in ['auto', 'cuda', 'cpu'] %}<option value="{{ value }}" {{ 'selected' if embedding_settings.device == value else '' }}>{{ value }}</option>{% endfor %}
+    </select></label>
+    <label>Dtype<select name="dtype">
+      {% for value in ['fp32', 'fp16', 'bf16'] %}<option value="{{ value }}" {{ 'selected' if embedding_settings.dtype == value else '' }}>{{ value }}</option>{% endfor %}
+    </select></label>
+    <label>Batch Size<input type="number" name="batch_size" value="{{ embedding_settings.batch_size or 8 }}" min="1"></label>
+    <label>Cache Root<input name="cache_root" value="{{ embedding_settings.cache_root }}"></label>
+    <label>Max Image Size<input type="number" name="max_image_size" value="{{ embedding_settings.max_image_size or 1024 }}" min="256"></label>
+    <label>Workers<input type="number" name="num_workers" value="{{ embedding_settings.num_workers or 1 }}" min="1"></label>
+    <label class="inline-check"><input type="checkbox" name="allow_model_download" value="1" {{ 'checked' if embedding_settings.allow_model_download else '' }}> 明示的にモデルdownloadを許可</label>
+    <button type="submit">設定を保存</button>
+  </form>
+
+  <div>
+    <h2>Provider確認</h2>
+    <dl>
+      <dt>現在のモデル</dt><dd>{{ active_model.name }} / {{ active_model.provider }}</dd>
+      <dt>Model</dt><dd>{{ active_model.model_name or '-' }}</dd>
+      <dt>Vector dim</dt><dd>{{ active_model.vector_dim or '-' }}</dd>
+      <dt>Normalize</dt><dd>{{ 'yes' if active_model.normalize else 'no' }}</dd>
+      <dt>最終Preflight</dt><dd>{{ embedding_settings.last_preflight_status or '-' }}</dd>
+    </dl>
+    <form method="post" action="/settings/embeddings/preflight">
+      <input type="hidden" name="active_embedding_model_id" value="{{ embedding_settings.active_embedding_model_id or active_model.id }}">
+      <button type="submit">Providerを確認</button>
+    </form>
+    {% if preflight %}
+    <h3>Preflight結果: <span class="label {{ preflight.status|lower }}">{{ preflight.status }}</span></h3>
+    <table>
+      <thead><tr><th>確認</th><th>状態</th><th>メッセージ</th></tr></thead>
+      <tbody>
+        {% for check in preflight.checks %}
+        <tr><td>{{ check.name }}</td><td><span class="label {{ check.status|lower }}">{{ check.status }}</span></td><td>{{ check.message }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</section>
+
+<section class="panel-grid">
+  <div>
+    <h2>Cache Size</h2>
+    <dl>
+      <dt>Total</dt><dd>{{ format_bytes(cache_size.total) }}</dd>
+      {% for key, size in cache_size.by_model.items() %}
+      <dt>{{ key }}</dt><dd>{{ format_bytes(size) }}</dd>
+      {% endfor %}
+    </dl>
+  </div>
+  <div>
+    <h2>Cleanup Preview</h2>
+    <dl>
+      <dt>Failed embeddings</dt><dd>{{ failed_cleanup.count }}件 / {{ failed_cleanup.label }}</dd>
+      <dt>Stale embeddings</dt><dd>{{ stale_cleanup.count }}件 / {{ stale_cleanup.label }}</dd>
+    </dl>
+    <p class="muted">初期版ではpreviewのみです。必要な削除対象を確認してからcleanup実装を拡張します。</p>
+  </div>
+</section>
+
+<section>
+  <h2>Embedding Jobs</h2>
+  <table>
+    <thead><tr><th>ID</th><th>種別</th><th>対象</th><th>Provider</th><th>状態</th><th>進捗</th><th>開始</th><th>終了</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for job in embedding_jobs %}
+      <tr>
+        <td>#{{ job.id }}</td>
+        <td>{{ job.job_type }}</td>
+        <td>{{ job.target_id }}</td>
+        <td>{{ job.provider }}</td>
+        <td><span class="label {{ job.status }}">{{ job.status }}</span></td>
+        <td>{{ job.processed_count }} / {{ job.total_count }} ready {{ job.ready_count }} failed {{ job.failed_count }}</td>
+        <td>{{ job.started_at or '-' }}</td>
+        <td>{{ job.ended_at or '-' }}</td>
+        <td>
+          {% if job.status == 'running' %}
+          <form method="post" action="/embeddings/jobs/{{ job.id }}/stop"><button class="danger" type="submit">停止</button></form>
+          {% else %}-{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="9" class="muted">Embedding Jobはまだありません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

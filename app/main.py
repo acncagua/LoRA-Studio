@@ -18,6 +18,21 @@ from app import settings
 from app.app_version import app_version_info
 from app.db import connect, create_dataset_version, create_job, fetch_all, fetch_one, import_latest_environment, init_db, insert_dataset, upsert_dataset_analysis
 from app.services.command_builder import prepare_job_files
+from app.services.embedding_service import (
+    active_embedding_model,
+    cleanup_preview as embedding_cleanup_preview,
+    create_embedding_job,
+    embedding_cache_size,
+    embedding_coverage,
+    format_bytes as embedding_format_bytes,
+    latest_embedding_jobs,
+    load_embedding_settings,
+    provider_preflight,
+    read_embedding_log,
+    start_embedding_job,
+    stop_embedding_job,
+    update_embedding_settings,
+)
 from app.services.exports import export_selected_lora, write_compare_contact_sheet, write_job_contact_sheet, write_validation_pack
 from app.services.image_store import (
     copy_managed_reference_image,
@@ -1284,11 +1299,16 @@ def job_sync_project_selection(request: Request, job_id: int):
 @app.get("/maintenance", response_class=HTMLResponse)
 def maintenance(request: Request, backup_path: str = "", diagnostics_path: str = "") -> HTMLResponse:
     usage = storage_usage()
+    usage["embedding_cache"] = embedding_cache_size()
     return render(
         request,
         "maintenance.html",
         summary=maintenance_summary(),
         storage=usage,
+        embedding_jobs=latest_embedding_jobs(10),
+        failed_embedding_cleanup=embedding_cleanup_preview("failed"),
+        stale_embedding_cleanup=embedding_cleanup_preview("stale"),
+        format_bytes=embedding_format_bytes,
         cleanup_candidates=cleanup_job_candidates(limit=20),
         backup_path=backup_path,
         diagnostics_path=diagnostics_path,
@@ -1309,7 +1329,9 @@ def maintenance_diagnostics() -> RedirectResponse:
 
 @app.get("/storage", response_class=HTMLResponse)
 def storage_page(request: Request) -> HTMLResponse:
-    return render(request, "storage_usage.html", storage=storage_usage(), status_labels=STATUS_LABELS)
+    storage = storage_usage()
+    storage["embedding_cache"] = embedding_cache_size()
+    return render(request, "storage_usage.html", storage=storage, status_labels=STATUS_LABELS, format_bytes=embedding_format_bytes)
 
 
 @app.post("/storage/trash/purge")
@@ -1329,6 +1351,86 @@ def environment(request: Request) -> HTMLResponse:
     settings_rows = fetch_all("SELECT * FROM app_settings ORDER BY key")
     environments = fetch_all("SELECT * FROM environments ORDER BY id DESC")
     return render(request, "environment.html", settings_rows=settings_rows, environments=environments, settings=settings)
+
+
+@app.get("/settings/embeddings", response_class=HTMLResponse)
+def embedding_settings_page(request: Request, preflight_model_id: str | None = None) -> HTMLResponse:
+    models = fetch_all("SELECT * FROM embedding_models ORDER BY provider, name")
+    settings_row = load_embedding_settings()
+    preflight = None
+    if preflight_model_id:
+        preflight = provider_preflight(preflight_model_id)
+    return render(
+        request,
+        "embedding_settings.html",
+        models=models,
+        embedding_settings=settings_row,
+        active_model=active_embedding_model(),
+        preflight=preflight,
+        embedding_jobs=latest_embedding_jobs(),
+        cache_size=embedding_cache_size(),
+        format_bytes=embedding_format_bytes,
+        failed_cleanup=embedding_cleanup_preview("failed"),
+        stale_cleanup=embedding_cleanup_preview("stale"),
+    )
+
+
+@app.post("/settings/embeddings")
+def embedding_settings_save(
+    active_embedding_model_id: str = Form("mock_image_512"),
+    python_path: str = Form(""),
+    device: str = Form("auto"),
+    dtype: str = Form("fp32"),
+    batch_size: int = Form(8),
+    cache_root: str = Form(""),
+    allow_model_download: str = Form(""),
+    max_image_size: int = Form(1024),
+    num_workers: int = Form(1),
+) -> RedirectResponse:
+    update_embedding_settings(
+        {
+            "active_embedding_model_id": active_embedding_model_id,
+            "python_path": python_path,
+            "device": device,
+            "dtype": dtype,
+            "batch_size": batch_size,
+            "cache_root": cache_root,
+            "allow_model_download": allow_model_download == "1",
+            "max_image_size": max_image_size,
+            "num_workers": num_workers,
+        }
+    )
+    return RedirectResponse("/settings/embeddings", status_code=303)
+
+
+@app.post("/settings/embeddings/preflight")
+def embedding_preflight(active_embedding_model_id: str = Form("mock_image_512")) -> RedirectResponse:
+    provider_preflight(active_embedding_model_id)
+    return RedirectResponse(f"/settings/embeddings?preflight_model_id={quote(active_embedding_model_id)}", status_code=303)
+
+
+@app.post("/embeddings/jobs")
+def embedding_job_create(job_type: str = Form(...), target_id: int = Form(...), recompute: str = Form("missing"), return_to: str = Form("")) -> RedirectResponse:
+    try:
+        embedding_model = active_embedding_model()
+        if embedding_model.get("provider") != "mock":
+            running_training = fetch_one("SELECT id FROM training_jobs WHERE status = 'running' LIMIT 1")
+            running_generation = fetch_one("SELECT id FROM validation_generation_runs WHERE status = 'running' LIMIT 1")
+            if running_training or running_generation:
+                raise RuntimeError("学習または検証画像生成が実行中です。GPUを使うEmbedding providerは、実行中の処理が終わってから開始してください。")
+        embedding_job_id = create_embedding_job(job_type, target_id, recompute=recompute)
+        start_embedding_job(embedding_job_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if return_to:
+        return RedirectResponse(return_to, status_code=303)
+    return RedirectResponse("/settings/embeddings", status_code=303)
+
+
+@app.post("/embeddings/jobs/{embedding_job_id}/stop")
+def embedding_job_stop(embedding_job_id: int, return_to: str = Form("")) -> RedirectResponse:
+    stop_embedding_job(embedding_job_id)
+    return RedirectResponse(return_to or "/settings/embeddings", status_code=303)
 
 
 @app.get("/presets", response_class=HTMLResponse)
@@ -1369,6 +1471,7 @@ def dataset_detail(request: Request, dataset_id: int) -> HTMLResponse:
         analysis = fetch_one("SELECT * FROM dataset_analysis WHERE dataset_id = ?", (dataset_id,))
     history = fetch_all("SELECT * FROM caption_edit_history WHERE dataset_id = ? ORDER BY id DESC LIMIT 10", (dataset_id,))
     versions = fetch_all("SELECT * FROM dataset_versions WHERE dataset_id = ? ORDER BY version_no DESC", (dataset_id,))
+    latest_version = versions[0] if versions else None
     return render(
         request,
         "dataset_detail.html",
@@ -1379,6 +1482,8 @@ def dataset_detail(request: Request, dataset_id: int) -> HTMLResponse:
         missing_trigger_captions=missing_trigger_caption_rows(dict(dataset))[:100],
         caption_preview=None,
         restore_preview=None,
+        embedding_coverage=embedding_coverage("dataset_version", latest_version["id"]) if latest_version else None,
+        embedding_target_id=latest_version["id"] if latest_version else None,
     )
 
 
@@ -1412,6 +1517,7 @@ def dataset_caption_prepend_preview(request: Request, dataset_id: int, trigger_w
     preview = preview_caption_prepend(dict(dataset), trigger_word.strip() or dataset["trigger_word"] or "")
     history = fetch_all("SELECT * FROM caption_edit_history WHERE dataset_id = ? ORDER BY id DESC LIMIT 10", (dataset_id,))
     versions = fetch_all("SELECT * FROM dataset_versions WHERE dataset_id = ? ORDER BY version_no DESC", (dataset_id,))
+    latest_version = versions[0] if versions else None
     return render(
         request,
         "dataset_detail.html",
@@ -1422,6 +1528,8 @@ def dataset_caption_prepend_preview(request: Request, dataset_id: int, trigger_w
         missing_trigger_captions=missing_trigger_caption_rows(dict(dataset))[:100],
         caption_preview=preview,
         restore_preview=None,
+        embedding_coverage=embedding_coverage("dataset_version", latest_version["id"]) if latest_version else None,
+        embedding_target_id=latest_version["id"] if latest_version else None,
     )
 
 
@@ -1470,6 +1578,7 @@ def dataset_restore_preview(request: Request, dataset_id: int, history_id: int =
     analysis = fetch_one("SELECT * FROM dataset_analysis WHERE dataset_id = ?", (dataset_id,))
     history = fetch_all("SELECT * FROM caption_edit_history WHERE dataset_id = ? ORDER BY id DESC LIMIT 10", (dataset_id,))
     versions = fetch_all("SELECT * FROM dataset_versions WHERE dataset_id = ? ORDER BY version_no DESC", (dataset_id,))
+    latest_version = versions[0] if versions else None
     preview = preview_restore(dict(dataset), dict(history_row))
     return render(
         request,
@@ -1481,6 +1590,8 @@ def dataset_restore_preview(request: Request, dataset_id: int, history_id: int =
         missing_trigger_captions=missing_trigger_caption_rows(dict(dataset))[:100],
         caption_preview=None,
         restore_preview=preview,
+        embedding_coverage=embedding_coverage("dataset_version", latest_version["id"]) if latest_version else None,
+        embedding_target_id=latest_version["id"] if latest_version else None,
     )
 
 
@@ -2091,6 +2202,7 @@ def job_detail(
         exported=exported,
         generation_error=generation_error,
         running_generation=running_generation,
+        sample_embedding_coverage=embedding_coverage("training_job_samples", job_id),
     )
 
 
@@ -2969,6 +3081,7 @@ def validation_run_detail(request: Request, run_id: int, generation_error: str |
         report_path=None,
         generation_error=generation_error,
         running_generation=current_running_validation_generation(),
+        validation_embedding_coverage=embedding_coverage("validation_run", run_id),
     )
 
 
@@ -2997,6 +3110,7 @@ def validation_run_export_report(request: Request, run_id: int) -> HTMLResponse:
         rubric_options=rubric_options(),
         apply_result=None,
         report_path=report_path,
+        validation_embedding_coverage=embedding_coverage("validation_run", run_id),
     )
 
 
@@ -3025,6 +3139,7 @@ def validation_run_apply_to_profile(request: Request, run_id: int) -> HTMLRespon
         rubric_options=rubric_options(),
         apply_result=apply_result,
         report_path=None,
+        validation_embedding_coverage=embedding_coverage("validation_run", run_id),
     )
 
 
@@ -3629,6 +3744,7 @@ def reference_set_detail(request: Request, set_id: int) -> HTMLResponse:
         **detail,
         dataset_versions=dataset_versions,
         default_project_path=str(settings.ROOT_DIR),
+        reference_embedding_coverage=embedding_coverage("reference_set_version", detail["reference_set"]["current_version_id"]) if detail["reference_set"]["current_version_id"] else None,
     )
 
 
@@ -3744,6 +3860,7 @@ def reference_set_export(request: Request, set_id: int) -> HTMLResponse:
         dataset_versions=[],
         default_project_path=str(settings.ROOT_DIR),
         export_paths=paths,
+        reference_embedding_coverage=embedding_coverage("reference_set_version", detail["reference_set"]["current_version_id"]) if detail["reference_set"]["current_version_id"] else None,
     )
 
 

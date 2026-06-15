@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased - Phase 11.2
+
+- Embedding Cache / Feature Extraction Foundationを追加しました。
+- `embedding_models`、`embedding_settings`、`image_embeddings`、`embedding_jobs`、`embedding_job_items` を追加しました。
+- テスト用の `mock_image_512` providerをseed登録し、外部モデルなしでDataset / Reference / Sample / Validation画像のembeddingを計算できるようにしました。
+- embedding workerを `python -m app.services.embedding_worker --embedding-job-id <id>` で実行できるようにし、embedding本体は `.npy` として `data/embeddings/` に保存します。
+- Dataset詳細、Reference Set詳細、学習ジョブ詳細、Validation Run詳細にEmbedding Coverageを表示しました。
+- Embedding設定画面でactive model、provider preflight、cache size、job一覧を確認できるようにしました。
+- Maintenance / StorageにEmbedding cacheの容量表示とcleanup previewを追加しました。
+- Phase11.2ではreference similarity、prompt alignment、aesthetic score、overfit risk、Machine Review Assist採点、ChatGPT API連携、AI画像評価はまだ実装していません。
+
 ## Unreleased - Phase 11.1
 
 - Reference Set / Reference Version管理を追加しました。

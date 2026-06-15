@@ -53,6 +53,40 @@
   </div>
 </section>
 
+{% if reference_embedding_coverage %}
+<section class="notice embedding-coverage">
+  <h2>Reference Embedding Coverage</h2>
+  <p>対象Reference Version: #{{ reference_set.current_version_id }} / モデル: {{ reference_embedding_coverage.model_name }}</p>
+  <div class="summary-grid">
+    <div><span>画像</span><strong>{{ reference_embedding_coverage.total }}</strong></div>
+    <div><span>ready</span><strong>{{ reference_embedding_coverage.ready }}</strong></div>
+    <div><span>stale</span><strong>{{ reference_embedding_coverage.stale }}</strong></div>
+    <div><span>failed</span><strong>{{ reference_embedding_coverage.failed }}</strong></div>
+    <div><span>missing</span><strong>{{ reference_embedding_coverage.missing }}</strong></div>
+    <div><span>未計算</span><strong>{{ reference_embedding_coverage.not_computed }}</strong></div>
+  </div>
+  {% if reference_set.completeness_label == 'ERROR' %}
+  <p class="warning">Reference Set is incomplete. Embeddings can be computed, but Machine Review Assist may be unreliable.</p>
+  {% endif %}
+  <div class="actions compact-actions">
+    <form method="post" action="/embeddings/jobs">
+      <input type="hidden" name="job_type" value="reference_set_version">
+      <input type="hidden" name="target_id" value="{{ reference_set.current_version_id }}">
+      <input type="hidden" name="recompute" value="missing">
+      <input type="hidden" name="return_to" value="/reference-sets/{{ reference_set.id }}">
+      <button type="submit">Reference Embeddingを計算</button>
+    </form>
+    <form method="post" action="/embeddings/jobs">
+      <input type="hidden" name="job_type" value="reference_set_version">
+      <input type="hidden" name="target_id" value="{{ reference_set.current_version_id }}">
+      <input type="hidden" name="recompute" value="stale">
+      <input type="hidden" name="return_to" value="/reference-sets/{{ reference_set.id }}">
+      <button type="submit">Staleのみ再計算</button>
+    </form>
+  </div>
+</section>
+{% endif %}
+
 <section>
   <h2>画像を追加</h2>
   <form method="post" action="/reference-sets/{{ reference_set.id }}/images" class="form-grid">

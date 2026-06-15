@@ -46,6 +46,7 @@ Screenshots are captured from sanitized English demo views for OSS submission. L
 - 学習ジョブの作成、ファイル準備、実行、停止、ログ保存、成果物取り込み
 - loss / metrics取り込み、step整合性確認、epoch別サンプル比較
 - 採用LoRA選択、LoRA Library、Validation Run、Reference Set / Reference Version、評価ルーブリック
+- Embedding Cache基盤、mock provider、Dataset / Reference / Sample / Validation画像のembedding coverage
 - sd-scripts `gen_img.py` によるValidation画像生成
 - 次回実験提案、Storage cleanup、Archive / Delete、Diagnostics / Backup
 - 確認済みsd-scriptsバージョン `v0.10.5` の環境構築スクリプト
@@ -451,6 +452,20 @@ Reference SetにはVersionがあります。既存のReference Setは初回migra
 Completenessは、画像数と役割の偏りを確認する補助表示です。Characterでは顔正面・上半身・全身、Styleでは寄り・上半身・全身・背景などの役割を見ます。`OK` は最低限の役割が揃っているという意味で、品質評価や採用判断ではありません。
 
 リファレンスセット詳細では、データセット候補から画像を追加したり、外部画像を管理ディレクトリへコピーして登録できます。Contact Sheet HTMLとMarkdown Reportは `exports/reference_sets/reference_set_xxxxxx/` に出力されます。
+
+### Embedding Cache
+
+Embedding Cacheは、Dataset、Reference、Sample、Validation画像をCLIP等の特徴ベクトルへ変換し、後から類似度計算やMachine Review Assistに使うためのキャッシュです。Phase11.2では、embeddingの計算、`.npy` 保存、stale / missing / failed管理、coverage表示までを実装しています。自動採点、reference similarity、prompt alignment、aesthetic score、overfit riskはまだ行いません。
+
+Providerは差し替え可能な設計です。
+
+- `mock`: テスト用の決定論的provider。画像hashから512次元の疑似ベクトルを作り、外部モデルやdownloadは不要です。
+- `open_clip`: 任意provider。依存が未導入の場合はWARNING表示になります。
+- `transformers_clip`: 任意provider。依存が未導入の場合はWARNING表示になります。
+
+Embedding設定は `Embedding設定` 画面で管理します。初期値は `mock_image_512`、cache rootは `data/embeddings`、自動downloadはOFFです。実モデルproviderは初回モデルdownloadやGPU/VRAMを使う可能性があるため、trainingやsd-scripts画像生成と同時にGPU embeddingを動かさない運用を推奨します。
+
+推奨運用は、Reference Setを整備し、Reference Embeddings、Dataset Embeddings、Sample / Validation Embeddingsの順に計算しておくことです。Phase11.3以降では、このcacheを使ってreference similarity、prompt alignment、overfit risk、stability score、Machine Review Assistへ進む予定です。
 
 ## 提案エンジンと次回実験提案
 

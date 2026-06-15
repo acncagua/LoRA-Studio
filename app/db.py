@@ -57,6 +57,7 @@ def init_db() -> None:
         seed_sample_prompt_templates(conn)
         seed_evaluation_rubrics(conn)
         seed_validation_presets(conn)
+        seed_embedding_models(conn)
         import_latest_environment(conn)
     from app.services.validation_runs import backfill_validation_runs
 
@@ -381,6 +382,14 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             ON reference_images(reference_set_version_id);
         CREATE INDEX IF NOT EXISTS idx_reference_set_versions_set
             ON reference_set_versions(reference_set_id);
+        CREATE INDEX IF NOT EXISTS idx_image_embeddings_source
+            ON image_embeddings(source_type, source_id, embedding_model_id);
+        CREATE INDEX IF NOT EXISTS idx_image_embeddings_status
+            ON image_embeddings(status);
+        CREATE INDEX IF NOT EXISTS idx_embedding_jobs_status
+            ON embedding_jobs(status);
+        CREATE INDEX IF NOT EXISTS idx_embedding_job_items_job
+            ON embedding_job_items(embedding_job_id);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_selected_lora_profiles_job_output
             ON selected_lora_profiles(job_id, selected_output_id);
         CREATE INDEX IF NOT EXISTS idx_selected_lora_profiles_project
@@ -888,6 +897,114 @@ def seed_validation_presets(conn: sqlite3.Connection) -> None:
                 now,
                 row["memo"],
             ),
+        )
+
+
+def seed_embedding_models(conn: sqlite3.Connection) -> None:
+    now = utc_now()
+    rows = [
+        {
+            "id": "mock_image_512",
+            "name": "Mock Image 512",
+            "provider": "mock",
+            "model_name": "mock_image_512",
+            "pretrained": "",
+            "embedding_type": "image",
+            "vector_dim": 512,
+            "normalize": 1,
+            "device_default": "cpu",
+            "dtype_default": "fp32",
+            "batch_size_default": 8,
+            "allow_download": 0,
+            "memo": "テスト用の決定論的な疑似embedding。外部モデルやdownloadは不要です。",
+        },
+        {
+            "id": "open_clip_vit_b32",
+            "name": "OpenCLIP ViT-B-32",
+            "provider": "open_clip",
+            "model_name": "ViT-B-32",
+            "pretrained": "openai",
+            "embedding_type": "image",
+            "vector_dim": None,
+            "normalize": 1,
+            "device_default": "auto",
+            "dtype_default": "fp32",
+            "batch_size_default": 4,
+            "allow_download": 0,
+            "memo": "任意provider。open_clipが未導入の場合はWARNING表示になります。",
+        },
+        {
+            "id": "transformers_clip_vit_base_patch32",
+            "name": "Transformers CLIP ViT-B/32",
+            "provider": "transformers_clip",
+            "model_name": "openai/clip-vit-base-patch32",
+            "pretrained": "",
+            "embedding_type": "image",
+            "vector_dim": None,
+            "normalize": 1,
+            "device_default": "auto",
+            "dtype_default": "fp32",
+            "batch_size_default": 4,
+            "allow_download": 0,
+            "memo": "任意provider。transformersが未導入の場合はWARNING表示になります。",
+        },
+    ]
+    for row in rows:
+        conn.execute(
+            """
+            INSERT INTO embedding_models(
+                id, name, provider, model_name, pretrained, embedding_type,
+                vector_dim, normalize, device_default, dtype_default,
+                batch_size_default, allow_download, is_builtin, is_active,
+                created_at, updated_at, memo
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                provider = excluded.provider,
+                model_name = excluded.model_name,
+                pretrained = excluded.pretrained,
+                embedding_type = excluded.embedding_type,
+                vector_dim = COALESCE(embedding_models.vector_dim, excluded.vector_dim),
+                normalize = excluded.normalize,
+                device_default = excluded.device_default,
+                dtype_default = excluded.dtype_default,
+                batch_size_default = excluded.batch_size_default,
+                allow_download = excluded.allow_download,
+                is_builtin = excluded.is_builtin,
+                updated_at = excluded.updated_at,
+                memo = excluded.memo
+            """,
+            (
+                row["id"],
+                row["name"],
+                row["provider"],
+                row["model_name"],
+                row["pretrained"],
+                row["embedding_type"],
+                row["vector_dim"],
+                row["normalize"],
+                row["device_default"],
+                row["dtype_default"],
+                row["batch_size_default"],
+                row["allow_download"],
+                now,
+                now,
+                row["memo"],
+            ),
+        )
+    existing = conn.execute("SELECT id FROM embedding_settings ORDER BY id LIMIT 1").fetchone()
+    if existing is None:
+        conn.execute(
+            """
+            INSERT INTO embedding_settings(
+                active_embedding_model_id, python_path, device, dtype, batch_size,
+                cache_root, allow_model_download, max_image_size, num_workers,
+                created_at, updated_at
+            )
+            VALUES ('mock_image_512', '', 'auto', 'fp32', 8, ?, 0, 1024, 1, ?, ?)
+            """,
+            (str(settings.EMBEDDINGS_DIR), now, now),
         )
 
 
@@ -1596,6 +1713,51 @@ CREATE TABLE IF NOT EXISTS reference_images (
     width INTEGER, height INTEGER, file_size INTEGER, sha256 TEXT,
     include_in_machine_review INTEGER NOT NULL DEFAULT 1, exclude_reason TEXT,
     sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT, memo TEXT
+);
+CREATE TABLE IF NOT EXISTS embedding_models (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, provider TEXT NOT NULL,
+    model_name TEXT, pretrained TEXT, embedding_type TEXT NOT NULL DEFAULT 'image',
+    vector_dim INTEGER, normalize INTEGER NOT NULL DEFAULT 1,
+    device_default TEXT NOT NULL DEFAULT 'auto', dtype_default TEXT NOT NULL DEFAULT 'fp32',
+    batch_size_default INTEGER NOT NULL DEFAULT 8, allow_download INTEGER NOT NULL DEFAULT 0,
+    is_builtin INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, memo TEXT
+);
+CREATE TABLE IF NOT EXISTS embedding_settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, active_embedding_model_id TEXT,
+    python_path TEXT, device TEXT NOT NULL DEFAULT 'auto', dtype TEXT NOT NULL DEFAULT 'fp32',
+    batch_size INTEGER NOT NULL DEFAULT 8, cache_root TEXT NOT NULL,
+    allow_model_download INTEGER NOT NULL DEFAULT 0, max_image_size INTEGER NOT NULL DEFAULT 1024,
+    num_workers INTEGER NOT NULL DEFAULT 1, last_preflight_status TEXT,
+    last_preflight_message TEXT, last_preflight_json TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS image_embeddings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, source_type TEXT NOT NULL,
+    source_id INTEGER, source_path TEXT NOT NULL, project_id INTEGER,
+    dataset_id INTEGER, dataset_version_id INTEGER, reference_set_id INTEGER,
+    reference_set_version_id INTEGER, job_id INTEGER, validation_run_id INTEGER,
+    embedding_model_id TEXT NOT NULL, provider TEXT, model_name TEXT,
+    embedding_type TEXT NOT NULL DEFAULT 'image', vector_dim INTEGER,
+    normalized INTEGER NOT NULL DEFAULT 1, embedding_path TEXT,
+    image_sha256 TEXT, image_file_size INTEGER, image_mtime REAL,
+    width INTEGER, height INTEGER, status TEXT NOT NULL DEFAULT 'ready',
+    error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS embedding_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, job_type TEXT NOT NULL, target_id INTEGER,
+    embedding_model_id TEXT, provider TEXT, status TEXT NOT NULL DEFAULT 'planned',
+    total_count INTEGER NOT NULL DEFAULT 0, processed_count INTEGER NOT NULL DEFAULT 0,
+    ready_count INTEGER NOT NULL DEFAULT 0, failed_count INTEGER NOT NULL DEFAULT 0,
+    skipped_count INTEGER NOT NULL DEFAULT 0, log_path TEXT, process_id INTEGER,
+    started_at TEXT, ended_at TEXT, elapsed_seconds INTEGER, return_code INTEGER,
+    error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS embedding_job_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, embedding_job_id INTEGER NOT NULL,
+    source_type TEXT NOT NULL, source_id INTEGER, source_path TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending', embedding_id INTEGER,
+    error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS recommendation_rules (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, recommendation_type TEXT NOT NULL,

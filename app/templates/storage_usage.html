@@ -11,6 +11,16 @@
 <p class="notice warning">{{ storage.onedrive_warning }}</p>
 {% endif %}
 
+<section class="notice">
+  <h2>Embedding Cache</h2>
+  <dl>
+    <dt>Total</dt><dd>{{ format_bytes(storage.embedding_cache.total) }}</dd>
+    {% for key, size in storage.embedding_cache.by_model.items() %}
+    <dt>{{ key }}</dt><dd>{{ format_bytes(size) }}</dd>
+    {% endfor %}
+  </dl>
+</section>
+
 <section class="panel-grid">
   <div>
     <h2>全体</h2>

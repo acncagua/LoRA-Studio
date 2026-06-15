@@ -93,6 +93,37 @@
 </section>
 {% endif %}
 
+{% if validation_embedding_coverage %}
+<section class="notice embedding-coverage">
+  <h2>Validation Image Embedding Coverage</h2>
+  <p>モデル: {{ validation_embedding_coverage.model_name }}</p>
+  <div class="summary-grid">
+    <div><span>登録画像</span><strong>{{ validation_embedding_coverage.total }}</strong></div>
+    <div><span>ready</span><strong>{{ validation_embedding_coverage.ready }}</strong></div>
+    <div><span>stale</span><strong>{{ validation_embedding_coverage.stale }}</strong></div>
+    <div><span>failed</span><strong>{{ validation_embedding_coverage.failed }}</strong></div>
+    <div><span>missing</span><strong>{{ validation_embedding_coverage.missing }}</strong></div>
+    <div><span>未計算</span><strong>{{ validation_embedding_coverage.not_computed }}</strong></div>
+  </div>
+  <div class="actions compact-actions">
+    <form method="post" action="/embeddings/jobs">
+      <input type="hidden" name="job_type" value="validation_run">
+      <input type="hidden" name="target_id" value="{{ run.id }}">
+      <input type="hidden" name="recompute" value="missing">
+      <input type="hidden" name="return_to" value="/validation-runs/{{ run.id }}">
+      <button type="submit">Validation Embeddingを計算</button>
+    </form>
+    <form method="post" action="/embeddings/jobs">
+      <input type="hidden" name="job_type" value="validation_run">
+      <input type="hidden" name="target_id" value="{{ run.id }}">
+      <input type="hidden" name="recompute" value="stale">
+      <input type="hidden" name="return_to" value="/validation-runs/{{ run.id }}">
+      <button type="submit">Staleのみ再計算</button>
+    </form>
+  </div>
+</section>
+{% endif %}
+
 <nav class="validation-tabs" aria-label="検証Runページ内ナビ">
   <a href="#overview">概要</a>
   <a href="#images">画像確認</a>

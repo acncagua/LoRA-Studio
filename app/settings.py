@@ -14,9 +14,10 @@ SD_SCRIPTS_DIR = EXTERNAL_DIR / "sd-scripts"
 RUNS_DIR = ROOT_DIR / "runs"
 LOGS_DIR = ROOT_DIR / "logs"
 EXPORTS_DIR = ROOT_DIR / "exports"
+EMBEDDINGS_DIR = DATA_DIR / "embeddings"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8768
 
-for directory in (DATA_DIR, DATASETS_DIR, EXTERNAL_DIR, RUNS_DIR, LOGS_DIR, EXPORTS_DIR):
+for directory in (DATA_DIR, DATASETS_DIR, EXTERNAL_DIR, RUNS_DIR, LOGS_DIR, EXPORTS_DIR, EMBEDDINGS_DIR):
     directory.mkdir(parents=True, exist_ok=True)
