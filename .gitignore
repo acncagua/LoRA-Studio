@@ -14,6 +14,7 @@ datasets/*
 logs/*.log
 logs/*.json
 logs/embeddings/
+logs/machine_review/
 server*.log
 runs/job_*/
 runs/comparisons/
