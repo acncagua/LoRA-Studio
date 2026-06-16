@@ -687,6 +687,36 @@ def readiness_label(coverage: dict[str, Any] | None) -> str:
     return "missing"
 
 
+def reference_role_distribution(reference_set_version_id: int | None) -> dict[str, Any]:
+    expected_roles = ["face_front", "upper_body", "full_body", "expression"]
+    if not reference_set_version_id:
+        return {"roles": {}, "missing_roles": expected_roles, "dominant_role": None, "dominant_rate": 0}
+    rows = fetch_all(
+        """
+        SELECT image_role, COUNT(*) AS count
+        FROM reference_images
+        WHERE reference_set_version_id = ?
+          AND COALESCE(include_in_machine_review, 1) = 1
+        GROUP BY image_role
+        ORDER BY image_role
+        """,
+        (reference_set_version_id,),
+    )
+    roles = {row["image_role"] or "unknown": int(row["count"] or 0) for row in rows}
+    total = sum(roles.values())
+    dominant_role = None
+    dominant_rate = 0.0
+    if roles and total:
+        dominant_role, dominant_count = sorted(roles.items(), key=lambda item: (-item[1], item[0]))[0]
+        dominant_rate = dominant_count / total
+    return {
+        "roles": roles,
+        "missing_roles": [role for role in expected_roles if roles.get(role, 0) == 0],
+        "dominant_role": dominant_role,
+        "dominant_rate": dominant_rate,
+    }
+
+
 def machine_review_readiness(target_type: str, target_id: int) -> dict[str, Any]:
     context, model = machine_review_context(target_type, target_id)
     model_id = model.get("id") or "mock_image_512"
@@ -705,6 +735,7 @@ def machine_review_readiness(target_type: str, target_id: int) -> dict[str, Any]
     reference_set = fetch_one("SELECT * FROM reference_sets WHERE id = ?", (context["reference_set_id"],)) if context.get("reference_set_id") else None
     reference_version = fetch_one("SELECT * FROM reference_set_versions WHERE id = ?", (reference_version_id,)) if reference_version_id else None
     reference_count = int(reference_coverage.get("total", 0) if reference_coverage else 0)
+    role_distribution = reference_role_distribution(int(reference_version_id)) if reference_version_id else reference_role_distribution(None)
 
     warnings: list[str] = []
     actions: list[str] = []
@@ -715,6 +746,10 @@ def machine_review_readiness(target_type: str, target_id: int) -> dict[str, Any]
     elif reference_count < int(load_machine_review_settings().get("minimum_reference_images_character") or 3):
         warnings.append("Reference Setの枚数が少ないため、機械補助レビューは低信頼になります。")
         actions.append("可能ならReference Setを増やしてください。")
+    if role_distribution["missing_roles"]:
+        warnings.append("Reference Setのroleが不足しています: " + ", ".join(role_distribution["missing_roles"]))
+    if role_distribution["dominant_rate"] >= 0.75 and reference_count >= 3:
+        warnings.append(f"Reference Setが {role_distribution['dominant_role']} に偏っています。顔・上半身・全身・表情を分散すると補助判定が安定します。")
     if readiness_label(reference_coverage) != "ok":
         actions.append("Reference画像Embeddingを計算してください。")
     if readiness_label(dataset_coverage) != "ok":
@@ -736,6 +771,7 @@ def machine_review_readiness(target_type: str, target_id: int) -> dict[str, Any]
         "reference_set": dict(reference_set) if reference_set else None,
         "reference_version": dict(reference_version) if reference_version else None,
         "reference_count": reference_count,
+        "reference_role_distribution": role_distribution,
         "reference_coverage": reference_coverage,
         "dataset_coverage": dataset_coverage,
         "target_coverage": target_coverage,
@@ -777,14 +813,20 @@ def epoch_machine_summary(job_id: int) -> dict[int, dict[str, Any]]:
     for epoch, items in by_epoch.items():
         ref_values = [r["reference_similarity_max"] for r in items if r["reference_similarity_max"] is not None]
         ds_values = [r["nearest_dataset_similarity"] for r in items if r["nearest_dataset_similarity"] is not None]
+        margins = [r["dataset_top1_margin"] for r in items if r.get("dataset_top1_margin") is not None]
         labels = [r["assist_label"] for r in items if r.get("assist_label")]
         confidences = [r["confidence_label"] for r in items if r.get("confidence_label")]
+        nearest_ids = [r["nearest_dataset_image_id"] for r in items if r.get("nearest_dataset_image_id") is not None]
         result[epoch] = {
             "epoch": epoch,
             "count": len(items),
             "reference_similarity_max": max(ref_values) if ref_values else None,
             "reference_similarity_avg": sum(ref_values) / len(ref_values) if ref_values else None,
             "nearest_dataset_similarity": max(ds_values) if ds_values else None,
+            "nearest_dataset_similarity_avg": sum(ds_values) / len(ds_values) if ds_values else None,
+            "dataset_top1_margin_avg": sum(margins) / len(margins) if margins else None,
+            "nearest_dataset_top_id": most_common([str(value) for value in nearest_ids]),
+            "nearest_dataset_top_count": max([nearest_ids.count(value) for value in set(nearest_ids)], default=0),
             "assist_label": most_common(labels) or "unavailable",
             "confidence_label": most_common(confidences) or "unavailable",
             "overfit_risk_label": most_common([r["overfit_risk_label"] for r in items if r.get("overfit_risk_label")]) or "unknown",

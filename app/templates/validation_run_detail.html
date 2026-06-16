@@ -131,6 +131,7 @@
   <div class="summary-grid">
     <div><span>provider</span><strong>{{ machine_review_readiness.provider }}</strong></div>
     <div><span>Reference枚数</span><strong>{{ machine_review_readiness.reference_count }}</strong></div>
+    <div><span>Reference role</span><strong>{% for role, count in machine_review_readiness.reference_role_distribution.roles.items() %}{{ role }}:{{ count }}{% if not loop.last %}, {% endif %}{% else %}-{% endfor %}</strong></div>
     <div><span>Reference Embedding</span><strong>{{ machine_review_readiness.reference_coverage.ready if machine_review_readiness.reference_coverage else 0 }} / {{ machine_review_readiness.reference_coverage.total if machine_review_readiness.reference_coverage else 0 }}</strong></div>
     <div><span>Dataset Embedding</span><strong>{{ machine_review_readiness.dataset_coverage.ready if machine_review_readiness.dataset_coverage else 0 }} / {{ machine_review_readiness.dataset_coverage.total if machine_review_readiness.dataset_coverage else 0 }}</strong></div>
     <div><span>{{ machine_review_readiness.target_label }}Embedding</span><strong>{{ machine_review_readiness.target_coverage.ready if machine_review_readiness.target_coverage else 0 }} / {{ machine_review_readiness.target_coverage.total if machine_review_readiness.target_coverage else 0 }}</strong></div>
@@ -185,6 +186,7 @@
 <section id="machine-assist" class="notice">
   <h2>機械補助レビュー</h2>
   <p>機械補助判定は参考情報です。最終判断は人間評価を優先してください。mock providerのスコアは意味的な画像評価ではありません。Hiresあり結果は強いパラメータ提案には使わないでください。</p>
+  <p>transformers CLIP ViT-B/32は画像全体の意味・構図・雰囲気を見やすい一方、細かい顔特徴や衣装差分の専用判定ではありません。Quick/StandardのHiresなし結果をまず見て、Hiresありは最終見栄え確認として扱ってください。</p>
   <p class="muted">Reference類似度は、検証画像がリファレンス画像にどれだけ近いかの参考値です。大きいほどReferenceに近く、小さい値やマイナス値はReferenceから遠い可能性を示します。Dataset近傍類似度は、学習元画像のどれかに近すぎないかを見る参考値です。高い値で、かつ1枚だけ突出して近い場合は、過学習や構図固定の疑いがあります。</p>
   <div class="actions compact-actions">
     <form method="post" action="/machine-review/jobs">

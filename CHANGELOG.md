@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased - Phase 11.4.1
+
+- transformers_clip Machine Review Calibrationとして、Reference role分布、epoch別Dataset近傍傾向、CLIP ViT-B/32の読み方に関する注意文言を追加しました。
+- Job #12向けCalibration Reportを `runs/job_000012/reports/machine_review_calibration_job_000012.md` に出力しました。
+- Machine Assistは人間評価を置き換えず、顔専用判定ではないことをREADMEとUIで明確化しました。
+
 ## Unreleased - Phase 11.4
 
 - 実embedding providerの初回実装として `transformers_clip` を追加しました。

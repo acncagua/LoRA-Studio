@@ -366,6 +366,7 @@
   <div class="summary-grid">
     <div><span>provider</span><strong>{{ machine_review_readiness.provider }}</strong></div>
     <div><span>Reference枚数</span><strong>{{ machine_review_readiness.reference_count }}</strong></div>
+    <div><span>Reference role</span><strong>{% for role, count in machine_review_readiness.reference_role_distribution.roles.items() %}{{ role }}:{{ count }}{% if not loop.last %}, {% endif %}{% else %}-{% endfor %}</strong></div>
     <div><span>Reference Embedding</span><strong>{{ machine_review_readiness.reference_coverage.ready if machine_review_readiness.reference_coverage else 0 }} / {{ machine_review_readiness.reference_coverage.total if machine_review_readiness.reference_coverage else 0 }}</strong></div>
     <div><span>Dataset Embedding</span><strong>{{ machine_review_readiness.dataset_coverage.ready if machine_review_readiness.dataset_coverage else 0 }} / {{ machine_review_readiness.dataset_coverage.total if machine_review_readiness.dataset_coverage else 0 }}</strong></div>
     <div><span>{{ machine_review_readiness.target_label }}Embedding</span><strong>{{ machine_review_readiness.target_coverage.ready if machine_review_readiness.target_coverage else 0 }} / {{ machine_review_readiness.target_coverage.total if machine_review_readiness.target_coverage else 0 }}</strong></div>
@@ -419,7 +420,8 @@
 <section id="machine-assist" class="notice">
   <h2>機械補助レビュー</h2>
   <p>機械補助判定は参考情報です。最終判断は人間評価を優先してください。mock providerのスコアは意味的な画像評価ではありません。</p>
-  <p>Reference Setが1枚だけの場合、判定が偏る可能性があります。機械補助レビューだけで採用epochを自動決定しません。</p>
+  <p>transformers CLIP ViT-B/32は画像全体の意味・構図・雰囲気を見やすい一方、細かい顔特徴や衣装差分の専用判定ではありません。full body画像では顔類似度として過信せず、顔・上半身・全身・表情などReference roleの分散を確認してください。</p>
+  <p>Reference Setが少ない、またはroleが偏っている場合、判定が偏る可能性があります。機械補助レビューだけで採用epochを自動決定しません。</p>
   <p class="muted">Reference類似度はリファレンス画像への近さ、Dataset近傍は学習元画像への近さです。Referenceが高いほど基準画像に近く、Dataset近傍が高すぎる場合は過学習や元画像への寄りすぎを疑います。</p>
   <div class="actions compact-actions">
     <form method="post" action="/machine-review/jobs">
@@ -430,20 +432,23 @@
     </form>
   </div>
   <table>
-    <thead><tr><th>Epoch</th><th>件数</th><th>Reference最大</th><th>Dataset近傍</th><th>過学習リスク</th><th>補助判定</th><th>信頼度</th></tr></thead>
+    <thead><tr><th>Epoch</th><th>件数</th><th>Reference平均</th><th>Reference最大</th><th>Dataset近傍平均</th><th>Top Dataset</th><th>Top1差分</th><th>過学習リスク</th><th>補助判定</th><th>信頼度</th></tr></thead>
     <tbody>
       {% for epoch, score in machine_epoch_summary.items() %}
       <tr>
         <td>{{ epoch }}</td>
         <td>{{ score.count }}</td>
+        <td>{{ '%.4f'|format(score.reference_similarity_avg) if score.reference_similarity_avg is not none else '-' }}</td>
         <td>{{ '%.4f'|format(score.reference_similarity_max) if score.reference_similarity_max is not none else '-' }}</td>
-        <td>{{ '%.4f'|format(score.nearest_dataset_similarity) if score.nearest_dataset_similarity is not none else '-' }}</td>
+        <td>{{ '%.4f'|format(score.nearest_dataset_similarity_avg) if score.nearest_dataset_similarity_avg is not none else '-' }}</td>
+        <td>{% if score.nearest_dataset_top_id %}#{{ score.nearest_dataset_top_id }} / {{ score.nearest_dataset_top_count }}件{% else %}-{% endif %}</td>
+        <td>{{ '%.4f'|format(score.dataset_top1_margin_avg) if score.dataset_top1_margin_avg is not none else '-' }}</td>
         <td><span class="label {{ score.overfit_risk_label }}">{{ display_machine_label(score.overfit_risk_label) }}</span></td>
         <td><span class="label {{ score.assist_label }}">{{ display_machine_label(score.assist_label) }}</span></td>
         <td><span class="label {{ score.confidence_label }}">{{ display_machine_label(score.confidence_label) }}</span></td>
       </tr>
       {% else %}
-      <tr><td colspan="7" class="muted">機械補助レビューはまだ実行されていません。</td></tr>
+      <tr><td colspan="10" class="muted">機械補助レビューはまだ実行されていません。</td></tr>
       {% endfor %}
     </tbody>
   </table>
