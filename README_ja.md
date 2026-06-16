@@ -1,8 +1,36 @@
 ﻿# LoRA-Studio
 
-Stable Diffusion系LoRA、特にSDXL/SD1.5の2Dキャラクター顔LoRA学習をローカルで管理するための支援ツールです。Phase10系の運用ベータでは自動最適化ではなく、学習実験の作成、実行準備、ログ、loss健全性、サンプル画像比較、採用epoch判断、Validation、次回実験提案を一元管理することを目的にします。
+Stable Diffusion系LoRA、特にSDXL/SD1.5の2DキャラクターLoRA学習をローカルで管理するための支援ツールです。自動最適化ではなく、学習実験の作成、実行準備、ログ、loss健全性、サンプル画像比較、採用epoch判断、Validation、次回実験提案を一元管理することを目的にします。
+
+実際のSDXL / SD1.5キャラクターLoRA反復制作を前提に、学習そのものより難しくなりがちな再現性、比較、検証、最終採用判断を扱いやすくするために作っています。
 
 現在の運用ベータ記録は `CHANGELOG.md` の `v0.2.0-beta` を参照してください。
+
+## ステータス
+
+現在のフェーズ: Phase 11.x Beta。
+
+中核となるワークフローは動作しており、ローカルでのLoRA制作に実運用しています。ただし、APIや画面導線、運用フローは今後も変更される可能性があります。
+
+## なぜLoRA-Studio?
+
+LoRAを1本学習すること自体は難しくありません。
+
+難しくなるのは、何十本もの実験、Dataset修正、Validation Run、サンプル評価、採用LoRA選定を追い続けることです。
+
+LoRA-Studioは、LoRA制作ライフサイクル全体を1つの流れとして管理するためのツールです。
+
+## 主な機能
+
+- Dataset管理
+- Dataset Version追跡
+- 学習ジョブ管理
+- Validation Run
+- Reference Set
+- 実験比較
+- 採用LoRA選定ワークフロー
+- Machine Review Assist
+- Storage Cleanup支援
 
 ## Screenshots
 
@@ -535,8 +563,6 @@ python -m pytest -q
 
 ## Known Issues
 
-- Codex内ブラウザはWindows sandbox権限で `CreateProcessAsUserW failed: 5` になる場合があります。
-- Codex内ブラウザが使えない場合でも、HTTP画面確認で代替可能です。
 - HiresありValidationは標準比較ではなく、最終見栄え確認用です。
 - 検証ランでregistered数がexpected未満の場合は、提案の信頼度に注意してください。
 - FastAPIの `@app.on_event("startup")` はdeprecated warningが出ます。現時点では動作に影響しませんが、将来の安定化でlifespan handlerへ移行予定です。

@@ -9,9 +9,49 @@ validation runs, experiment tracking,
 and final LoRA selection through a
 unified workflow.
 
+Built around real-world SDXL / SD1.5
+character LoRA iteration workflows,
+where reproducibility, comparison,
+and validation become more difficult
+than training itself.
+
 [日本語 READMEはこちら](README_ja.md)
 
 ---
+
+## Status
+
+Current release: v0.2.0-beta
+Development phase: Phase 11.x
+
+The core workflow is operational and
+actively used for local LoRA production,
+but APIs and workflows may still change.
+
+## Why LoRA-Studio?
+
+Training a LoRA is easy.
+
+Managing dozens of experiments,
+dataset revisions,
+validation runs,
+sample reviews,
+and final model selection is not.
+
+LoRA-Studio provides a unified workflow
+for the entire LoRA lifecycle.
+
+## Key Features
+
+- Dataset Management
+- Dataset Version Tracking
+- Training Job Management
+- Validation Runs
+- Reference Sets
+- Experiment Comparison
+- LoRA Selection Workflow
+- Machine Review Assist
+- Storage Cleanup Support
 
 ## Screenshots
 
