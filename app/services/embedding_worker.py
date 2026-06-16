@@ -377,26 +377,52 @@ def run_embedding_job(job_id: int) -> int:
     vector_dim = int(model["vector_dim"] or 512)
     normalize = bool(model["normalize"])
     max_image_size = int(settings["max_image_size"] or 1024)
+    items = fetch_all("SELECT * FROM embedding_job_items WHERE embedding_job_id = ? ORDER BY id", (job_id,))
     vector_provider: TransformersClipProvider | OpenClipProvider | None = None
-    if provider == "transformers_clip":
-        vector_provider = TransformersClipProvider(dict(model), dict(settings))
-        print(
-            f"transformers_clip ready: model={vector_provider.model_name}, device={vector_provider.device_name}, dtype={vector_provider.dtype_name}, download_allowed={bool(settings['allow_model_download'])}",
-            flush=True,
-        )
-    elif provider == "open_clip":
-        vector_provider = OpenClipProvider(dict(model), dict(settings))
-        print(
-            f"open_clip ready: model={vector_provider.model_name}, pretrained={vector_provider.pretrained}, device={vector_provider.device_name}, dtype={vector_provider.dtype_name}, download_allowed={bool(settings['allow_model_download'])}",
-            flush=True,
-        )
-    elif provider not in {"mock"}:
-        raise RuntimeError(f"provider {provider} は実行未対応です。")
+    try:
+        if provider == "transformers_clip":
+            vector_provider = TransformersClipProvider(dict(model), dict(settings))
+            print(
+                f"transformers_clip ready: model={vector_provider.model_name}, device={vector_provider.device_name}, dtype={vector_provider.dtype_name}, download_allowed={bool(settings['allow_model_download'])}",
+                flush=True,
+            )
+        elif provider == "open_clip":
+            vector_provider = OpenClipProvider(dict(model), dict(settings))
+            print(
+                f"open_clip ready: model={vector_provider.model_name}, pretrained={vector_provider.pretrained}, device={vector_provider.device_name}, dtype={vector_provider.dtype_name}, download_allowed={bool(settings['allow_model_download'])}",
+                flush=True,
+            )
+        elif provider not in {"mock"}:
+            raise RuntimeError(f"provider {provider} は実行未対応です。")
+    except Exception as exc:
+        error_message = str(exc)
+        finished = utc_now()
+        elapsed = int(time.time() - started)
+        print(f"Embedding job #{job_id} failed during provider setup: {error_message}", flush=True)
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE embedding_job_items
+                SET status = 'failed', error_message = ?, updated_at = ?
+                WHERE embedding_job_id = ? AND status IN ('pending', 'planned')
+                """,
+                (error_message, finished, job_id),
+            )
+            conn.execute(
+                """
+                UPDATE embedding_jobs
+                SET status = 'failed', processed_count = total_count, failed_count = total_count,
+                    ended_at = ?, elapsed_seconds = ?, return_code = 1,
+                    updated_at = ?, error_message = ?
+                WHERE id = ?
+                """,
+                (finished, elapsed, finished, error_message, job_id),
+            )
+        return 1
     source_map = {
         (source.source_type, source.source_id, source.source_path): source
         for source in sources_for_job_type(job["job_type"], job["target_id"])
     }
-    items = fetch_all("SELECT * FROM embedding_job_items WHERE embedding_job_id = ? ORDER BY id", (job_id,))
     print(f"Embedding job #{job_id} started: provider={provider}, items={len(items)}", flush=True)
 
     for index, item in enumerate(items, start=1):
