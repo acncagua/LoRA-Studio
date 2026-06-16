@@ -1490,6 +1490,55 @@ class EmbeddingPhase112Tests(IsolatedDbTest):
         result = provider_preflight("mock_image_512")
         self.assertEqual(result["status"], "OK")
 
+    def test_transformers_clip_model_is_seeded_without_implicit_download(self) -> None:
+        from app.services.embedding_service import provider_preflight
+
+        model = fetch_one("SELECT * FROM embedding_models WHERE id = 'transformers_clip_vit_base_patch32'")
+        self.assertIsNotNone(model)
+        self.assertEqual(model["provider"], "transformers_clip")
+        self.assertEqual(model["model_name"], "openai/clip-vit-base-patch32")
+        self.assertEqual(model["vector_dim"], 512)
+        result = provider_preflight("transformers_clip_vit_base_patch32", deep=False)
+        self.assertFalse(result["download_allowed"])
+        self.assertTrue(any(check["name"] == "model download" for check in result["checks"]))
+
+    def test_transformers_clip_device_dtype_resolution(self) -> None:
+        from app.services.embedding_worker import resolve_torch_device_and_dtype
+
+        class FakeCuda:
+            def __init__(self, available: bool) -> None:
+                self.available = available
+
+            def is_available(self) -> bool:
+                return self.available
+
+        class FakeTorch:
+            float32 = "float32"
+            float16 = "float16"
+            bfloat16 = "bfloat16"
+
+            def __init__(self, available: bool) -> None:
+                self.cuda = FakeCuda(available)
+
+            def device(self, name: str) -> str:
+                return name
+
+        device, dtype, device_name, dtype_name = resolve_torch_device_and_dtype(FakeTorch(True), "auto", "fp16")
+        self.assertEqual((device, dtype, device_name, dtype_name), ("cuda", "float16", "cuda", "fp16"))
+        device, dtype, device_name, dtype_name = resolve_torch_device_and_dtype(FakeTorch(False), "cuda", "fp16")
+        self.assertEqual((device, dtype, device_name, dtype_name), ("cpu", "float32", "cpu", "fp32"))
+
+    def test_real_embedding_provider_waits_for_training_or_generation(self) -> None:
+        from app.services.embedding_service import assert_embedding_can_start
+
+        dataset_id, version_id, _ = self.make_dataset_version()
+        job_id = self.make_sample_job(dataset_id, version_id)
+        with connect() as conn:
+            conn.execute("UPDATE training_jobs SET status = 'running' WHERE id = ?", (job_id,))
+        with self.assertRaisesRegex(RuntimeError, "学習ジョブ"):
+            assert_embedding_can_start({"provider": "transformers_clip"})
+        assert_embedding_can_start({"provider": "mock"})
+
     def test_dataset_reference_sample_and_validation_embeddings_are_created(self) -> None:
         from app.services.embedding_service import embedding_coverage
 

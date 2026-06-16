@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -154,7 +155,7 @@ def update_embedding_settings(values: dict[str, Any]) -> None:
             )
 
 
-def provider_preflight(model_id: str | None = None) -> dict[str, Any]:
+def provider_preflight(model_id: str | None = None, deep: bool = True) -> dict[str, Any]:
     model = dict(fetch_one("SELECT * FROM embedding_models WHERE id = ?", (model_id,)) or active_embedding_model())
     settings_row = load_embedding_settings()
     provider = model.get("provider") or "mock"
@@ -167,7 +168,12 @@ def provider_preflight(model_id: str | None = None) -> dict[str, Any]:
     }
 
     python_path = settings_row.get("python_path") or sys.executable
+    try:
+        uses_worker_python = Path(python_path).resolve() != Path(sys.executable).resolve()
+    except OSError:
+        uses_worker_python = bool(settings_row.get("python_path"))
     result["checks"].append({"name": "python_path", "status": "OK" if Path(python_path).exists() else "WARNING", "message": python_path})
+    result["download_allowed"] = bool(settings_row.get("allow_model_download"))
 
     if provider == "mock":
         result["checks"].append({"name": "mock provider", "status": "OK", "message": "外部モデル不要で利用できます。"})
@@ -180,12 +186,89 @@ def provider_preflight(model_id: str | None = None) -> dict[str, Any]:
             result["status"] = "WARNING"
             result["checks"].append({"name": "open_clip import", "status": "WARNING", "message": str(exc)})
     elif provider == "transformers_clip":
-        try:
-            __import__("transformers")
+        transformers_ok = importlib.util.find_spec("transformers") is not None
+        torch_ok = importlib.util.find_spec("torch") is not None
+        if transformers_ok:
             result["checks"].append({"name": "transformers import", "status": "OK", "message": "transformers is importable."})
-        except Exception as exc:
+        elif uses_worker_python:
+            result["checks"].append(
+                {
+                    "name": "transformers import",
+                    "status": "INFO",
+                    "message": "アプリ側Pythonでは未検出です。指定されたworker Pythonで確認します。",
+                }
+            )
+        else:
             result["status"] = "WARNING"
-            result["checks"].append({"name": "transformers import", "status": "WARNING", "message": str(exc)})
+            result["checks"].append({"name": "transformers import", "status": "WARNING", "message": "transformers is not installed."})
+        if torch_ok:
+            requested_device = str(settings_row.get("device") or "auto")
+            requested_dtype = str(settings_row.get("dtype") or "fp32")
+            resolved_device = requested_device
+            resolved_dtype = "fp32" if requested_device == "cpu" else requested_dtype
+            result["checks"].append(
+                {
+                    "name": "torch/device",
+                    "status": "OK",
+                    "message": f"torch is importable. requested_device={requested_device}; requested_dtype={requested_dtype}; cpu実行時はfp32にfallbackします。",
+                }
+            )
+            result["device"] = resolved_device
+            result["dtype"] = resolved_dtype
+        elif uses_worker_python:
+            result["checks"].append(
+                {
+                    "name": "torch import",
+                    "status": "INFO",
+                    "message": "アプリ側Pythonでは未検出です。指定されたworker Pythonで確認します。",
+                }
+            )
+        else:
+            result["status"] = "WARNING"
+            result["checks"].append({"name": "torch import", "status": "WARNING", "message": "torch is not installed."})
+        if not settings_row.get("allow_model_download"):
+            result["checks"].append(
+                {
+                    "name": "model download",
+                    "status": "WARNING" if transformers_ok and not uses_worker_python else "INFO",
+                    "message": "downloadは無効です。openai/clip-vit-base-patch32 がローカルcacheに無い場合、実行時に失敗します。",
+                }
+            )
+            if transformers_ok and not uses_worker_python:
+                result["status"] = "WARNING"
+        else:
+            result["checks"].append({"name": "model download", "status": "OK", "message": "明示的にdownloadが許可されています。"})
+        result["vector_dim"] = int(model.get("vector_dim") or 512)
+        if deep:
+            try:
+                completed = subprocess.run(
+                    [python_path, "-m", "app.services.embedding_worker", "--preflight-model-id", str(model.get("id"))],
+                    cwd=str(settings.ROOT_DIR),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=900,
+                    check=False,
+                )
+                stdout = completed.stdout.strip().splitlines()[-1] if completed.stdout.strip() else "{}"
+                worker_result = json.loads(stdout)
+                result["worker_return_code"] = completed.returncode
+                result["checks"].extend(worker_result.get("checks", []))
+                for key in ("vector_dim", "norm", "device", "dtype"):
+                    if key in worker_result:
+                        result[key] = worker_result[key]
+                if completed.returncode != 0 or worker_result.get("status") == "ERROR":
+                    result["status"] = "ERROR"
+                    if completed.stderr.strip():
+                        result["checks"].append({"name": "worker stderr", "status": "ERROR", "message": completed.stderr.strip()[-1000:]})
+                elif worker_result.get("status") == "OK":
+                    result["status"] = "OK"
+                elif worker_result.get("status") == "WARNING" and result["status"] != "ERROR":
+                    result["status"] = "WARNING"
+            except Exception as exc:
+                result["status"] = "ERROR"
+                result["checks"].append({"name": "worker preflight", "status": "ERROR", "message": str(exc)})
     else:
         result["status"] = "ERROR"
         result["checks"].append({"name": "provider", "status": "ERROR", "message": f"Unknown provider: {provider}"})
@@ -206,6 +289,22 @@ def provider_preflight(model_id: str | None = None) -> dict[str, Any]:
             ),
         )
     return result
+
+
+def provider_requires_gpu_exclusivity(provider: str | None) -> bool:
+    return provider in {"transformers_clip", "open_clip"}
+
+
+def assert_embedding_can_start(model: dict[str, Any]) -> None:
+    provider = model.get("provider") or "mock"
+    if not provider_requires_gpu_exclusivity(provider):
+        return
+    running_training = fetch_one("SELECT id FROM training_jobs WHERE status = 'running' LIMIT 1")
+    running_generation = fetch_one("SELECT id FROM validation_generation_runs WHERE status = 'running' LIMIT 1")
+    if running_training:
+        raise RuntimeError(f"学習ジョブ #{running_training['id']} が実行中です。GPUを使うEmbedding providerは学習完了後に開始してください。")
+    if running_generation:
+        raise RuntimeError(f"検証画像生成 #{running_generation['id']} が実行中です。GPUを使うEmbedding providerは生成完了後に開始してください。")
 
 
 def dataset_image_sources(dataset_version_id: int) -> list[EmbeddingSource]:
@@ -420,6 +519,8 @@ def start_embedding_job(job_id: int) -> None:
         raise RuntimeError("Embedding Jobが見つかりません。")
     if row["status"] not in {"planned", "failed", "stopped"}:
         raise RuntimeError(f"Embedding Job #{job_id} は開始できない状態です: {row['status']}")
+    model = fetch_one("SELECT * FROM embedding_models WHERE id = ?", (row["embedding_model_id"],))
+    assert_embedding_can_start(dict(model) if model else {"provider": row["provider"]})
     python_path = load_embedding_settings().get("python_path") or sys.executable
     argv = [python_path, "-m", "app.services.embedding_worker", "--embedding-job-id", str(job_id)]
     log_path = Path(row["log_path"] or settings.LOGS_DIR / "embeddings" / f"embedding_job_{job_id:06d}.log")

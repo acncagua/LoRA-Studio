@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased - Phase 11.4
+
+- 実embedding providerの初回実装として `transformers_clip` を追加しました。
+- 標準モデルを `openai/clip-vit-base-patch32` とし、512次元の画像embeddingを保存できるようにしました。
+- `allow_model_download=true` の場合のみ `from_pretrained` によるモデルdownloadを許可します。
+- deviceはcuda優先、fallbackでcpu、cpuではdtypeをfp32に固定します。
+- GPU競合を避けるため、学習中または検証画像生成中は実providerのEmbedding Jobを開始しないようにしました。
+- mock providerはCI/テスト用として継続し、OpenCLIP providerはPhase 11.5以降の設計枠として残しています。
+
 ## Unreleased - Phase 11.3
 
 - Reference Similarity Assist / Machine Review Assist初期版を追加しました。

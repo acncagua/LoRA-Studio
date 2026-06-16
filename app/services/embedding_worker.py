@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import sys
 import time
 from pathlib import Path
@@ -33,6 +34,146 @@ def mock_embedding(image_path: Path, vector_dim: int = 512, normalize: bool = Tr
         if norm > 0:
             vector = vector / norm
     return vector
+
+
+def resolve_torch_device_and_dtype(torch_module: Any, requested_device: str, requested_dtype: str) -> tuple[Any, Any, str, str]:
+    """Resolve device/dtype for real embedding providers without forcing CUDA."""
+    requested_device = (requested_device or "auto").lower()
+    requested_dtype = (requested_dtype or "fp32").lower()
+    cuda_available = bool(getattr(torch_module.cuda, "is_available", lambda: False)())
+    if requested_device == "cuda" and not cuda_available:
+        resolved_device = "cpu"
+    elif requested_device == "cuda":
+        resolved_device = "cuda"
+    elif requested_device == "cpu":
+        resolved_device = "cpu"
+    else:
+        resolved_device = "cuda" if cuda_available else "cpu"
+
+    if resolved_device == "cpu":
+        resolved_dtype = "fp32"
+        torch_dtype = getattr(torch_module, "float32")
+    elif requested_dtype == "fp16":
+        resolved_dtype = "fp16"
+        torch_dtype = getattr(torch_module, "float16")
+    elif requested_dtype == "bf16" and hasattr(torch_module, "bfloat16"):
+        resolved_dtype = "bf16"
+        torch_dtype = getattr(torch_module, "bfloat16")
+    else:
+        resolved_dtype = "fp32"
+        torch_dtype = getattr(torch_module, "float32")
+    return torch_module.device(resolved_device), torch_dtype, resolved_device, resolved_dtype
+
+
+class TransformersClipProvider:
+    def __init__(self, model: dict[str, Any], settings: dict[str, Any]) -> None:
+        try:
+            import torch
+            from transformers import CLIPModel, CLIPProcessor
+        except Exception as exc:  # pragma: no cover - depends on optional runtime packages
+            raise RuntimeError(
+                "transformers_clip providerを使うには torch と transformers が必要です。"
+            ) from exc
+
+        self.torch = torch
+        self.normalize = bool(model.get("normalize"))
+        self.device, self.torch_dtype, self.device_name, self.dtype_name = resolve_torch_device_and_dtype(
+            torch,
+            str(settings.get("device") or "auto"),
+            str(settings.get("dtype") or "fp32"),
+        )
+        self.model_name = str(model.get("model_name") or "openai/clip-vit-base-patch32")
+        local_files_only = not bool(settings.get("allow_model_download"))
+        try:
+            self.processor = CLIPProcessor.from_pretrained(self.model_name, local_files_only=local_files_only)
+            self.model = CLIPModel.from_pretrained(
+                self.model_name,
+                local_files_only=local_files_only,
+                torch_dtype=self.torch_dtype,
+            )
+        except Exception as exc:
+            if local_files_only:
+                raise RuntimeError(
+                    f"{self.model_name} がローカルに見つかりません。Embedding設定で allow_model_download=true "
+                    "（モデルdownloadを許可）にしてから再実行してください。"
+                ) from exc
+            raise
+        self.model.to(self.device)
+        self.model.eval()
+
+    def embedding(self, image_path: Path) -> np.ndarray:
+        with Image.open(image_path) as image:
+            image = ImageOps.exif_transpose(image).convert("RGB")
+            return self.embedding_from_image(image)
+
+    def embedding_from_image(self, image: Image.Image) -> np.ndarray:
+        inputs = self.processor(images=image, return_tensors="pt")
+        inputs = {
+            key: value.to(device=self.device, dtype=self.torch_dtype) if getattr(value, "is_floating_point", lambda: False)() else value.to(self.device)
+            for key, value in inputs.items()
+        }
+        with self.torch.no_grad():
+            features = self.model.get_image_features(**inputs)
+        vector = features[0].detach().float().cpu().numpy().astype(np.float32)
+        if self.normalize:
+            norm = float(np.linalg.norm(vector))
+            if norm > 0:
+                vector = vector / norm
+        return vector
+
+
+def run_transformers_clip_preflight(model: dict[str, Any], settings_row: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "provider": "transformers_clip",
+        "model_id": model.get("id"),
+        "model_name": model.get("model_name") or "openai/clip-vit-base-patch32",
+        "status": "OK",
+        "checks": [],
+        "download_allowed": bool(settings_row.get("allow_model_download")),
+    }
+    try:
+        import torch
+        import transformers
+
+        result["checks"].append({"name": "torch import", "status": "OK", "message": f"torch {torch.__version__}"})
+        result["checks"].append({"name": "transformers import", "status": "OK", "message": f"transformers {transformers.__version__}"})
+        device, torch_dtype, device_name, dtype_name = resolve_torch_device_and_dtype(
+            torch,
+            str(settings_row.get("device") or "auto"),
+            str(settings_row.get("dtype") or "fp32"),
+        )
+        cuda_available = bool(torch.cuda.is_available())
+        if device_name == "cpu" and str(settings_row.get("device") or "auto").lower() == "cuda":
+            result["status"] = "WARNING"
+        result["checks"].append(
+            {
+                "name": "device",
+                "status": "OK" if device_name == "cuda" or str(settings_row.get("device") or "auto").lower() != "cuda" else "WARNING",
+                "message": f"cuda_available={cuda_available}; selected_device={device_name}; selected_dtype={dtype_name}",
+            }
+        )
+        provider = TransformersClipProvider(model, settings_row)
+        result["checks"].append({"name": "model load", "status": "OK", "message": provider.model_name})
+        image = Image.new("RGB", (32, 32), color=(128, 128, 128))
+        vector = provider.embedding_from_image(image)
+        norm = float(np.linalg.norm(vector))
+        result["vector_dim"] = int(vector.shape[0])
+        result["norm"] = norm
+        result["device"] = provider.device_name
+        result["dtype"] = provider.dtype_name
+        result["checks"].append(
+            {
+                "name": "dummy image embedding",
+                "status": "OK" if int(vector.shape[0]) == 512 else "WARNING",
+                "message": f"vector_dim={int(vector.shape[0])}; norm={norm:.6f}",
+            }
+        )
+        if int(vector.shape[0]) != 512:
+            result["status"] = "WARNING"
+    except Exception as exc:
+        result["status"] = "ERROR"
+        result["checks"].append({"name": "transformers_clip preflight", "status": "ERROR", "message": str(exc)})
+    return result
 
 
 def load_image_for_validation(path: Path, max_image_size: int) -> None:
@@ -97,6 +238,15 @@ def run_embedding_job(job_id: int) -> int:
     vector_dim = int(model["vector_dim"] or 512)
     normalize = bool(model["normalize"])
     max_image_size = int(settings["max_image_size"] or 1024)
+    vector_provider: TransformersClipProvider | None = None
+    if provider == "transformers_clip":
+        vector_provider = TransformersClipProvider(dict(model), dict(settings))
+        print(
+            f"transformers_clip ready: model={vector_provider.model_name}, device={vector_provider.device_name}, dtype={vector_provider.dtype_name}, download_allowed={bool(settings['allow_model_download'])}",
+            flush=True,
+        )
+    elif provider not in {"mock"}:
+        raise RuntimeError(f"provider {provider} はまだ実行未対応です。OpenCLIP providerはPhase 11.5以降で追加予定です。")
     source_map = {
         (source.source_type, source.source_id, source.source_path): source
         for source in sources_for_job_type(job["job_type"], job["target_id"])
@@ -116,9 +266,12 @@ def run_embedding_job(job_id: int) -> int:
             load_image_for_validation(path, max_image_size)
             metadata = image_metadata(path, max_image_size=max_image_size)
             source = source_from_item(item, source_map)
-            if provider != "mock":
-                raise RuntimeError(f"provider {provider} is configured but not implemented for execution in Phase 11.2")
-            vector = mock_embedding(path, vector_dim=vector_dim, normalize=normalize)
+            if provider == "mock":
+                vector = mock_embedding(path, vector_dim=vector_dim, normalize=normalize)
+            elif provider == "transformers_clip" and vector_provider is not None:
+                vector = vector_provider.embedding(path)
+            else:
+                raise RuntimeError(f"provider {provider} は実行未対応です。")
             metadata["vector_dim"] = int(vector.shape[0])
             target = embedding_cache_path(model["id"], item["source_type"], item["source_id"], item["source_path"])
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -174,11 +327,24 @@ def run_embedding_job(job_id: int) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--embedding-job-id", type=int, required=True)
+    parser.add_argument("--embedding-job-id", type=int)
+    parser.add_argument("--preflight-model-id")
     args = parser.parse_args()
+    if args.preflight_model_id:
+        model = fetch_one("SELECT * FROM embedding_models WHERE id = ?", (args.preflight_model_id,))
+        settings_row = fetch_one("SELECT * FROM embedding_settings ORDER BY id LIMIT 1")
+        if model is None or settings_row is None:
+            print(json.dumps({"status": "ERROR", "checks": [{"name": "db", "status": "ERROR", "message": "model or settings not found"}]}, ensure_ascii=False))
+            return 2
+        if model["provider"] == "transformers_clip":
+            print(json.dumps(run_transformers_clip_preflight(dict(model), dict(settings_row)), ensure_ascii=False))
+            return 0
+        print(json.dumps({"status": "ERROR", "checks": [{"name": "provider", "status": "ERROR", "message": f"unsupported provider: {model['provider']}"}]}, ensure_ascii=False))
+        return 2
+    if args.embedding_job_id is None:
+        parser.error("--embedding-job-id or --preflight-model-id is required")
     return run_embedding_job(args.embedding_job_id)
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

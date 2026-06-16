@@ -968,13 +968,13 @@ def seed_embedding_models(conn: sqlite3.Connection) -> None:
             "model_name": "openai/clip-vit-base-patch32",
             "pretrained": "",
             "embedding_type": "image",
-            "vector_dim": None,
+            "vector_dim": 512,
             "normalize": 1,
             "device_default": "auto",
             "dtype_default": "fp32",
             "batch_size_default": 4,
             "allow_download": 0,
-            "memo": "任意provider。transformersが未導入の場合はWARNING表示になります。",
+            "memo": "Phase 11.4の実provider。標準モデルはopenai/clip-vit-base-patch32です。downloadは明示許可時のみ行います。",
         },
     ]
     for row in rows:

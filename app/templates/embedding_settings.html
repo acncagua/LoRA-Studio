@@ -5,8 +5,9 @@
 </header>
 
 <section class="notice">
-  <p>Embedding Cacheは、画像をCLIP等の特徴ベクトルへ変換して保存する基盤です。Phase 11.2では計算と保存までを行い、自動採点はまだ行いません。</p>
-  <p>Embedding model weights may need to be downloaded. LoRA Studio will not download them automatically unless explicitly enabled.</p>
+  <p>Embedding Cacheは、画像をCLIP等の特徴ベクトルへ変換して保存する基盤です。Phase 11.4では、テスト用mock providerに加えて transformers CLIP provider を利用できます。</p>
+  <p>標準モデルは openai/clip-vit-base-patch32 です。モデルweightのdownloadは、明示的に「モデルdownloadを許可」を有効にした場合だけ行います。</p>
+  <p class="muted">transformers CLIPはcudaを優先し、使えない場合はcpuへfallbackします。cpuではdtypeはfp32として扱います。学習中または検証画像生成中はGPU競合を避けるため開始できません。</p>
 </section>
 
 <section class="notice">
@@ -68,6 +69,7 @@
     <label>Dtype<select name="dtype">
       {% for value in ['fp32', 'fp16', 'bf16'] %}<option value="{{ value }}" {{ 'selected' if embedding_settings.dtype == value else '' }}>{{ value }}</option>{% endfor %}
     </select></label>
+    <p class="muted">fp16はcuda実行時のみ使います。cpuへfallbackした場合はfp32になります。</p>
     <label>Batch Size<input type="number" name="batch_size" value="{{ embedding_settings.batch_size or 8 }}" min="1"></label>
     <label>Cache Root<input name="cache_root" value="{{ embedding_settings.cache_root }}"></label>
     <label>Max Image Size<input type="number" name="max_image_size" value="{{ embedding_settings.max_image_size or 1024 }}" min="256"></label>
