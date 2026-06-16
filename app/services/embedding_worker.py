@@ -122,6 +122,82 @@ class TransformersClipProvider:
         return vector
 
 
+class OpenClipProvider:
+    def __init__(self, model: dict[str, Any], settings: dict[str, Any]) -> None:
+        try:
+            import torch
+            import open_clip
+        except Exception as exc:  # pragma: no cover - depends on optional runtime packages
+            raise RuntimeError(
+                "open_clip providerを使うには torch と open_clip_torch が必要です。"
+            ) from exc
+
+        self.torch = torch
+        self.open_clip = open_clip
+        self.normalize = bool(model.get("normalize"))
+        self.device, self.torch_dtype, self.device_name, self.dtype_name = resolve_torch_device_and_dtype(
+            torch,
+            str(settings.get("device") or "auto"),
+            str(settings.get("dtype") or "fp16"),
+        )
+        self.model_name = str(model.get("model_name") or "ViT-B-32")
+        self.pretrained = str(model.get("pretrained") or "laion2b_s34b_b79k")
+        if not bool(settings.get("allow_model_download")) and not self._has_local_pretrained():
+            raise RuntimeError(
+                f"{self.model_name} / {self.pretrained} がローカルcacheに見つかりません。Embedding設定で "
+                "allow_model_download=true（モデルdownloadを許可）にしてから再実行してください。"
+            )
+        try:
+            self.model, _, self.preprocess = open_clip.create_model_and_transforms(
+                self.model_name,
+                pretrained=self.pretrained,
+                device=self.device,
+            )
+        except Exception as exc:
+            if not bool(settings.get("allow_model_download")):
+                raise RuntimeError(
+                    f"{self.model_name} / {self.pretrained} がローカルcacheに見つかりません。Embedding設定で "
+                    "allow_model_download=true（モデルdownloadを許可）にしてから再実行してください。"
+                ) from exc
+            raise
+        self.model.to(self.device)
+        if self.device_name != "cpu" and self.dtype_name in {"fp16", "bf16"}:
+            self.model.to(dtype=self.torch_dtype)
+        self.model.eval()
+
+    def _has_local_pretrained(self) -> bool:
+        try:
+            download_pretrained = getattr(self.open_clip, "download_pretrained", None)
+            get_pretrained_cfg = getattr(self.open_clip, "get_pretrained_cfg", None)
+            if download_pretrained is None or get_pretrained_cfg is None:
+                return False
+            cfg = get_pretrained_cfg(self.model_name, self.pretrained)
+            if not cfg:
+                return False
+            path = download_pretrained(cfg, prefer_hf_hub=True, local_files_only=True)
+            return bool(path and Path(path).exists())
+        except Exception:
+            return False
+
+    def embedding(self, image_path: Path) -> np.ndarray:
+        with Image.open(image_path) as image:
+            image = ImageOps.exif_transpose(image).convert("RGB")
+            return self.embedding_from_image(image)
+
+    def embedding_from_image(self, image: Image.Image) -> np.ndarray:
+        tensor = self.preprocess(image).unsqueeze(0).to(self.device)
+        if tensor.is_floating_point():
+            tensor = tensor.to(dtype=self.torch_dtype)
+        with self.torch.no_grad():
+            features = self.model.encode_image(tensor)
+        vector = features[0].detach().float().cpu().numpy().astype(np.float32)
+        if self.normalize:
+            norm = float(np.linalg.norm(vector))
+            if norm > 0:
+                vector = vector / norm
+        return vector
+
+
 def run_transformers_clip_preflight(model: dict[str, Any], settings_row: dict[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {
         "provider": "transformers_clip",
@@ -173,6 +249,69 @@ def run_transformers_clip_preflight(model: dict[str, Any], settings_row: dict[st
     except Exception as exc:
         result["status"] = "ERROR"
         result["checks"].append({"name": "transformers_clip preflight", "status": "ERROR", "message": str(exc)})
+    return result
+
+
+def run_open_clip_preflight(model: dict[str, Any], settings_row: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "provider": "open_clip",
+        "model_id": model.get("id"),
+        "model_name": model.get("model_name") or "ViT-B-32",
+        "pretrained": model.get("pretrained") or "laion2b_s34b_b79k",
+        "status": "OK",
+        "checks": [],
+        "download_allowed": bool(settings_row.get("allow_model_download")),
+    }
+    try:
+        import torch
+        import open_clip
+
+        version = getattr(open_clip, "__version__", "unknown")
+        result["checks"].append({"name": "torch import", "status": "OK", "message": f"torch {torch.__version__}"})
+        result["checks"].append({"name": "open_clip import", "status": "OK", "message": f"open_clip {version}"})
+        _, _, device_name, dtype_name = resolve_torch_device_and_dtype(
+            torch,
+            str(settings_row.get("device") or "auto"),
+            str(settings_row.get("dtype") or "fp16"),
+        )
+        cuda_available = bool(torch.cuda.is_available())
+        if device_name == "cpu" and str(settings_row.get("device") or "auto").lower() == "cuda":
+            result["status"] = "WARNING"
+        result["checks"].append(
+            {
+                "name": "device",
+                "status": "OK" if device_name == "cuda" or str(settings_row.get("device") or "auto").lower() != "cuda" else "WARNING",
+                "message": f"cuda_available={cuda_available}; selected_device={device_name}; selected_dtype={dtype_name}",
+            }
+        )
+        provider = OpenClipProvider(model, settings_row)
+        result["checks"].append({"name": "model load", "status": "OK", "message": f"{provider.model_name} / {provider.pretrained}"})
+        image = Image.new("RGB", (32, 32), color=(128, 128, 128))
+        vector = provider.embedding_from_image(image)
+        norm = float(np.linalg.norm(vector))
+        result["vector_dim"] = int(vector.shape[0])
+        result["norm"] = norm
+        result["device"] = provider.device_name
+        result["dtype"] = provider.dtype_name
+        result["checks"].append(
+            {
+                "name": "dummy image embedding",
+                "status": "OK" if int(vector.shape[0]) > 0 else "WARNING",
+                "message": f"vector_dim={int(vector.shape[0])}; norm={norm:.6f}",
+            }
+        )
+        if int(model.get("vector_dim") or vector.shape[0]) != int(vector.shape[0]):
+            result["status"] = "WARNING"
+            result["checks"].append(
+                {
+                    "name": "vector_dim",
+                    "status": "WARNING",
+                    "message": f"DB={model.get('vector_dim') or '-'}; actual={int(vector.shape[0])}",
+                }
+            )
+    except Exception as exc:
+        result["status"] = "ERROR"
+        result["checks"].append({"name": "open_clip preflight", "status": "ERROR", "message": str(exc)})
     return result
 
 
@@ -238,15 +377,21 @@ def run_embedding_job(job_id: int) -> int:
     vector_dim = int(model["vector_dim"] or 512)
     normalize = bool(model["normalize"])
     max_image_size = int(settings["max_image_size"] or 1024)
-    vector_provider: TransformersClipProvider | None = None
+    vector_provider: TransformersClipProvider | OpenClipProvider | None = None
     if provider == "transformers_clip":
         vector_provider = TransformersClipProvider(dict(model), dict(settings))
         print(
             f"transformers_clip ready: model={vector_provider.model_name}, device={vector_provider.device_name}, dtype={vector_provider.dtype_name}, download_allowed={bool(settings['allow_model_download'])}",
             flush=True,
         )
+    elif provider == "open_clip":
+        vector_provider = OpenClipProvider(dict(model), dict(settings))
+        print(
+            f"open_clip ready: model={vector_provider.model_name}, pretrained={vector_provider.pretrained}, device={vector_provider.device_name}, dtype={vector_provider.dtype_name}, download_allowed={bool(settings['allow_model_download'])}",
+            flush=True,
+        )
     elif provider not in {"mock"}:
-        raise RuntimeError(f"provider {provider} はまだ実行未対応です。OpenCLIP providerはPhase 11.5以降で追加予定です。")
+        raise RuntimeError(f"provider {provider} は実行未対応です。")
     source_map = {
         (source.source_type, source.source_id, source.source_path): source
         for source in sources_for_job_type(job["job_type"], job["target_id"])
@@ -268,7 +413,7 @@ def run_embedding_job(job_id: int) -> int:
             source = source_from_item(item, source_map)
             if provider == "mock":
                 vector = mock_embedding(path, vector_dim=vector_dim, normalize=normalize)
-            elif provider == "transformers_clip" and vector_provider is not None:
+            elif provider in {"transformers_clip", "open_clip"} and vector_provider is not None:
                 vector = vector_provider.embedding(path)
             else:
                 raise RuntimeError(f"provider {provider} は実行未対応です。")
@@ -338,6 +483,9 @@ def main() -> int:
             return 2
         if model["provider"] == "transformers_clip":
             print(json.dumps(run_transformers_clip_preflight(dict(model), dict(settings_row)), ensure_ascii=False))
+            return 0
+        if model["provider"] == "open_clip":
+            print(json.dumps(run_open_clip_preflight(dict(model), dict(settings_row)), ensure_ascii=False))
             return 0
         print(json.dumps({"status": "ERROR", "checks": [{"name": "provider", "status": "ERROR", "message": f"unsupported provider: {model['provider']}"}]}, ensure_ascii=False))
         return 2

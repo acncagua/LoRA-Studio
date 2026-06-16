@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased - Phase 11.5
+
+- OpenCLIP provider `open_clip` を試験導入しました。
+- 標準モデルを `ViT-B-32` / `laion2b_s34b_b79k` とし、512次元の画像embeddingを保存できるようにしました。
+- `allow_model_download=true` の場合のみOpenCLIPのpretrained weight downloadを許可します。
+- deviceはcuda優先、fallbackでcpu、cpuではdtypeをfp32に固定します。
+- `transformers_clip` と同様、学習中または検証画像生成中はOpenCLIP Embedding Jobを開始しないようにしました。
+- mock providerはCI/テスト用として継続し、OpenCLIPとMachine Review Assistでprovider/modelを分けて保存します。
+
 ## Unreleased - Phase 11.4.1
 
 - transformers_clip Machine Review Calibrationとして、Reference role分布、epoch別Dataset近傍傾向、CLIP ViT-B/32の読み方に関する注意文言を追加しました。
@@ -13,7 +22,7 @@
 - `allow_model_download=true` の場合のみ `from_pretrained` によるモデルdownloadを許可します。
 - deviceはcuda優先、fallbackでcpu、cpuではdtypeをfp32に固定します。
 - GPU競合を避けるため、学習中または検証画像生成中は実providerのEmbedding Jobを開始しないようにしました。
-- mock providerはCI/テスト用として継続し、OpenCLIP providerはPhase 11.5以降の設計枠として残しています。
+- mock providerはCI/テスト用として継続します。
 
 ## Unreleased - Phase 11.3
 

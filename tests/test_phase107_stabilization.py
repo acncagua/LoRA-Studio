@@ -1502,6 +1502,23 @@ class EmbeddingPhase112Tests(IsolatedDbTest):
         self.assertFalse(result["download_allowed"])
         self.assertTrue(any(check["name"] == "model download" for check in result["checks"]))
 
+    def test_open_clip_model_is_seeded_without_implicit_download(self) -> None:
+        from app.services.embedding_service import provider_preflight
+
+        model = fetch_one("SELECT * FROM embedding_models WHERE id = 'open_clip_vit_b32_laion2b'")
+        self.assertIsNotNone(model)
+        self.assertEqual(model["provider"], "open_clip")
+        self.assertEqual(model["model_name"], "ViT-B-32")
+        self.assertEqual(model["pretrained"], "laion2b_s34b_b79k")
+        self.assertEqual(model["vector_dim"], 512)
+        self.assertEqual(model["dtype_default"], "fp16")
+        self.assertEqual(model["batch_size_default"], 8)
+        self.assertEqual(model["allow_download"], 1)
+        result = provider_preflight("open_clip_vit_b32_laion2b", deep=False)
+        self.assertFalse(result["download_allowed"])
+        self.assertEqual(result["provider"], "open_clip")
+        self.assertTrue(any(check["name"] == "model download" for check in result["checks"]))
+
     def test_transformers_clip_device_dtype_resolution(self) -> None:
         from app.services.embedding_worker import resolve_torch_device_and_dtype
 
@@ -1537,6 +1554,8 @@ class EmbeddingPhase112Tests(IsolatedDbTest):
             conn.execute("UPDATE training_jobs SET status = 'running' WHERE id = ?", (job_id,))
         with self.assertRaisesRegex(RuntimeError, "学習ジョブ"):
             assert_embedding_can_start({"provider": "transformers_clip"})
+        with self.assertRaisesRegex(RuntimeError, "学習ジョブ"):
+            assert_embedding_can_start({"provider": "open_clip"})
         assert_embedding_can_start({"provider": "mock"})
 
     def test_dataset_reference_sample_and_validation_embeddings_are_created(self) -> None:

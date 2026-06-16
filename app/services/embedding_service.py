@@ -178,13 +178,6 @@ def provider_preflight(model_id: str | None = None, deep: bool = True) -> dict[s
     if provider == "mock":
         result["checks"].append({"name": "mock provider", "status": "OK", "message": "外部モデル不要で利用できます。"})
         result["vector_dim"] = int(model.get("vector_dim") or 512)
-    elif provider == "open_clip":
-        try:
-            __import__("open_clip")
-            result["checks"].append({"name": "open_clip import", "status": "OK", "message": "open_clip is importable."})
-        except Exception as exc:
-            result["status"] = "WARNING"
-            result["checks"].append({"name": "open_clip import", "status": "WARNING", "message": str(exc)})
     elif provider == "transformers_clip":
         transformers_ok = importlib.util.find_spec("transformers") is not None
         torch_ok = importlib.util.find_spec("torch") is not None
@@ -235,6 +228,89 @@ def provider_preflight(model_id: str | None = None, deep: bool = True) -> dict[s
                 }
             )
             if transformers_ok and not uses_worker_python:
+                result["status"] = "WARNING"
+        else:
+            result["checks"].append({"name": "model download", "status": "OK", "message": "明示的にdownloadが許可されています。"})
+        result["vector_dim"] = int(model.get("vector_dim") or 512)
+        if deep:
+            try:
+                completed = subprocess.run(
+                    [python_path, "-m", "app.services.embedding_worker", "--preflight-model-id", str(model.get("id"))],
+                    cwd=str(settings.ROOT_DIR),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=900,
+                    check=False,
+                )
+                stdout = completed.stdout.strip().splitlines()[-1] if completed.stdout.strip() else "{}"
+                worker_result = json.loads(stdout)
+                result["worker_return_code"] = completed.returncode
+                result["checks"].extend(worker_result.get("checks", []))
+                for key in ("vector_dim", "norm", "device", "dtype"):
+                    if key in worker_result:
+                        result[key] = worker_result[key]
+                if completed.returncode != 0 or worker_result.get("status") == "ERROR":
+                    result["status"] = "ERROR"
+                    if completed.stderr.strip():
+                        result["checks"].append({"name": "worker stderr", "status": "ERROR", "message": completed.stderr.strip()[-1000:]})
+                elif worker_result.get("status") == "OK":
+                    result["status"] = "OK"
+                elif worker_result.get("status") == "WARNING" and result["status"] != "ERROR":
+                    result["status"] = "WARNING"
+            except Exception as exc:
+                result["status"] = "ERROR"
+                result["checks"].append({"name": "worker preflight", "status": "ERROR", "message": str(exc)})
+    elif provider == "open_clip":
+        open_clip_ok = importlib.util.find_spec("open_clip") is not None
+        torch_ok = importlib.util.find_spec("torch") is not None
+        if open_clip_ok:
+            result["checks"].append({"name": "open_clip import", "status": "OK", "message": "open_clip is importable."})
+        elif uses_worker_python:
+            result["checks"].append(
+                {
+                    "name": "open_clip import",
+                    "status": "INFO",
+                    "message": "アプリ側Pythonでは未検出です。指定されたworker Pythonで確認します。",
+                }
+            )
+        else:
+            result["status"] = "WARNING"
+            result["checks"].append({"name": "open_clip import", "status": "WARNING", "message": "open_clip_torch is not installed."})
+        if torch_ok:
+            requested_device = str(settings_row.get("device") or "auto")
+            requested_dtype = str(settings_row.get("dtype") or "fp16")
+            resolved_dtype = "fp32" if requested_device == "cpu" else requested_dtype
+            result["checks"].append(
+                {
+                    "name": "torch/device",
+                    "status": "OK",
+                    "message": f"torch is importable. requested_device={requested_device}; requested_dtype={requested_dtype}; cpu実行時はfp32にfallbackします。",
+                }
+            )
+            result["device"] = requested_device
+            result["dtype"] = resolved_dtype
+        elif uses_worker_python:
+            result["checks"].append(
+                {
+                    "name": "torch import",
+                    "status": "INFO",
+                    "message": "アプリ側Pythonでは未検出です。指定されたworker Pythonで確認します。",
+                }
+            )
+        else:
+            result["status"] = "WARNING"
+            result["checks"].append({"name": "torch import", "status": "WARNING", "message": "torch is not installed."})
+        if not settings_row.get("allow_model_download"):
+            result["checks"].append(
+                {
+                    "name": "model download",
+                    "status": "WARNING" if open_clip_ok and not uses_worker_python else "INFO",
+                    "message": "downloadは無効です。ViT-B-32 / laion2b_s34b_b79k がローカルcacheに無い場合、実行時に失敗します。",
+                }
+            )
+            if open_clip_ok and not uses_worker_python:
                 result["status"] = "WARNING"
         else:
             result["checks"].append({"name": "model download", "status": "OK", "message": "明示的にdownloadが許可されています。"})

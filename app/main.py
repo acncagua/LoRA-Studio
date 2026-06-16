@@ -3264,7 +3264,7 @@ def validation_run_detail(request: Request, run_id: int, generation_error: str |
         bundle = load_validation_run_bundle(run_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    requested_job_return = request.query_params.get("return_to", "")
+    requested_job_return = request.query_params.get("return_to", "") if request is not None else ""
     job_return_to = requested_job_return if requested_job_return.startswith("/jobs/") else f"/jobs/{bundle['run']['job_id']}"
     return render(
         request,

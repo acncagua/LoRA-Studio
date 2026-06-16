@@ -5,9 +5,9 @@
 </header>
 
 <section class="notice">
-  <p>Embedding Cacheは、画像をCLIP等の特徴ベクトルへ変換して保存する基盤です。Phase 11.4では、テスト用mock providerに加えて transformers CLIP provider を利用できます。</p>
-  <p>標準モデルは openai/clip-vit-base-patch32 です。モデルweightのdownloadは、明示的に「モデルdownloadを許可」を有効にした場合だけ行います。</p>
-  <p class="muted">transformers CLIPはcudaを優先し、使えない場合はcpuへfallbackします。cpuではdtypeはfp32として扱います。学習中または検証画像生成中はGPU競合を避けるため開始できません。</p>
+  <p>Embedding Cacheは、画像をCLIP等の特徴ベクトルへ変換して保存する基盤です。テスト用mock provider、transformers CLIP provider、Phase 11.5試験導入のOpenCLIP providerを利用できます。</p>
+  <p>transformers CLIPの標準モデルは openai/clip-vit-base-patch32、OpenCLIPの標準モデルは ViT-B-32 / laion2b_s34b_b79k です。モデルweightのdownloadは、明示的に「モデルdownloadを許可」を有効にした場合だけ行います。</p>
+  <p class="muted">実providerはcudaを優先し、使えない場合はcpuへfallbackします。cpuではdtypeはfp32として扱います。学習中または検証画像生成中はGPU競合を避けるため開始できません。OpenCLIPを使うには worker Python に open_clip_torch が必要です。</p>
 </section>
 
 <section class="notice">

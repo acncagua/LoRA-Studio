@@ -142,12 +142,18 @@ A Reference Set contains human-selected reference images used for visual review 
 Machine Review Assist compares generated images with reference and dataset images using cached embeddings.
 It is advisory only. Human review always takes priority.
 
-The current real provider is:
+Current real providers are:
 
 - `transformers_clip`
-- default model: `openai/clip-vit-base-patch32`
+- `open_clip`
+
+Default models:
+
+- transformers CLIP: `openai/clip-vit-base-patch32`
+- OpenCLIP: `ViT-B-32` / `laion2b_s34b_b79k`
 
 The mock provider remains available for tests and CI.
+Model downloads are allowed only when the embedding setting explicitly enables model download.
 
 ## Current Scope
 
@@ -243,7 +249,7 @@ If preflight is OK and similar conditions already completed successfully, you ca
 
 Machine Review Assist is not an automatic judge.
 
-`transformers_clip` can help compare overall image meaning, composition, and atmosphere, but it is not a face identity model.
+`transformers_clip` and `open_clip` can help compare overall image meaning, composition, and atmosphere, but they are not face identity models.
 For small facial details, costume details, and character-specific parts, human review remains the source of truth.
 
 Reference Sets should include varied roles such as:
