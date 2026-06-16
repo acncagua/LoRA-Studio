@@ -3,7 +3,7 @@
 <header class="page-head">
   <h1>検証Run #{{ run.id }}</h1>
   <div class="actions">
-    <a class="button" href="/jobs/{{ run.job_id }}">ジョブへ戻る</a>
+    <a class="button" href="{{ job_return_to or ('/jobs/' ~ run.job_id) }}">ジョブへ戻る</a>
     {% if run.project_id %}<a class="button" href="/projects/{{ run.project_id }}">Projectへ戻る</a>{% endif %}
     {% if run.selected_lora_profile_id %}<a class="button" href="/lora-library/{{ run.selected_lora_profile_id }}/edit">LoRAプロファイルへ</a>{% endif %}
   </div>

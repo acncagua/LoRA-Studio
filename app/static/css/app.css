@@ -87,7 +87,19 @@ th { color: var(--muted); font-size: 13px; font-weight: 600; background: #eef2eb
 .wide-table th, .wide-table td { overflow-wrap: normal; word-break: normal; }
 .wrap-text { overflow-wrap: anywhere; word-break: normal; }
 .nowrap { white-space: nowrap; }
-.small-button { display: inline-block; padding: 7px 11px; white-space: nowrap; line-height: 1.2; }
+.small-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 37px;
+  padding: 7px 11px;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+.dashboard-job-actions .small-button {
+  min-width: 56px;
+  text-align: center;
+}
 .lora-library-table { min-width: 2100px; }
 .lora-library-table th:nth-child(1), .lora-library-table td:nth-child(1) { width: 46px; }
 .lora-library-table th:nth-child(2), .lora-library-table td:nth-child(2) { width: 300px; }

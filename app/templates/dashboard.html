@@ -66,7 +66,7 @@
         <td><span class="label {{ job.status }}">{{ status_labels.get(job.status, job.status) }}</span>{% if job.config_dirty %}<br><span class="label warning">再準備必要</span>{% endif %}</td>
         <td>{% if job.config_dirty or job.status == 'prepared_dirty' %}ファイル準備{% elif job.status == 'running' %}ログ確認 / 停止{% elif job.status == 'failed' %}ログ確認 / 編集{% elif job.status == 'prepared' %}事前確認 / 実行{% elif job.status == 'draft' %}編集 / ファイル準備{% else %}詳細確認{% endif %}</td>
         <td>
-          <div class="actions compact-actions">
+          <div class="actions compact-actions dashboard-job-actions">
             <a class="button small-button" href="/jobs/{{ job.id }}">開く</a>
             {% if job.status in ['draft','prepared','prepared_dirty','failed','stopped'] %}<a class="button small-button" href="/jobs/{{ job.id }}/edit">編集</a>{% endif %}
             {% if job.status in ['prepared','failed','stopped'] and not job.config_dirty %}<form method="post" action="/jobs/{{ job.id }}/run"><button class="small-button" type="submit">実行</button></form>{% endif %}

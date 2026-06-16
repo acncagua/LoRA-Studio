@@ -469,7 +469,7 @@
     <tbody>
       {% for candidate in review_candidates %}
       {% set epoch = (epoch_visual_summaries | selectattr('epoch', 'equalto', candidate.epoch) | list | first) %}
-      <tr class="{{ 'epoch-selected' if epoch and epoch.output_selected else 'epoch-candidate' }}">
+      <tr class="{{ 'epoch-selected' if epoch and epoch.output_selected else 'epoch-candidate' }}" data-review-epoch-row="{{ candidate.epoch }}">
         <td>{{ candidate.candidate_rank }}</td>
         <td>{{ candidate.epoch }}</td>
         <td><span class="label {{ candidate.candidate_label }}">{{ candidate.candidate_label }}</span></td>
@@ -477,9 +477,9 @@
         <td>{{ candidate.reason_text }}</td>
         <td>{{ '%.6f'|format(epoch.avg_loss) if epoch and epoch.avg_loss is not none else '-' }}</td>
         <td>{{ epoch.sample_count if epoch else '-' }}</td>
-        <td>{% if epoch and epoch.machine %}<span class="label {{ epoch.machine.assist_label }}">{{ display_machine_label(epoch.machine.assist_label) }}</span><br><span class="label {{ epoch.machine.confidence_label }}">{{ display_machine_label(epoch.machine.confidence_label) }}</span>{% if epoch.output_selected %}<br><span class="muted">人間評価を優先</span>{% endif %}{% else %}-{% endif %}</td>
-        <td>{{ epoch.output_file if epoch else '-' }}</td>
-        <td>{{ '採用中' if epoch and epoch.output_selected else '-' }}</td>
+        <td data-review-machine-cell>{% if epoch and epoch.machine %}<span class="label {{ epoch.machine.assist_label }}">{{ display_machine_label(epoch.machine.assist_label) }}</span><br><span class="label {{ epoch.machine.confidence_label }}">{{ display_machine_label(epoch.machine.confidence_label) }}</span>{% if epoch.output_selected %}<br data-human-rating-priority="break"><span class="muted" data-human-rating-priority="note">人間評価を優先</span>{% endif %}{% else %}-{% endif %}</td>
+        <td data-review-output-file>{{ epoch.output_file if epoch else '-' }}</td>
+        <td data-review-output-selected>{{ '採用中' if epoch and epoch.output_selected else '-' }}</td>
       </tr>
       {% else %}
       <tr><td colspan="10" class="muted">候補epochはまだありません。結果を再取り込み、または候補epochを再生成してください。</td></tr>
@@ -648,7 +648,7 @@
             </td>
             <td><span data-validation-actual>{{ run.actual_image_count }}</span> / <span data-validation-expected>{{ run.expected_image_count }}</span></td>
             <td class="inline-actions">
-              <a class="button" href="/validation-runs/{{ run.id }}">詳細</a>
+              <a class="button" href="/validation-runs/{{ run.id }}?return_to=/jobs/{{ job.id }}%23validation-runs">詳細</a>
               <form method="post" action="/jobs/{{ job.id }}/validation-runs/{{ run.id }}/generation/run" data-generation-run-form>
                 <button type="submit" data-generation-run-button {% if run.generation_status == 'running' or running_generation %}disabled{% endif %} {% if run.generation_status == 'running' %}hidden{% endif %} {% if running_generation and run.generation_status != 'running' %}title="他の検証画像生成が実行中です"{% endif %}>画像生成を実行</button>
               </form>

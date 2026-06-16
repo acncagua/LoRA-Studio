@@ -231,7 +231,22 @@ def render(request: Request, template: str, **context: Any) -> HTMLResponse:
     context.setdefault("validation_run_status_options", list(VALIDATION_RUN_STATUS_LABELS.items()))
     context.setdefault("display_status_text", display_status_text)
     context.setdefault("display_machine_label", display_machine_label)
+    context.setdefault("static_asset_version", static_asset_version())
     return HTMLResponse(tpl.render(**context))
+
+
+def static_asset_version() -> str:
+    paths = [
+        settings.ROOT_DIR / "app" / "static" / "css" / "app.css",
+        settings.ROOT_DIR / "app" / "static" / "js" / "app.js",
+    ]
+    mtimes = []
+    for path in paths:
+        try:
+            mtimes.append(str(int(path.stat().st_mtime)))
+        except OSError:
+            mtimes.append("0")
+    return "-".join(mtimes)
 
 
 def add_query_param(url: str, **params: Any) -> str:
@@ -1493,12 +1508,15 @@ def embedding_preflight(active_embedding_model_id: str = Form("mock_image_512"))
 
 
 @app.post("/embeddings/jobs")
-def embedding_job_create(job_type: str = Form(...), target_id: int = Form(...), recompute: str = Form("missing"), return_to: str = Form("")) -> RedirectResponse:
+def embedding_job_create(request: Request, job_type: str = Form(...), target_id: int = Form(...), recompute: str = Form("missing"), return_to: str = Form("")):
     destination = return_to or "/settings/embeddings"
     running_embedding = fetch_one("SELECT id FROM embedding_jobs WHERE status = 'running' LIMIT 1")
     if running_embedding:
+        message = f"Embedding Job #{running_embedding['id']} が実行中です。完了後に再実行してください。"
+        if wants_json_response(request):
+            return JSONResponse({"ok": False, "message": message, "running_job_id": running_embedding["id"]}, status_code=409)
         return RedirectResponse(
-            add_query_param(destination, embedding_error=f"Embedding Job #{running_embedding['id']} が実行中です。完了後に再実行してください。"),
+            add_query_param(destination, embedding_error=message),
             status_code=303,
         )
     try:
@@ -1511,9 +1529,14 @@ def embedding_job_create(job_type: str = Form(...), target_id: int = Form(...), 
         embedding_job_id = create_embedding_job(job_type, target_id, recompute=recompute)
         start_embedding_job(embedding_job_id)
     except RuntimeError as exc:
+        if wants_json_response(request):
+            return JSONResponse({"ok": False, "message": str(exc)}, status_code=400)
         return RedirectResponse(add_query_param(destination, embedding_error=str(exc)), status_code=303)
+    redirect_url = add_query_param(destination, embedding_job_id=embedding_job_id, embedding_message=f"Embedding Job #{embedding_job_id} を開始しました。")
+    if wants_json_response(request):
+        return JSONResponse({"ok": True, "embedding_job_id": embedding_job_id, "message": f"Embedding Job #{embedding_job_id} を開始しました。", "redirect_url": redirect_url})
     return RedirectResponse(
-        add_query_param(destination, embedding_job_id=embedding_job_id, embedding_message=f"Embedding Job #{embedding_job_id} を開始しました。"),
+        redirect_url,
         status_code=303,
     )
 
@@ -2308,7 +2331,7 @@ def job_detail(
     validation_runs = decorate_validation_runs_for_job(validation_runs)
     running_generation = current_running_validation_generation()
     validation_summary = build_validation_summary(validation_results)
-    selected_lora_profile = ensure_selected_lora_profile(job_id) if selected_output else None
+    selected_lora_profile = selected_lora_profile_for_display(job_id, selected_output)
     recommendations = list_recommendations(job_id)
     machine_score_map = score_map_for_samples(job_id)
     machine_epoch_summary = epoch_machine_summary(job_id)
@@ -3229,7 +3252,8 @@ def job_create_validation_runs_for_outputs(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         created.append(run_id)
     if len(created) == 1:
-        return RedirectResponse(f"/validation-runs/{created[0]}", status_code=303)
+        return_to = quote(f"/jobs/{job_id}#validation-runs", safe="")
+        return RedirectResponse(f"/validation-runs/{created[0]}?return_to={return_to}", status_code=303)
     return RedirectResponse(f"/jobs/{job_id}#validation-runs", status_code=303)
 
 
@@ -3240,10 +3264,13 @@ def validation_run_detail(request: Request, run_id: int, generation_error: str |
         bundle = load_validation_run_bundle(run_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    requested_job_return = request.query_params.get("return_to", "")
+    job_return_to = requested_job_return if requested_job_return.startswith("/jobs/") else f"/jobs/{bundle['run']['job_id']}"
     return render(
         request,
         "validation_run_detail.html",
         **bundle,
+        job_return_to=job_return_to,
         **generation_view_state(run_id),
         default_project_path=str(settings.ROOT_DIR),
         rubric_options=rubric_options(),
@@ -4686,6 +4713,15 @@ def ensure_selected_lora_profile(job_id: int) -> Any:
         profile_id = int(cur.lastrowid)
     sync_profile_from_validation(job_id)
     return fetch_one("SELECT * FROM selected_lora_profiles WHERE id = ?", (profile_id,))
+
+
+def selected_lora_profile_for_display(job_id: int, selected_output: Any | None) -> Any:
+    if selected_output is None:
+        return None
+    return fetch_one(
+        "SELECT * FROM selected_lora_profiles WHERE job_id = ? AND selected_output_id = ?",
+        (job_id, selected_output["id"]),
+    )
 
 
 def sync_profile_selected_fields(job: Any, output: Any, profile_id: int) -> None:

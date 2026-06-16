@@ -70,20 +70,47 @@ document.addEventListener("submit", async (event) => {
   await submitAdoptionForm(form);
 });
 
-document.addEventListener("submit", (event) => {
+document.addEventListener("submit", async (event) => {
   const form = event.target.closest("[data-embedding-job-form]");
   if (!form) {
     return;
   }
+  event.preventDefault();
   const button = form.querySelector("button[type='submit']");
+  const buttons = Array.from(document.querySelectorAll("[data-embedding-job-form] button[type='submit']"));
   if (button) {
     button.disabled = true;
     button.dataset.originalText = button.textContent;
     button.textContent = "処理開始中...";
   }
-  document.querySelectorAll("[data-embedding-job-form] button[type='submit']").forEach((otherButton) => {
+  buttons.forEach((otherButton) => {
     otherButton.disabled = true;
   });
+  clearQueryNoticeParams(["embedding_error"]);
+  try {
+    const response = await fetch(form.action, {
+      method: "POST",
+      body: new FormData(form),
+      headers: { "X-Requested-With": "fetch", "Accept": "application/json" },
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.ok === false) {
+      throw new Error(payload.message || await response.text());
+    }
+    if (payload.embedding_job_id) {
+      startEmbeddingJobPolling(payload.embedding_job_id, payload.message || "Embedding Jobを開始しました。", payload.redirect_url || window.location.href, form);
+      return;
+    }
+    showPageNotice(payload.message || "Embedding Jobを開始しました。", "info", form);
+  } catch (error) {
+    showPageNotice(error.message || "Embedding Jobを開始できませんでした。", "warning", form);
+    buttons.forEach((otherButton) => {
+      otherButton.disabled = false;
+      if (otherButton.dataset.originalText) {
+        otherButton.textContent = otherButton.dataset.originalText;
+      }
+    });
+  }
 });
 
 document.addEventListener("submit", async (event) => {
@@ -114,7 +141,10 @@ function initEmbeddingJobStatusPolling() {
   if (!jobId || !statusText) {
     return;
   }
+  pollEmbeddingJobStatus(panel, jobId, statusText);
+}
 
+function pollEmbeddingJobStatus(panel, jobId, statusText) {
   const poll = async () => {
     try {
       const response = await fetch(`/embeddings/jobs/${jobId}/status`, {
@@ -129,23 +159,23 @@ function initEmbeddingJobStatusPolling() {
       if (payload.status === "completed") {
         statusText.textContent = `完了: ${payload.ready_count ?? processed} / ${total} 件`;
         panel.classList.remove("warning");
+        panel.classList.add("success");
+        enableEmbeddingButtons();
         window.setTimeout(() => {
-          const url = new URL(window.location.href);
-          url.searchParams.delete("embedding_message");
-          url.searchParams.delete("embedding_job_id");
-          url.searchParams.delete("embedding_error");
-          window.location.href = url.toString();
+          reloadAfterEmbeddingJob(panel);
         }, 900);
         return true;
       }
       if (payload.status === "failed") {
         statusText.textContent = `失敗: ${payload.error_message || ""}`;
         panel.classList.add("warning");
+        enableEmbeddingButtons();
         return true;
       }
       if (payload.status === "stopped") {
         statusText.textContent = `停止: ${processed} / ${total} 件`;
         panel.classList.add("warning");
+        enableEmbeddingButtons();
         return true;
       }
       statusText.textContent = `処理中: ${processed} / ${total} 件`;
@@ -153,6 +183,7 @@ function initEmbeddingJobStatusPolling() {
     } catch (error) {
       statusText.textContent = `状態確認に失敗: ${error.message}`;
       panel.classList.add("warning");
+      enableEmbeddingButtons();
       return true;
     }
   };
@@ -168,6 +199,102 @@ function initEmbeddingJobStatusPolling() {
       }
     }, 2500);
   });
+}
+
+function reloadAfterEmbeddingJob(panel) {
+  const target = panel.getAttribute("data-embedding-reload-url") || window.location.href;
+  const url = new URL(target, window.location.href);
+  url.searchParams.delete("embedding_message");
+  url.searchParams.delete("embedding_job_id");
+  url.searchParams.delete("embedding_error");
+  if (!url.hash) {
+    sessionStorage.setItem("loraStudioRestoreScrollY", String(window.scrollY || 0));
+  }
+  window.location.href = url.toString();
+}
+
+function restoreScrollAfterInlineRefresh() {
+  const value = sessionStorage.getItem("loraStudioRestoreScrollY");
+  if (!value) {
+    return;
+  }
+  sessionStorage.removeItem("loraStudioRestoreScrollY");
+  const y = Number.parseInt(value, 10);
+  if (Number.isFinite(y) && y > 0) {
+    window.setTimeout(() => window.scrollTo(0, y), 0);
+  }
+}
+
+function startEmbeddingJobPolling(jobId, message, redirectUrl, anchorForm = null) {
+  clearQueryNoticeParams(["embedding_error"]);
+  const container = anchorForm?.closest("section") || document.querySelector("main.content") || document.body;
+  let panel = container.querySelector("[data-embedding-job-status]");
+  if (!panel) {
+    panel = document.createElement("p");
+    panel.className = "notice";
+    panel.setAttribute("data-embedding-job-status", "1");
+    const actions = anchorForm?.closest(".actions");
+    if (actions) {
+      actions.before(panel);
+    } else {
+      container.prepend(panel);
+    }
+  }
+  panel.classList.remove("warning", "success");
+  panel.setAttribute("data-embedding-job-id", jobId);
+  if (redirectUrl) {
+    panel.setAttribute("data-embedding-reload-url", redirectUrl);
+  }
+  panel.textContent = "";
+  panel.append(document.createTextNode(`${message} `));
+  const statusText = document.createElement("span");
+  statusText.setAttribute("data-embedding-job-status-text", "1");
+  statusText.textContent = "処理中...";
+  panel.append(statusText);
+  pollEmbeddingJobStatus(panel, jobId, statusText);
+}
+
+function enableEmbeddingButtons() {
+  document.querySelectorAll("[data-embedding-job-form] button[type='submit']").forEach((button) => {
+    button.disabled = false;
+    if (button.dataset.originalText) {
+      button.textContent = button.dataset.originalText;
+    }
+  });
+}
+
+function showPageNotice(message, kind = "info", anchorForm = null) {
+  if (!message) {
+    return;
+  }
+  const container = anchorForm?.closest("section") || document.querySelector("main.content") || document.body;
+  let notice = container.querySelector("[data-js-page-notice]");
+  if (!notice) {
+    notice = document.createElement("p");
+    notice.setAttribute("data-js-page-notice", "1");
+    const actions = anchorForm?.closest(".actions");
+    if (actions) {
+      actions.before(notice);
+    } else {
+      container.prepend(notice);
+    }
+  }
+  notice.className = kind === "warning" ? "notice warning" : "notice";
+  notice.textContent = message;
+}
+
+function clearQueryNoticeParams(keys) {
+  const url = new URL(window.location.href);
+  let changed = false;
+  keys.forEach((key) => {
+    if (url.searchParams.has(key)) {
+      url.searchParams.delete(key);
+      changed = true;
+    }
+  });
+  if (changed) {
+    window.history.replaceState({}, "", url.toString());
+  }
 }
 
 function initMachineReviewJobStatusPolling() {
@@ -455,6 +582,41 @@ function applyAdoptionUpdate(payload) {
       const selectedCell = selectedRow.querySelector("[data-output-selected]");
       if (selectedCell) {
         selectedCell.textContent = "採用中";
+      }
+    }
+  }
+  if (payload.epoch !== undefined && payload.epoch !== null) {
+    document.querySelectorAll("[data-review-epoch-row]").forEach((row) => {
+      row.classList.remove("epoch-selected");
+      row.classList.add("epoch-candidate");
+      const selectedCell = row.querySelector("[data-review-output-selected]");
+      if (selectedCell) {
+        selectedCell.textContent = "-";
+      }
+      const machineCell = row.querySelector("[data-review-machine-cell]");
+      if (machineCell) {
+        machineCell.querySelectorAll("[data-human-rating-priority]").forEach((node) => {
+          node.remove();
+        });
+      }
+    });
+    const selectedReviewRow = document.querySelector(`[data-review-epoch-row="${payload.epoch}"]`);
+    if (selectedReviewRow) {
+      selectedReviewRow.classList.remove("epoch-candidate");
+      selectedReviewRow.classList.add("epoch-selected");
+      const selectedCell = selectedReviewRow.querySelector("[data-review-output-selected]");
+      if (selectedCell) {
+        selectedCell.textContent = "採用中";
+      }
+      const machineCell = selectedReviewRow.querySelector("[data-review-machine-cell]");
+      if (machineCell && !machineCell.querySelector("[data-human-rating-priority]")) {
+        const lineBreak = document.createElement("br");
+        lineBreak.setAttribute("data-human-rating-priority", "break");
+        const note = document.createElement("span");
+        note.className = "muted";
+        note.setAttribute("data-human-rating-priority", "note");
+        note.textContent = "人間評価を優先";
+        machineCell.append(lineBreak, note);
       }
     }
   }
@@ -776,5 +938,6 @@ function applyValidationGenerationDetailStatus(panel, payload) {
 
 document.addEventListener("DOMContentLoaded", initValidationGenerationPolling);
 document.addEventListener("DOMContentLoaded", initValidationGenerationDetailPolling);
+document.addEventListener("DOMContentLoaded", restoreScrollAfterInlineRefresh);
 document.addEventListener("DOMContentLoaded", initEmbeddingJobStatusPolling);
 document.addEventListener("DOMContentLoaded", initMachineReviewJobStatusPolling);
