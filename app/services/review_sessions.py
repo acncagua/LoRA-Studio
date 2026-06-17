@@ -15,7 +15,7 @@ from app.db import connect, fetch_all, fetch_one, latest_environment, utc_now
 from app.services.image_store import verify_image_file
 from app.services.output_collector import image_size, safe_sha256_file
 from app.services.review_candidates import ensure_epoch_candidates
-from app.services.training_runner import archive_existing_log, decode_log_bytes, elapsed_seconds, sd_scripts_subprocess_env
+from app.services.training_runner import archive_existing_log, decode_log_bytes, elapsed_seconds, process_exists, sd_scripts_subprocess_env
 from app.services.validation_generation import IMAGE_SUFFIXES, common_gen_img_args, count_generated_images, sanitize_filename
 from app.services.validation_generation import matrix_machine_score
 
@@ -289,6 +289,60 @@ def start_review_preparation(session_id: int) -> int:
     )
     thread.start()
     return first_process.pid
+
+
+def stop_review_preparation(session_id: int) -> None:
+    session = fetch_one("SELECT * FROM review_sessions WHERE id = ?", (session_id,))
+    if session is None:
+        raise ValueError(f"Review Session not found: {session_id}")
+    end_time = utc_now()
+    elapsed = elapsed_seconds(session["started_at"], end_time) if session["started_at"] else None
+    pid = session["generation_process_id"]
+    if pid:
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, check=False)
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE review_sessions
+            SET status = 'stopped', generation_process_id = NULL,
+                ended_at = ?, elapsed_seconds = ?, return_code = COALESCE(return_code, 4294967295),
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (end_time, elapsed, end_time, session_id),
+        )
+    log_path = Path(str(session["log_path"] or review_session_dir(session_id) / "review_preparation.log"))
+    append_log_note(log_path, "Review Preparation stopped by user.")
+
+
+def reconcile_stale_review_sessions() -> int:
+    rows = fetch_all("SELECT * FROM review_sessions WHERE status = 'running'")
+    fixed = 0
+    for row in rows:
+        session = dict(row)
+        pid = session.get("generation_process_id")
+        if pid and process_exists(int(pid)):
+            continue
+        end_time = utc_now()
+        elapsed = elapsed_seconds(session.get("started_at"), end_time) if session.get("started_at") else None
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE review_sessions
+                SET status = 'stopped', generation_process_id = NULL,
+                    ended_at = COALESCE(ended_at, ?),
+                    elapsed_seconds = COALESCE(elapsed_seconds, ?),
+                    return_code = COALESCE(return_code, 4294967295),
+                    error_message = COALESCE(error_message, 'Review Preparation process was not found.'),
+                    updated_at = ?
+                WHERE id = ? AND status = 'running'
+                """,
+                (end_time, elapsed, end_time, session["id"]),
+            )
+        log_path = Path(str(session.get("log_path") or review_session_dir(int(session["id"])) / "review_preparation.log"))
+        append_log_note(log_path, "running status reconciled: review process was not found. Marking session stopped.")
+        fixed += 1
+    return fixed
 
 
 def reject_if_review_gpu_busy() -> None:

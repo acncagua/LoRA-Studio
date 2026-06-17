@@ -64,7 +64,14 @@ from app.services.machine_review import (
 from app.services.output_collector import collect_job_results
 from app.services.recommendations import create_draft_job_from_recommendation, list_recommendations, regenerate_recommendations, set_recommendation_status, write_recommendation_report
 from app.services.review_candidates import ensure_epoch_candidates, regenerate_epoch_candidates
-from app.services.review_sessions import ensure_candidate_review_plan, prepare_review_generation, review_session_summary, start_review_preparation
+from app.services.review_sessions import (
+    ensure_candidate_review_plan,
+    prepare_review_generation,
+    reconcile_stale_review_sessions,
+    review_session_summary,
+    start_review_preparation,
+    stop_review_preparation,
+)
 from app.services.reference_sets import (
     ROLE_LABELS,
     REFERENCE_TYPE_LABELS,
@@ -216,6 +223,7 @@ def on_startup() -> None:
     init_db()
     reconcile_stale_running_jobs()
     reconcile_stale_validation_generations()
+    reconcile_stale_review_sessions()
 
 
 def render(request: Request, template: str, **context: Any) -> HTMLResponse:
@@ -2293,6 +2301,7 @@ def job_detail(
 ) -> HTMLResponse:
     reconcile_stale_running_jobs()
     reconcile_stale_validation_generations()
+    reconcile_stale_review_sessions()
     job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -2431,6 +2440,18 @@ def job_review_preparation_run(job_id: int) -> RedirectResponse:
     except Exception as exc:
         return RedirectResponse(f"/jobs/{job_id}?review_prepare_error={quote(str(exc))}#review-preparation", status_code=303)
     return RedirectResponse(f"/jobs/{job_id}?review_prepare={quote(f'Review Preparationを開始しました。PID: {pid}')}#review-preparation", status_code=303)
+
+
+@app.post("/jobs/{job_id}/review-sessions/{session_id}/stop")
+def job_review_session_stop(job_id: int, session_id: int) -> RedirectResponse:
+    session = fetch_one("SELECT id FROM review_sessions WHERE id = ? AND job_id = ?", (session_id, job_id))
+    if session is None:
+        raise HTTPException(status_code=404, detail="Review Session not found")
+    try:
+        stop_review_preparation(session_id)
+    except Exception as exc:
+        return RedirectResponse(f"/jobs/{job_id}?review_prepare_error={quote(str(exc))}#review-preparation", status_code=303)
+    return RedirectResponse(f"/jobs/{job_id}?review_prepare={quote('Review Preparationを停止しました。')}#review-preparation", status_code=303)
 
 
 @app.get("/jobs/{job_id}/review-sessions/{session_id}/matrix", response_class=HTMLResponse)

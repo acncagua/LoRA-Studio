@@ -86,6 +86,11 @@
     {% else %}
     <span class="button disabled">Review Matrix未作成</span>
     {% endif %}
+    {% if review_preparation.session and review_preparation.session.status == 'running' %}
+    <form method="post" action="/jobs/{{ job.id }}/review-sessions/{{ review_preparation.session.id }}/stop">
+      <button type="submit" class="danger">Review Preparationを停止</button>
+    </form>
+    {% endif %}
   </div>
   {% if review_preparation.session %}
   <details class="log-tail-details" {% if review_preparation.session.status in ['running', 'failed'] %}open{% endif %}>
