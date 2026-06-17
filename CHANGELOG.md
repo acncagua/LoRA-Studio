@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased - Phase 11.5
+## v0.3.0-beta - 2026-06-17
+
+Release Version: v0.3.0-beta
+Internal Milestone: Phase 11.5
+
+LoRA Studio v0.3.0-beta は、Phase 11.5 時点の運用ベータリリースです。
+
+### Phase 11.5
 
 - OpenCLIP provider `open_clip` を試験導入しました。
 - 標準モデルを `ViT-B-32` / `laion2b_s34b_b79k` とし、512次元の画像embeddingを保存できるようにしました。
@@ -9,13 +16,13 @@
 - `transformers_clip` と同様、学習中または検証画像生成中はOpenCLIP Embedding Jobを開始しないようにしました。
 - mock providerはCI/テスト用として継続し、OpenCLIPとMachine Review Assistでprovider/modelを分けて保存します。
 
-## Unreleased - Phase 11.4.1
+### Phase 11.4.1
 
 - transformers_clip Machine Review Calibrationとして、Reference role分布、epoch別Dataset近傍傾向、CLIP ViT-B/32の読み方に関する注意文言を追加しました。
 - Job #12向けCalibration Reportを `runs/job_000012/reports/machine_review_calibration_job_000012.md` に出力しました。
 - Machine Assistは人間評価を置き換えず、顔専用判定ではないことをREADMEとUIで明確化しました。
 
-## Unreleased - Phase 11.4
+### Phase 11.4
 
 - 実embedding providerの初回実装として `transformers_clip` を追加しました。
 - 標準モデルを `openai/clip-vit-base-patch32` とし、512次元の画像embeddingを保存できるようにしました。
@@ -24,7 +31,7 @@
 - GPU競合を避けるため、学習中または検証画像生成中は実providerのEmbedding Jobを開始しないようにしました。
 - mock providerはCI/テスト用として継続します。
 
-## Unreleased - Phase 11.3
+### Phase 11.3
 
 - Reference Similarity Assist / Machine Review Assist初期版を追加しました。
 - `machine_review_scores`、`machine_review_jobs`、`machine_review_settings` を追加しました。
@@ -33,7 +40,7 @@
 - Job詳細、Validation Run詳細、Reference Set詳細、Embedding設定にMachine Review Assist関連の表示と実行導線を追加しました。
 - READMEにMachine Review Assist、Reference Similarity、Dataset Nearest Similarity、mock providerの注意、人間評価優先の説明を追加しました。
 
-## Unreleased - Phase 11.2
+### Phase 11.2
 
 - Embedding Cache / Feature Extraction Foundationを追加しました。
 - `embedding_models`、`embedding_settings`、`image_embeddings`、`embedding_jobs`、`embedding_job_items` を追加しました。
@@ -44,7 +51,7 @@
 - Maintenance / StorageにEmbedding cacheの容量表示とcleanup previewを追加しました。
 - Phase11.2ではreference similarity、prompt alignment、aesthetic score、overfit risk、Machine Review Assist採点、ChatGPT API連携、AI画像評価はまだ実装していません。
 
-## Unreleased - Phase 11.1
+### Phase 11.1
 
 - Reference Set / Reference Version管理を追加しました。
 - 既存Reference Setをv1へ移行し、既存Reference画像をversionへ紐づけるmigrationを追加しました。
