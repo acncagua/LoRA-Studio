@@ -324,10 +324,14 @@ def monitor_review_generation(
         try:
             imported = import_review_session_images(session_id)
             auto_embedding_after_review_generation(session_id, log_path)
+            scored = auto_machine_review_after_review_generation(session_id, log_path)
         except Exception as exc:
             status = "failed"
             error_message = f"{error_message}\nImport failed: {exc}".strip()
             append_log_note(log_path, f"generated image import failed: {exc}")
+        else:
+            with connect() as conn:
+                conn.execute("UPDATE review_sessions SET scored_image_count = ?, updated_at = ? WHERE id = ?", (scored, utc_now(), session_id))
     with connect() as conn:
         conn.execute(
             """
@@ -427,6 +431,49 @@ def auto_embedding_after_review_generation(session_id: int, log_path: Path) -> N
         append_log_note(log_path, f"Embedding coverage: ready={coverage.get('ready')} total={coverage.get('total')}.")
     except Exception as exc:
         append_log_note(log_path, f"Embedding auto step failed: {exc}")
+
+
+def auto_machine_review_after_review_generation(session_id: int, log_path: Path) -> int:
+    try:
+        from app.services.machine_review import run_machine_review
+    except Exception as exc:
+        append_log_note(log_path, f"Machine Review auto step skipped: import failed: {exc}")
+        return 0
+    try:
+        result = run_machine_review("review_session_images", session_id)
+        scored = int(result.get("scored") or 0)
+        link_machine_scores_to_review_images(session_id)
+        append_log_note(log_path, f"Auto machine review completed: scored={result.get('scored')} failed={result.get('failed')}.")
+        return scored
+    except Exception as exc:
+        append_log_note(log_path, f"Machine Review auto step failed: {exc}")
+        return 0
+
+
+def link_machine_scores_to_review_images(session_id: int) -> None:
+    session = fetch_one("SELECT * FROM review_sessions WHERE id = ?", (session_id,))
+    if session is None:
+        return
+    rows = fetch_all(
+        """
+        SELECT rsi.id AS image_id, mrs.id AS score_id
+        FROM review_session_images rsi
+        JOIN machine_review_scores mrs
+          ON mrs.source_type = 'review_session_image'
+         AND mrs.source_id = rsi.id
+        WHERE rsi.review_session_id = ?
+          AND mrs.job_id = ?
+        ORDER BY mrs.updated_at DESC, mrs.id DESC
+        """,
+        (session_id, session["job_id"]),
+    )
+    now = utc_now()
+    with connect() as conn:
+        for row in rows:
+            conn.execute(
+                "UPDATE review_session_images SET machine_review_score_id = ?, updated_at = ? WHERE id = ?",
+                (row["score_id"], now, row["image_id"]),
+            )
 
 
 def condition_for_review_file(path: Path, conditions: dict[int, dict[str, Any]], hashes: dict[str, dict[str, Any]]) -> dict[str, Any] | None:

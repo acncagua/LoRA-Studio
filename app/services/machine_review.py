@@ -21,6 +21,7 @@ from app.services.embedding_service import (
     embedding_status_for_source,
     latest_embedding_for,
     reference_image_sources,
+    review_session_image_sources,
     sample_image_sources,
     validation_image_sources,
 )
@@ -150,6 +151,23 @@ def context_for_validation_run(run_id: int) -> dict[str, Any]:
     }
 
 
+def context_for_review_session(session_id: int) -> dict[str, Any]:
+    session = fetch_one("SELECT * FROM review_sessions WHERE id = ?", (session_id,))
+    if session is None:
+        raise ValueError(f"Review session not found: {session_id}")
+    job_ctx = context_for_training_job(session["job_id"])
+    return {
+        **job_ctx,
+        "project_id": session["project_id"] or job_ctx["project_id"],
+        "job_id": session["job_id"],
+        "validation_run_id": None,
+        "dataset_id": session["dataset_id"] or job_ctx["dataset_id"],
+        "dataset_version_id": session["dataset_version_id"] or job_ctx["dataset_version_id"],
+        "reference_set_id": session["reference_set_id"] or job_ctx["reference_set_id"],
+        "reference_set_version_id": session["reference_set_version_id"] or job_ctx["reference_set_version_id"],
+    }
+
+
 VectorCache = dict[tuple[str, int | None, str, str], tuple[np.ndarray, dict[str, Any]] | None]
 
 
@@ -248,6 +266,16 @@ def source_metadata(source_type: str, source_id: int) -> dict[str, Any]:
         )
     elif source_type == "validation_image":
         row = fetch_one("SELECT * FROM validation_images WHERE id = ?", (source_id,))
+    elif source_type == "review_session_image":
+        row = fetch_one(
+            """
+            SELECT rsi.*, rsc.prompt, rsc.negative_prompt
+            FROM review_session_images rsi
+            LEFT JOIN review_session_conditions rsc ON rsc.id = rsi.condition_id
+            WHERE rsi.id = ?
+            """,
+            (source_id,),
+        )
     else:
         row = None
     return dict(row) if row else {}
@@ -465,6 +493,8 @@ def machine_review_context(target_type: str, target_id: int, reference_set_versi
         context = context_for_training_job(target_id)
     elif target_type == "validation_run_images":
         context = context_for_validation_run(target_id)
+    elif target_type == "review_session_images":
+        context = context_for_review_session(target_id)
     else:
         raise ValueError(f"Unsupported machine review target: {target_type}")
     if reference_set_version_id:
@@ -518,6 +548,8 @@ def sources_for_target(target_type: str, target_id: int) -> list[EmbeddingSource
         return sample_image_sources(target_id)
     if target_type == "validation_run_images":
         return validation_image_sources(target_id)
+    if target_type == "review_session_images":
+        return review_session_image_sources(target_id)
     return []
 
 
@@ -661,6 +693,9 @@ def machine_review_score_coverage(target_type: str, target_id: int, model_id: st
     elif target_type == "validation_run_images":
         source_type = "validation_image"
         where = "validation_run_id = ?"
+    elif target_type == "review_session_images":
+        source_type = "review_session_image"
+        where = "source_id IN (SELECT id FROM review_session_images WHERE review_session_id = ?)"
     else:
         source_type = ""
         where = "0"
