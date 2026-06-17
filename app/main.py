@@ -2455,15 +2455,44 @@ def job_review_preparation_plan(job_id: int) -> RedirectResponse:
     return RedirectResponse(f"/jobs/{job_id}?review_prepare=1#review-preparation", status_code=303)
 
 
+def _wants_json(request: Request) -> bool:
+    return request.headers.get("x-requested-with") == "fetch" or "application/json" in request.headers.get("accept", "")
+
+
+def _tail_file(path_value: str | None, max_lines: int = 20) -> str:
+    if not path_value:
+        return ""
+    path = Path(path_value)
+    if not path.exists() or not path.is_file():
+        return ""
+    try:
+        return "\n".join(path.read_text(encoding="utf-8", errors="replace").splitlines()[-max_lines:])
+    except OSError:
+        return ""
+
+
 @app.post("/jobs/{job_id}/review-preparation/run")
-def job_review_preparation_run(job_id: int) -> RedirectResponse:
+def job_review_preparation_run(request: Request, job_id: int):
     try:
         session = ensure_candidate_review_plan(job_id, force=True)
         if session is None:
+            if _wants_json(request):
+                return JSONResponse({"ok": False, "message": "候補epochまたは出力LoRAが見つかりません。"}, status_code=400)
             return RedirectResponse(f"/jobs/{job_id}?review_prepare_error={quote('候補epochまたは出力LoRAが見つかりません。')}#review-preparation", status_code=303)
         pid = start_review_preparation(int(session["id"]))
     except Exception as exc:
+        if _wants_json(request):
+            return JSONResponse({"ok": False, "message": str(exc)}, status_code=400)
         return RedirectResponse(f"/jobs/{job_id}?review_prepare_error={quote(str(exc))}#review-preparation", status_code=303)
+    if _wants_json(request):
+        return JSONResponse(
+            {
+                "ok": True,
+                "review_session_id": int(session["id"]),
+                "message": f"Review Preparationを開始しました。PID: {pid}",
+                "redirect_url": f"/jobs/{job_id}#review-preparation",
+            }
+        )
     return RedirectResponse(f"/jobs/{job_id}?review_prepare={quote(f'Review Preparationを開始しました。PID: {pid}')}#review-preparation", status_code=303)
 
 
@@ -2477,6 +2506,39 @@ def job_review_session_stop(job_id: int, session_id: int) -> RedirectResponse:
     except Exception as exc:
         return RedirectResponse(f"/jobs/{job_id}?review_prepare_error={quote(str(exc))}#review-preparation", status_code=303)
     return RedirectResponse(f"/jobs/{job_id}?review_prepare={quote('Review Preparationを停止しました。')}#review-preparation", status_code=303)
+
+
+@app.get("/jobs/{job_id}/review-sessions/{session_id}/status")
+def job_review_session_status(job_id: int, session_id: int) -> JSONResponse:
+    session = fetch_one("SELECT * FROM review_sessions WHERE id = ? AND job_id = ?", (session_id, job_id))
+    if session is None:
+        raise HTTPException(status_code=404, detail="Review Session not found")
+    generated = 0
+    if session["output_dir"]:
+        output_dir = Path(session["output_dir"])
+        if output_dir.exists():
+            generated = sum(1 for path in output_dir.rglob("*") if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"})
+    log_path = Path(session["log_path"]) if session["log_path"] else None
+    log_size = log_path.stat().st_size if log_path and log_path.exists() else 0
+    return JSONResponse(
+        {
+            "id": session_id,
+            "job_id": job_id,
+            "status": session["status"],
+            "expected_image_count": session["expected_image_count"] or 0,
+            "generated_image_count": session["generated_image_count"] or generated,
+            "live_generated_image_count": generated,
+            "imported_image_count": session["imported_image_count"] or 0,
+            "scored_image_count": session["scored_image_count"] or 0,
+            "generation_process_id": session["generation_process_id"],
+            "return_code": session["return_code"],
+            "log_size": log_size,
+            "log_tail": _tail_file(session["log_path"], 20),
+            "matrix_ready": bool(session["matrix_path"] and Path(session["matrix_path"]).exists()),
+            "matrix_url": f"/jobs/{job_id}/review-sessions/{session_id}/matrix" if session["matrix_path"] else "",
+            "error_message": session["error_message"] or "",
+        }
+    )
 
 
 @app.get("/jobs/{job_id}/review-sessions/{session_id}/matrix", response_class=HTMLResponse)

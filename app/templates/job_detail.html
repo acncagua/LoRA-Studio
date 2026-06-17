@@ -60,26 +60,26 @@
     {% if action_state.restore %}<form method="post" action="/jobs/{{ job.id }}/restore"><button type="submit">アーカイブから復元</button></form>{% endif %}
   </div>
 </section>
-<section id="review-preparation" class="notice">
+<section id="review-preparation" class="notice" {% if review_preparation.session %}data-review-preparation-session-id="{{ review_preparation.session.id }}" data-review-preparation-session-status="{{ review_preparation.session.status }}"{% endif %}>
   <h2>Review Preparation</h2>
   <p>採用前に候補epochを比較するための準備です。loss候補epochの前後を少数prompt / weightで生成し、横断Matrixで見比べます。採用後の45枚標準検証はWeight Calibrationとして別に実行します。</p>
   {% if review_preparation.session %}
   <div class="stats-grid">
-    <div><span>状態</span><strong>{{ review_preparation.session.status }}</strong></div>
+    <div><span>状態</span><strong data-review-preparation-status>{{ review_preparation.session.status }}</strong></div>
     <div><span>候補epoch</span><strong>{{ review_preparation.candidate_epochs|join(', ') if review_preparation.candidate_epochs else '-' }}</strong></div>
     <div><span>条件数</span><strong>{{ review_preparation.condition_count }}</strong></div>
-    <div><span>登録画像</span><strong>{{ review_preparation.image_count }}</strong></div>
+    <div><span>登録画像</span><strong data-review-preparation-images>{{ review_preparation.image_count }}</strong></div>
     {% if review_preparation.embedding_coverage %}
     <div><span>Embedding</span><strong>{{ review_preparation.embedding_coverage.ready }} / {{ review_preparation.embedding_coverage.total }}</strong></div>
     {% endif %}
-    <div><span>Machine Review</span><strong>{{ review_preparation.session.scored_image_count or 0 }} / {{ review_preparation.session.expected_image_count or review_preparation.condition_count }}</strong></div>
+    <div><span>Machine Review</span><strong data-review-preparation-scores>{{ review_preparation.session.scored_image_count or 0 }} / {{ review_preparation.session.expected_image_count or review_preparation.condition_count }}</strong></div>
   </div>
   {% else %}
   <p class="muted">候補epochレビュー計画はまだありません。学習完了後は結果取り込み時に自動作成されます。既存ジョブでは下のボタンで作成できます。</p>
   {% endif %}
   <div class="actions compact-actions">
-    <form method="post" action="/jobs/{{ job.id }}/review-preparation/run">
-      <button type="submit" {% if outputs|length == 0 or (review_preparation.session and review_preparation.session.status == 'running') %}disabled{% endif %}>候補Review Matrixを準備</button>
+    <form method="post" action="/jobs/{{ job.id }}/review-preparation/run" data-review-preparation-run-form>
+      <button type="submit" data-review-preparation-run-button {% if outputs|length == 0 or (review_preparation.session and review_preparation.session.status == 'running') %}disabled{% endif %}>候補Review Matrixを準備</button>
     </form>
     {% if review_preparation.can_open_matrix %}
     <a class="button" href="/jobs/{{ job.id }}/review-sessions/{{ review_preparation.session.id }}/matrix">Review Matrixを開く</a>
@@ -94,8 +94,8 @@
   </div>
   {% if review_preparation.session %}
   <details class="log-tail-details" {% if review_preparation.session.status in ['running', 'failed'] %}open{% endif %}>
-    <summary>Review Preparationログ末尾（最大20行 / {{ review_preparation.log_size }} bytes）</summary>
-    <pre class="mini-log">{{ review_preparation.log_tail or 'ログはまだありません。' }}</pre>
+    <summary>Review Preparationログ末尾（最大20行 / <span data-review-preparation-log-size>{{ review_preparation.log_size }}</span> bytes）</summary>
+    <pre class="mini-log" data-review-preparation-log>{{ review_preparation.log_tail or 'ログはまだありません。' }}</pre>
   </details>
   {% endif %}
 </section>

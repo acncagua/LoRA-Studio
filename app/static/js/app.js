@@ -114,6 +114,48 @@ document.addEventListener("submit", async (event) => {
 });
 
 document.addEventListener("submit", async (event) => {
+  const form = event.target.closest("[data-review-preparation-run-form]");
+  if (!form) {
+    return;
+  }
+  event.preventDefault();
+  const button = form.querySelector("[data-review-preparation-run-button]") || form.querySelector("button[type='submit']");
+  if (button) {
+    button.disabled = true;
+    button.dataset.originalText = button.textContent;
+    button.textContent = "開始中...";
+  }
+  updateReviewPreparationInline({
+    status: "starting",
+    message: "Review Preparationを開始しています。二重実行を避けるためボタンを無効化しました。",
+    log_tail: "Review Preparationを開始しています。sd-scripts起動後にログが更新されます。",
+  }, form);
+  try {
+    const response = await fetch(form.action, {
+      method: "POST",
+      body: new FormData(form),
+      headers: { "X-Requested-With": "fetch", "Accept": "application/json" },
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.ok === false) {
+      throw new Error(payload.message || await response.text());
+    }
+    showPageNotice(payload.message || "Review Preparationを開始しました。", "info", form);
+    if (payload.review_session_id) {
+      startReviewPreparationPolling(payload.review_session_id, form);
+    }
+  } catch (error) {
+    showPageNotice(error.message || "Review Preparationを開始できませんでした。", "warning", form);
+    if (button) {
+      button.disabled = false;
+      if (button.dataset.originalText) {
+        button.textContent = button.dataset.originalText;
+      }
+    }
+  }
+});
+
+document.addEventListener("submit", async (event) => {
   const form = event.target.closest("[data-reference-candidate-form]");
   if (!form) {
     return;
@@ -281,6 +323,92 @@ function showPageNotice(message, kind = "info", anchorForm = null) {
   }
   notice.className = kind === "warning" ? "notice warning" : "notice";
   notice.textContent = message;
+}
+
+function startReviewPreparationPolling(sessionId, anchorForm = null) {
+  const jobMatch = window.location.pathname.match(/\/jobs\/(\d+)/);
+  const jobId = jobMatch ? jobMatch[1] : null;
+  if (!jobId || !sessionId) {
+    return;
+  }
+  const poll = async () => {
+    try {
+      const response = await fetch(`/jobs/${jobId}/review-sessions/${sessionId}/status`, {
+        headers: { "Accept": "application/json" },
+      });
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      const payload = await response.json();
+      updateReviewPreparationInline(payload, anchorForm);
+      if (["completed", "failed", "stopped"].includes(payload.status)) {
+        window.setTimeout(() => {
+          const url = new URL(window.location.href);
+          url.searchParams.delete("review_prepare");
+          url.searchParams.delete("review_prepare_error");
+          url.hash = "review-preparation";
+          sessionStorage.setItem("loraStudioRestoreScrollY", String(window.scrollY || 0));
+          window.location.href = url.toString();
+        }, 1200);
+        return true;
+      }
+      return false;
+    } catch (error) {
+      showPageNotice(`Review Preparation状態確認に失敗: ${error.message}`, "warning", anchorForm);
+      return true;
+    }
+  };
+  poll().then((done) => {
+    if (done) {
+      return;
+    }
+    const timer = window.setInterval(async () => {
+      const donePolling = await poll();
+      if (donePolling) {
+        window.clearInterval(timer);
+      }
+    }, 2500);
+  });
+}
+
+function updateReviewPreparationInline(payload, anchorForm = null) {
+  const section = anchorForm?.closest("#review-preparation") || document.querySelector("#review-preparation") || document.body;
+  const status = section.querySelector("[data-review-preparation-status]");
+  if (status && payload.status) {
+    status.textContent = payload.status;
+  }
+  const images = section.querySelector("[data-review-preparation-images]");
+  if (images) {
+    const liveGenerated = payload.live_generated_image_count ?? payload.generated_image_count;
+    if (payload.imported_image_count !== undefined && payload.expected_image_count !== undefined) {
+      images.textContent = `${payload.imported_image_count} / ${payload.expected_image_count}（生成 ${liveGenerated ?? 0}）`;
+    }
+  }
+  const scores = section.querySelector("[data-review-preparation-scores]");
+  if (scores && payload.scored_image_count !== undefined && payload.expected_image_count !== undefined) {
+    scores.textContent = `${payload.scored_image_count} / ${payload.expected_image_count}`;
+  }
+  const logSize = section.querySelector("[data-review-preparation-log-size]");
+  if (logSize && payload.log_size !== undefined) {
+    logSize.textContent = payload.log_size;
+  }
+  const log = section.querySelector("[data-review-preparation-log]");
+  if (log) {
+    log.classList.remove("empty");
+    log.textContent = payload.log_tail || payload.message || "処理開始待ちです。sd-scripts起動後にログが更新されます。";
+  }
+}
+
+function initReviewPreparationPolling() {
+  const section = document.querySelector("#review-preparation[data-review-preparation-session-id]");
+  if (!section) {
+    return;
+  }
+  const status = section.getAttribute("data-review-preparation-session-status");
+  const sessionId = section.getAttribute("data-review-preparation-session-id");
+  if (sessionId && ["running", "starting"].includes(status)) {
+    startReviewPreparationPolling(sessionId, section);
+  }
 }
 
 function clearQueryNoticeParams(keys) {
@@ -941,3 +1069,4 @@ document.addEventListener("DOMContentLoaded", initValidationGenerationDetailPoll
 document.addEventListener("DOMContentLoaded", restoreScrollAfterInlineRefresh);
 document.addEventListener("DOMContentLoaded", initEmbeddingJobStatusPolling);
 document.addEventListener("DOMContentLoaded", initMachineReviewJobStatusPolling);
+document.addEventListener("DOMContentLoaded", initReviewPreparationPolling);

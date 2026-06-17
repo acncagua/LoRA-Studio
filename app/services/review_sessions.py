@@ -270,28 +270,52 @@ def start_review_preparation(session_id: int) -> int:
     log_path = Path(session["log_path"])
     log_path.parent.mkdir(parents=True, exist_ok=True)
     archive_existing_log(log_path)
-    log_handle = log_path.open("ab")
     start_time = utc_now()
     env = sd_scripts_subprocess_env()
-    first_process = subprocess.Popen(
-        commands[0]["argv"],
-        cwd=str(sd_scripts_path),
-        stdout=log_handle,
-        stderr=subprocess.STDOUT,
-        shell=False,
-        env=env,
-    )
     with connect() as conn:
         conn.execute(
             """
             UPDATE review_sessions
-            SET status = 'running', generation_process_id = ?, started_at = ?,
+            SET status = 'running', generation_process_id = NULL, started_at = ?,
                 ended_at = NULL, elapsed_seconds = NULL, return_code = NULL,
                 generated_image_count = 0, imported_image_count = 0,
                 scored_image_count = 0, error_message = NULL, updated_at = ?
             WHERE id = ?
             """,
-            (first_process.pid, start_time, start_time, session_id),
+            (start_time, start_time, session_id),
+        )
+    append_log_note(log_path, f"Review Preparation starting. commands={len(commands)}")
+    append_log_note(log_path, f"First command: {commands[0].get('name') or 'gen_img.py'}")
+    log_handle = log_path.open("ab")
+    try:
+        first_process = subprocess.Popen(
+            commands[0]["argv"],
+            cwd=str(sd_scripts_path),
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            shell=False,
+            env=env,
+        )
+    except Exception as exc:
+        log_handle.close()
+        end_time = utc_now()
+        append_log_note(log_path, f"Review Preparation failed to start: {exc}")
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE review_sessions
+                SET status = 'failed', generation_process_id = NULL,
+                    return_code = -1, ended_at = ?, elapsed_seconds = ?,
+                    error_message = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (end_time, elapsed_seconds(start_time, end_time), str(exc), end_time, session_id),
+            )
+        raise
+    with connect() as conn:
+        conn.execute(
+            "UPDATE review_sessions SET generation_process_id = ?, updated_at = ? WHERE id = ?",
+            (first_process.pid, utc_now(), session_id),
         )
     thread = threading.Thread(
         target=monitor_review_generation,
