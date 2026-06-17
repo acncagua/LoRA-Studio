@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import subprocess
+import threading
 from pathlib import Path
 from typing import Any
 
 from app import settings
 from app.db import connect, fetch_all, fetch_one, latest_environment, utc_now
+from app.services.image_store import verify_image_file
+from app.services.output_collector import image_size, safe_sha256_file
 from app.services.review_candidates import ensure_epoch_candidates
-from app.services.validation_generation import common_gen_img_args, sanitize_filename
+from app.services.training_runner import archive_existing_log, elapsed_seconds, sd_scripts_subprocess_env
+from app.services.validation_generation import IMAGE_SUFFIXES, common_gen_img_args, count_generated_images, sanitize_filename
 
 
 PRESET_ID = "candidate_epoch_review_v1"
@@ -201,6 +207,216 @@ def prepare_review_generation(session_id: int) -> dict[str, Any]:
             (str(run_dir), str(out_dir), str(prompt_all_path), json.dumps(payload, ensure_ascii=False), str(log_path), now, session_id),
         )
     return {"session_id": session_id, "run_dir": str(run_dir), "output_dir": str(out_dir), "commands": commands}
+
+
+def start_review_preparation(session_id: int) -> int:
+    reject_if_review_gpu_busy()
+    prepare_review_generation(session_id)
+    session = fetch_one("SELECT * FROM review_sessions WHERE id = ?", (session_id,))
+    if session is None:
+        raise ValueError(f"Review Session not found: {session_id}")
+    payload = json.loads(session["command_argv_json"] or "{}")
+    commands = payload.get("commands") or []
+    if not commands:
+        raise RuntimeError("生成対象の条件がありません。")
+    environment = latest_environment()
+    if environment is None:
+        raise RuntimeError("sd-scripts環境が登録されていません。")
+    sd_scripts_path = Path(environment["sd_scripts_path"])
+    log_path = Path(session["log_path"])
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    archive_existing_log(log_path)
+    log_handle = log_path.open("ab")
+    start_time = utc_now()
+    env = sd_scripts_subprocess_env()
+    first_process = subprocess.Popen(
+        commands[0]["argv"],
+        cwd=str(sd_scripts_path),
+        stdout=log_handle,
+        stderr=subprocess.STDOUT,
+        shell=False,
+        env=env,
+    )
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE review_sessions
+            SET status = 'running', generation_process_id = ?, started_at = ?,
+                ended_at = NULL, elapsed_seconds = NULL, return_code = NULL,
+                generated_image_count = 0, imported_image_count = 0,
+                scored_image_count = 0, error_message = NULL, updated_at = ?
+            WHERE id = ?
+            """,
+            (first_process.pid, start_time, start_time, session_id),
+        )
+    thread = threading.Thread(
+        target=monitor_review_generation,
+        args=(session_id, first_process, commands, 0, log_handle, start_time, log_path, sd_scripts_path, env),
+        daemon=True,
+    )
+    thread.start()
+    return first_process.pid
+
+
+def reject_if_review_gpu_busy() -> None:
+    running_job = fetch_one("SELECT id FROM training_jobs WHERE status = 'running' LIMIT 1")
+    if running_job:
+        raise RuntimeError(f"学習ジョブ #{running_job['id']} が実行中です。")
+    running_generation = fetch_one("SELECT id FROM validation_generation_runs WHERE status = 'running' LIMIT 1")
+    if running_generation:
+        raise RuntimeError(f"Validation生成 #{running_generation['id']} が実行中です。")
+    running_embedding = fetch_one("SELECT id FROM embedding_jobs WHERE status = 'running' LIMIT 1")
+    if running_embedding:
+        raise RuntimeError(f"Embedding Job #{running_embedding['id']} が実行中です。")
+    running_review = fetch_one("SELECT id FROM review_sessions WHERE status = 'running' LIMIT 1")
+    if running_review:
+        raise RuntimeError(f"Review Preparation #{running_review['id']} が実行中です。")
+
+
+def monitor_review_generation(
+    session_id: int,
+    process: subprocess.Popen[bytes],
+    commands: list[dict[str, Any]],
+    command_index: int,
+    log_handle,
+    start_time_text: str,
+    log_path: Path,
+    sd_scripts_path: Path,
+    env: dict[str, str],
+) -> None:
+    return_code = process.wait()
+    current = fetch_one("SELECT * FROM review_sessions WHERE id = ?", (session_id,))
+    if current is not None and current["status"] == "stopped":
+        log_handle.close()
+        return
+    if return_code == 0 and command_index + 1 < len(commands):
+        next_process = subprocess.Popen(
+            commands[command_index + 1]["argv"],
+            cwd=str(sd_scripts_path),
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            shell=False,
+            env=env,
+        )
+        with connect() as conn:
+            conn.execute("UPDATE review_sessions SET generation_process_id = ?, updated_at = ? WHERE id = ?", (next_process.pid, utc_now(), session_id))
+        monitor_review_generation(session_id, next_process, commands, command_index + 1, log_handle, start_time_text, log_path, sd_scripts_path, env)
+        return
+
+    log_handle.close()
+    session = fetch_one("SELECT * FROM review_sessions WHERE id = ?", (session_id,))
+    if session is None:
+        return
+    end_time = utc_now()
+    status = "completed" if return_code == 0 else "failed"
+    generated = count_generated_images(Path(session["output_dir"]))
+    imported = 0
+    error_message = session["error_message"] or ""
+    if status == "completed":
+        try:
+            imported = import_review_session_images(session_id)
+        except Exception as exc:
+            status = "failed"
+            error_message = f"{error_message}\nImport failed: {exc}".strip()
+            append_log_note(log_path, f"generated image import failed: {exc}")
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE review_sessions
+            SET status = ?, generation_process_id = NULL, return_code = ?,
+                ended_at = ?, elapsed_seconds = ?, generated_image_count = ?,
+                imported_image_count = ?, error_message = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (status, return_code, end_time, elapsed_seconds(start_time_text, end_time), generated, imported, error_message, end_time, session_id),
+        )
+
+
+def import_review_session_images(session_id: int) -> int:
+    session = fetch_one("SELECT * FROM review_sessions WHERE id = ?", (session_id,))
+    if session is None:
+        raise ValueError(f"Review Session not found: {session_id}")
+    output_dir = Path(session["output_dir"]) if session["output_dir"] else review_session_output_dir(session_id)
+    conditions = {int(row["id"]): dict(row) for row in fetch_all("SELECT * FROM review_session_conditions WHERE review_session_id = ?", (session_id,))}
+    hashes = {str(row["condition_hash"]): dict(row) for row in conditions.values()}
+    imported = 0
+    now = utc_now()
+    for path in sorted(output_dir.rglob("*")):
+        if path.suffix.lower() not in IMAGE_SUFFIXES or not path.is_file():
+            continue
+        try:
+            verify_image_file(path)
+        except ValueError:
+            continue
+        condition = condition_for_review_file(path, conditions, hashes)
+        if condition is None:
+            continue
+        existing = fetch_one("SELECT id FROM review_session_images WHERE review_session_id = ? AND image_path = ?", (session_id, str(path)))
+        if existing is not None:
+            continue
+        sha256, _metadata_error = safe_sha256_file(path)
+        width, height = image_size(path)
+        with connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO review_session_images(
+                    review_session_id, condition_id, job_id, epoch, output_id,
+                    prompt_key, prompt_role, seed, lora_weight, image_path,
+                    file_size, sha256, width, height, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session_id,
+                    condition["id"],
+                    session["job_id"],
+                    condition["epoch"],
+                    condition["output_id"],
+                    condition["prompt_key"],
+                    condition["prompt_role"],
+                    condition["seed"],
+                    condition["lora_weight"],
+                    str(path),
+                    path.stat().st_size,
+                    sha256,
+                    width,
+                    height,
+                    now,
+                    now,
+                ),
+            )
+            image_id = int(cur.lastrowid)
+            conn.execute(
+                """
+                UPDATE review_session_conditions
+                SET image_path = ?, image_id = ?, status = 'generated', updated_at = ?
+                WHERE id = ?
+                """,
+                (str(path), image_id, now, condition["id"]),
+            )
+        imported += 1
+    return imported
+
+
+def condition_for_review_file(path: Path, conditions: dict[int, dict[str, Any]], hashes: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    stem = path.stem
+    id_match = re.search(r"rc(\d+)", stem)
+    if id_match:
+        condition = conditions.get(int(id_match.group(1)))
+        if condition:
+            return condition
+    for condition_hash, condition in hashes.items():
+        if condition_hash[:12] in stem or condition_hash in stem:
+            return condition
+    return None
+
+
+def append_log_note(log_path: Path, message: str) -> None:
+    try:
+        with log_path.open("a", encoding="utf-8", errors="replace") as handle:
+            handle.write(f"\n[LoRA-Studio] {message}\n")
+    except OSError:
+        pass
 
 
 def group_conditions_by_lora(conditions: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
