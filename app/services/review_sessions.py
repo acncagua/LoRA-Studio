@@ -15,7 +15,7 @@ from app.db import connect, fetch_all, fetch_one, latest_environment, utc_now
 from app.services.image_store import verify_image_file
 from app.services.output_collector import image_size, safe_sha256_file
 from app.services.review_candidates import ensure_epoch_candidates
-from app.services.training_runner import archive_existing_log, elapsed_seconds, sd_scripts_subprocess_env
+from app.services.training_runner import archive_existing_log, decode_log_bytes, elapsed_seconds, sd_scripts_subprocess_env
 from app.services.validation_generation import IMAGE_SUFFIXES, common_gen_img_args, count_generated_images, sanitize_filename
 from app.services.validation_generation import matrix_machine_score
 
@@ -120,6 +120,8 @@ def review_session_summary(job_id: int) -> dict[str, Any]:
         "matrix_path": matrix_path,
         "can_open_matrix": bool(matrix_path and Path(matrix_path).exists()),
         "embedding_coverage": embedding,
+        "log_tail": review_session_log_tail(session, max_lines=20),
+        "log_size": review_session_log_size(session),
     }
 
 
@@ -129,6 +131,26 @@ def review_session_dir(session_id: int) -> Path:
 
 def review_session_output_dir(session_id: int) -> Path:
     return review_session_dir(session_id) / "images"
+
+
+def review_session_log_tail(session: dict[str, Any], max_lines: int = 20) -> str:
+    log_path = session.get("log_path") or ""
+    if not log_path:
+        return ""
+    path = Path(str(log_path))
+    if not path.exists():
+        return ""
+    data = path.read_bytes()
+    text = decode_log_bytes(data)
+    return "\n".join(text.splitlines()[-max_lines:])
+
+
+def review_session_log_size(session: dict[str, Any]) -> int:
+    log_path = session.get("log_path") or ""
+    if not log_path:
+        return 0
+    path = Path(str(log_path))
+    return path.stat().st_size if path.exists() else 0
 
 
 def prepare_review_generation(session_id: int) -> dict[str, Any]:

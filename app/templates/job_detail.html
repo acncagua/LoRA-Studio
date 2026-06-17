@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block content %}
-{% if job.status == 'running' %}<meta http-equiv="refresh" content="8">{% endif %}
+{% if job.status == 'running' or (review_preparation.session and review_preparation.session.status == 'running') %}<meta http-equiv="refresh" content="8">{% endif %}
 <nav class="breadcrumbs"><a href="/">ダッシュボード</a><a href="/jobs">学習ジョブ一覧</a><span>学習ジョブ #{{ job.id }}</span></nav>
 <header class="page-head">
   <h1>#{{ job.id }} {{ job.name }}</h1>
@@ -87,6 +87,12 @@
     <span class="button disabled">Review Matrix未作成</span>
     {% endif %}
   </div>
+  {% if review_preparation.session %}
+  <details class="log-tail-details" {% if review_preparation.session.status in ['running', 'failed'] %}open{% endif %}>
+    <summary>Review Preparationログ末尾（最大20行 / {{ review_preparation.log_size }} bytes）</summary>
+    <pre class="mini-log">{{ review_preparation.log_tail or 'ログはまだありません。' }}</pre>
+  </details>
+  {% endif %}
 </section>
 {% if project and job.status == 'prepared' and pilot_guidance %}
 <section>
