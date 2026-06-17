@@ -155,6 +155,18 @@ Default models:
 The mock provider remains available for tests and CI.
 Model downloads are allowed only when the embedding setting explicitly enables model download.
 
+### Candidate Review Preparation
+
+After a training job completes, LoRA-Studio can prepare a small pre-selection review matrix before you choose the final epoch.
+
+The Review Preparation pipeline uses loss candidate epochs and their neighboring epochs, generates a compact set of images with sd-scripts, registers the images, computes embeddings, runs Machine Review Assist, and writes a cross-epoch matrix HTML file.
+
+This is separate from Validation Runs:
+
+- Review Preparation is for choosing a candidate epoch before adoption.
+- Weight Calibration / Validation Runs are for checking LoRA weights after an epoch has been selected.
+- Standard Validation 45-image runs should usually happen after candidate selection, not before every epoch comparison.
+
 ## Current Scope
 
 LoRA-Studio currently focuses on:

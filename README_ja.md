@@ -529,6 +529,20 @@ Machine Reviewはbackground jobとして実行されます。HTTPリクエスト
 
 現時点ではaesthetic score、prompt alignment、顔類似度判定、ChatGPT API評価、AI画像評価は実装していません。これらは将来拡張です。
 
+### Review Preparation Pipeline
+
+学習ジョブ完了後、採用epochを決める前に、Job詳細の `Review Preparation` から候補epoch比較用Matrixを一括準備できます。
+
+Review Preparationは、loss候補epochとその前後epochを対象に、少数のprompt / seed / weightでsd-scripts画像生成を行い、生成画像のDB登録、Embedding計算、Machine Review Assist、横断Matrix HTML作成までをbackgroundで実行します。
+
+この機能は採用前のepoch比較用です。採用後にweightを詰める標準45枚検証とは役割を分けます。
+
+- Review Preparation: 採用前に候補epochを比較する。
+- Weight Calibration / 検証Run: 採用候補LoRAのweight差を確認する。
+- Standard Validation 45枚: 通常は採用epochを絞った後に実行する。
+
+候補Review Matrixは `exports/review_sessions/review_session_xxxxxx/review_matrix.html` に保存され、Job詳細の `Review Matrixを開く` から確認できます。
+
 ## 提案エンジンと次回実験提案
 
 Job詳細の `提案を再生成` は、loss summary、epoch summary、sample rating、External Validation、推奨weight、Dataset trigger consistencyを見て、次回試すべき実験案をルールベースで作成します。提案は `experiment_recommendations` に保存され、Job詳細とLoRAライブラリのProfile編集画面で確認できます。
