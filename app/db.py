@@ -352,6 +352,45 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "log_path": "TEXT",
         },
     )
+    ensure_columns(
+        conn,
+        "review_sessions",
+        {
+            "project_id": "INTEGER",
+            "reference_set_id": "INTEGER",
+            "reference_set_version_id": "INTEGER",
+            "dataset_id": "INTEGER",
+            "dataset_version_id": "INTEGER",
+            "embedding_model_id": "TEXT",
+            "machine_review_job_id": "INTEGER",
+            "generation_process_id": "INTEGER",
+            "return_code": "INTEGER",
+            "matrix_path": "TEXT",
+            "log_path": "TEXT",
+            "error_message": "TEXT",
+            "elapsed_seconds": "INTEGER",
+        },
+    )
+    ensure_columns(
+        conn,
+        "review_session_conditions",
+        {
+            "output_id": "INTEGER",
+            "lora_path": "TEXT",
+            "prompt_role": "TEXT",
+            "image_path": "TEXT",
+            "image_id": "INTEGER",
+            "status": "TEXT NOT NULL DEFAULT 'planned'",
+        },
+    )
+    ensure_columns(
+        conn,
+        "review_session_images",
+        {
+            "machine_review_score_id": "INTEGER",
+            "deleted_at": "TEXT",
+        },
+    )
     conn.executescript(
         """
         CREATE UNIQUE INDEX IF NOT EXISTS idx_training_outputs_job_path
@@ -418,6 +457,18 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             ON machine_review_scores(validation_run_id);
         CREATE INDEX IF NOT EXISTS idx_machine_review_jobs_status
             ON machine_review_jobs(status);
+        CREATE INDEX IF NOT EXISTS idx_review_sessions_job
+            ON review_sessions(job_id);
+        CREATE INDEX IF NOT EXISTS idx_review_sessions_status
+            ON review_sessions(status);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_review_session_conditions_hash
+            ON review_session_conditions(review_session_id, condition_hash);
+        CREATE INDEX IF NOT EXISTS idx_review_session_conditions_session
+            ON review_session_conditions(review_session_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_review_session_images_path
+            ON review_session_images(review_session_id, image_path);
+        CREATE INDEX IF NOT EXISTS idx_review_session_images_session
+            ON review_session_images(review_session_id);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_selected_lora_profiles_job_output
             ON selected_lora_profiles(job_id, selected_output_id);
         CREATE INDEX IF NOT EXISTS idx_selected_lora_profiles_project
@@ -1707,6 +1758,49 @@ CREATE TABLE IF NOT EXISTS validation_generation_runs (
     generated_image_count INTEGER NOT NULL DEFAULT 0,
     imported_image_count INTEGER NOT NULL DEFAULT 0,
     error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS review_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL, project_id INTEGER,
+    reference_set_id INTEGER, reference_set_version_id INTEGER,
+    dataset_id INTEGER, dataset_version_id INTEGER,
+    embedding_model_id TEXT, machine_review_job_id INTEGER,
+    name TEXT NOT NULL, preset_id TEXT NOT NULL DEFAULT 'candidate_epoch_review_v1',
+    preset_snapshot_json TEXT,
+    candidate_epochs_json TEXT, prompt_keys_json TEXT, weights_json TEXT,
+    seed INTEGER NOT NULL DEFAULT 111111,
+    expected_image_count INTEGER NOT NULL DEFAULT 0,
+    generated_image_count INTEGER NOT NULL DEFAULT 0,
+    imported_image_count INTEGER NOT NULL DEFAULT 0,
+    scored_image_count INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'planned',
+    run_dir TEXT, output_dir TEXT, prompt_file_path TEXT, command_argv_json TEXT,
+    generation_process_id INTEGER, return_code INTEGER,
+    matrix_path TEXT, log_path TEXT, error_message TEXT,
+    started_at TEXT, ended_at TEXT, elapsed_seconds INTEGER,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, memo TEXT
+);
+CREATE TABLE IF NOT EXISTS review_session_conditions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    review_session_id INTEGER NOT NULL, job_id INTEGER NOT NULL,
+    epoch INTEGER, output_id INTEGER, lora_path TEXT,
+    prompt_key TEXT NOT NULL, prompt_role TEXT, prompt TEXT NOT NULL,
+    negative_prompt TEXT, seed INTEGER NOT NULL, lora_weight REAL NOT NULL,
+    hires_enabled INTEGER NOT NULL DEFAULT 0, width INTEGER, height INTEGER,
+    sampler TEXT, steps INTEGER, cfg_scale REAL,
+    condition_hash TEXT NOT NULL, expected_order INTEGER NOT NULL,
+    image_path TEXT, image_id INTEGER,
+    status TEXT NOT NULL DEFAULT 'planned',
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS review_session_images (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    review_session_id INTEGER NOT NULL, condition_id INTEGER,
+    job_id INTEGER NOT NULL, epoch INTEGER, output_id INTEGER,
+    prompt_key TEXT, prompt_role TEXT, seed INTEGER, lora_weight REAL,
+    image_path TEXT NOT NULL, file_size INTEGER, sha256 TEXT,
+    width INTEGER, height INTEGER, machine_review_score_id INTEGER,
+    deleted_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS validation_expected_conditions (
     id INTEGER PRIMARY KEY AUTOINCREMENT, validation_run_id INTEGER NOT NULL,
