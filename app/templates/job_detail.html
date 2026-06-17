@@ -69,6 +69,9 @@
     <div><span>候補epoch</span><strong>{{ review_preparation.candidate_epochs|join(', ') if review_preparation.candidate_epochs else '-' }}</strong></div>
     <div><span>条件数</span><strong>{{ review_preparation.condition_count }}</strong></div>
     <div><span>登録画像</span><strong>{{ review_preparation.image_count }}</strong></div>
+    {% if review_preparation.embedding_coverage %}
+    <div><span>Embedding</span><strong>{{ review_preparation.embedding_coverage.ready }} / {{ review_preparation.embedding_coverage.total }}</strong></div>
+    {% endif %}
     <div><span>Machine Review</span><strong>{{ review_preparation.session.scored_image_count or 0 }} / {{ review_preparation.session.expected_image_count or review_preparation.condition_count }}</strong></div>
   </div>
   {% else %}

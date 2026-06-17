@@ -22,6 +22,7 @@ JOB_TYPE_LABELS = {
     "reference_set_version": "Reference Set Version",
     "training_job_samples": "Sample Images",
     "validation_run": "Validation Run",
+    "review_session": "Review Session",
     "selected_sources": "Selected Sources",
 }
 
@@ -468,6 +469,25 @@ def validation_image_sources(validation_run_id: int) -> list[EmbeddingSource]:
     ]
 
 
+def review_session_image_sources(review_session_id: int) -> list[EmbeddingSource]:
+    session = fetch_one("SELECT * FROM review_sessions WHERE id = ?", (review_session_id,))
+    rows = fetch_all("SELECT * FROM review_session_images WHERE review_session_id = ? AND deleted_at IS NULL ORDER BY id", (review_session_id,))
+    return [
+        EmbeddingSource(
+            source_type="review_session_image",
+            source_id=row["id"],
+            source_path=row["image_path"],
+            project_id=session["project_id"] if session else None,
+            dataset_id=session["dataset_id"] if session else None,
+            dataset_version_id=session["dataset_version_id"] if session else None,
+            reference_set_id=session["reference_set_id"] if session else None,
+            reference_set_version_id=session["reference_set_version_id"] if session else None,
+            job_id=row["job_id"],
+        )
+        for row in rows
+    ]
+
+
 def sources_for_job_type(job_type: str, target_id: int) -> list[EmbeddingSource]:
     if job_type == "dataset_version":
         return dataset_image_sources(target_id)
@@ -477,6 +497,8 @@ def sources_for_job_type(job_type: str, target_id: int) -> list[EmbeddingSource]
         return sample_image_sources(target_id)
     if job_type == "validation_run":
         return validation_image_sources(target_id)
+    if job_type == "review_session":
+        return review_session_image_sources(target_id)
     return []
 
 

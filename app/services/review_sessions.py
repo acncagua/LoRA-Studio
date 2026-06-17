@@ -88,6 +88,7 @@ def review_session_summary(job_id: int) -> dict[str, Any]:
             "candidate_epochs": [],
             "matrix_path": "",
             "can_open_matrix": False,
+            "embedding_coverage": None,
         }
     condition_count = fetch_one(
         "SELECT COUNT(*) AS c FROM review_session_conditions WHERE review_session_id = ?",
@@ -102,6 +103,12 @@ def review_session_summary(job_id: int) -> dict[str, Any]:
     except json.JSONDecodeError:
         candidate_epochs = []
     matrix_path = session.get("matrix_path") or ""
+    try:
+        from app.services.embedding_service import embedding_coverage
+
+        embedding = embedding_coverage("review_session", int(session["id"]))
+    except Exception:
+        embedding = None
     return {
         "session": session,
         "condition_count": int(condition_count["c"] if condition_count else 0),
@@ -109,6 +116,7 @@ def review_session_summary(job_id: int) -> dict[str, Any]:
         "candidate_epochs": candidate_epochs,
         "matrix_path": matrix_path,
         "can_open_matrix": bool(matrix_path and Path(matrix_path).exists()),
+        "embedding_coverage": embedding,
     }
 
 
@@ -315,6 +323,7 @@ def monitor_review_generation(
     if status == "completed":
         try:
             imported = import_review_session_images(session_id)
+            auto_embedding_after_review_generation(session_id, log_path)
         except Exception as exc:
             status = "failed"
             error_message = f"{error_message}\nImport failed: {exc}".strip()
@@ -396,6 +405,28 @@ def import_review_session_images(session_id: int) -> int:
             )
         imported += 1
     return imported
+
+
+def auto_embedding_after_review_generation(session_id: int, log_path: Path) -> None:
+    try:
+        from app.services.embedding_service import create_embedding_job, embedding_coverage
+        from app.services.embedding_worker import run_embedding_job
+    except Exception as exc:
+        append_log_note(log_path, f"Embedding auto step skipped: import failed: {exc}")
+        return
+    try:
+        embedding_job_id = create_embedding_job("review_session", session_id, recompute="missing")
+        embedding_job = fetch_one("SELECT total_count FROM embedding_jobs WHERE id = ?", (embedding_job_id,))
+        total = int(embedding_job["total_count"] or 0) if embedding_job else 0
+        if total:
+            append_log_note(log_path, f"Auto embedding: review_session #{session_id}, {total} item(s).")
+            run_embedding_job(embedding_job_id)
+        else:
+            append_log_note(log_path, f"Auto embedding: review_session #{session_id}, no missing item.")
+        coverage = embedding_coverage("review_session", session_id)
+        append_log_note(log_path, f"Embedding coverage: ready={coverage.get('ready')} total={coverage.get('total')}.")
+    except Exception as exc:
+        append_log_note(log_path, f"Embedding auto step failed: {exc}")
 
 
 def condition_for_review_file(path: Path, conditions: dict[int, dict[str, Any]], hashes: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
