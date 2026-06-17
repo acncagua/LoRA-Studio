@@ -531,41 +531,54 @@ def import_review_session_images(session_id: int) -> int:
     return imported
 
 
+def wait_for_review_session_embedding_job(embedding_job_id: int, log_path: Path) -> None:
+    deadline = time.monotonic() + 60 * 60
+    while time.monotonic() < deadline:
+        row = fetch_one(
+            "SELECT status, ready_count, failed_count, processed_count, total_count, error_message FROM embedding_jobs WHERE id = ?",
+            (embedding_job_id,),
+        )
+        if row is None:
+            append_log_note(log_path, f"Auto embedding: job #{embedding_job_id} disappeared.")
+            return
+        if row["status"] not in {"planned", "running"}:
+            append_log_note(
+                log_path,
+                "Auto embedding finished: "
+                f"status={row['status']} ready={row['ready_count']} "
+                f"failed={row['failed_count']} processed={row['processed_count']}/{row['total_count']} "
+                f"error={row['error_message'] or ''}",
+            )
+            return
+        time.sleep(2)
+    append_log_note(log_path, f"Auto embedding timed out: job #{embedding_job_id}.")
+
+
+def run_review_session_embedding_job(session_id: int, log_path: Path, reason: str) -> dict[str, Any]:
+    from app.services.embedding_service import create_embedding_job, embedding_coverage, start_embedding_job
+
+    embedding_job_id = create_embedding_job("review_session", session_id, recompute="missing")
+    embedding_job = fetch_one("SELECT total_count FROM embedding_jobs WHERE id = ?", (embedding_job_id,))
+    total = int(embedding_job["total_count"] or 0) if embedding_job else 0
+    if total:
+        append_log_note(log_path, f"Auto embedding ({reason}): review_session #{session_id}, {total} item(s).")
+        start_embedding_job(embedding_job_id)
+        wait_for_review_session_embedding_job(embedding_job_id, log_path)
+    else:
+        append_log_note(log_path, f"Auto embedding ({reason}): review_session #{session_id}, no missing/stale item.")
+    coverage = embedding_coverage("review_session", session_id)
+    append_log_note(
+        log_path,
+        "Embedding coverage: "
+        f"ready={coverage.get('ready')} stale={coverage.get('stale')} "
+        f"missing={coverage.get('missing')} not_computed={coverage.get('not_computed')} total={coverage.get('total')}.",
+    )
+    return coverage
+
+
 def auto_embedding_after_review_generation(session_id: int, log_path: Path) -> None:
     try:
-        from app.services.embedding_service import create_embedding_job, embedding_coverage, start_embedding_job
-    except Exception as exc:
-        append_log_note(log_path, f"Embedding auto step skipped: import failed: {exc}")
-        return
-    try:
-        embedding_job_id = create_embedding_job("review_session", session_id, recompute="missing")
-        embedding_job = fetch_one("SELECT total_count FROM embedding_jobs WHERE id = ?", (embedding_job_id,))
-        total = int(embedding_job["total_count"] or 0) if embedding_job else 0
-        if total:
-            append_log_note(log_path, f"Auto embedding: review_session #{session_id}, {total} item(s).")
-            start_embedding_job(embedding_job_id)
-            deadline = time.monotonic() + 60 * 60
-            while time.monotonic() < deadline:
-                row = fetch_one("SELECT status, ready_count, failed_count, processed_count, total_count, error_message FROM embedding_jobs WHERE id = ?", (embedding_job_id,))
-                if row is None:
-                    append_log_note(log_path, f"Auto embedding: job #{embedding_job_id} disappeared.")
-                    break
-                if row["status"] not in {"planned", "running"}:
-                    append_log_note(
-                        log_path,
-                        "Auto embedding finished: "
-                        f"status={row['status']} ready={row['ready_count']} "
-                        f"failed={row['failed_count']} processed={row['processed_count']}/{row['total_count']} "
-                        f"error={row['error_message'] or ''}",
-                    )
-                    break
-                time.sleep(2)
-            else:
-                append_log_note(log_path, f"Auto embedding timed out: job #{embedding_job_id}.")
-        else:
-            append_log_note(log_path, f"Auto embedding: review_session #{session_id}, no missing item.")
-        coverage = embedding_coverage("review_session", session_id)
-        append_log_note(log_path, f"Embedding coverage: ready={coverage.get('ready')} total={coverage.get('total')}.")
+        run_review_session_embedding_job(session_id, log_path, "after generation")
     except Exception as exc:
         append_log_note(log_path, f"Embedding auto step failed: {exc}")
 
@@ -573,10 +586,25 @@ def auto_embedding_after_review_generation(session_id: int, log_path: Path) -> N
 def auto_machine_review_after_review_generation(session_id: int, log_path: Path) -> int:
     try:
         from app.services.machine_review import run_machine_review
+        from app.services.embedding_service import embedding_coverage
     except Exception as exc:
         append_log_note(log_path, f"Machine Review auto step skipped: import failed: {exc}")
         return 0
     try:
+        coverage = embedding_coverage("review_session", session_id)
+        if int(coverage.get("ready") or 0) < int(coverage.get("total") or 0):
+            append_log_note(
+                log_path,
+                "Machine Review preflight: review_session embedding is not fully ready; recomputing stale/missing items.",
+            )
+            coverage = run_review_session_embedding_job(session_id, log_path, "before machine review")
+        if int(coverage.get("ready") or 0) < int(coverage.get("total") or 0):
+            append_log_note(
+                log_path,
+                "Machine Review auto step skipped: "
+                f"embedding coverage ready={coverage.get('ready')} total={coverage.get('total')}.",
+            )
+            return 0
         result = run_machine_review("review_session_images", session_id)
         scored = int(result.get("scored") or 0)
         link_machine_scores_to_review_images(session_id)
