@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
+import os
 import re
 import subprocess
 import threading
@@ -15,6 +17,7 @@ from app.services.output_collector import image_size, safe_sha256_file
 from app.services.review_candidates import ensure_epoch_candidates
 from app.services.training_runner import archive_existing_log, elapsed_seconds, sd_scripts_subprocess_env
 from app.services.validation_generation import IMAGE_SUFFIXES, common_gen_img_args, count_generated_images, sanitize_filename
+from app.services.validation_generation import matrix_machine_score
 
 
 PRESET_ID = "candidate_epoch_review_v1"
@@ -325,13 +328,17 @@ def monitor_review_generation(
             imported = import_review_session_images(session_id)
             auto_embedding_after_review_generation(session_id, log_path)
             scored = auto_machine_review_after_review_generation(session_id, log_path)
+            matrix_path = write_review_matrix(session_id)
         except Exception as exc:
             status = "failed"
             error_message = f"{error_message}\nImport failed: {exc}".strip()
             append_log_note(log_path, f"generated image import failed: {exc}")
         else:
             with connect() as conn:
-                conn.execute("UPDATE review_sessions SET scored_image_count = ?, updated_at = ? WHERE id = ?", (scored, utc_now(), session_id))
+                conn.execute(
+                    "UPDATE review_sessions SET scored_image_count = ?, matrix_path = ?, updated_at = ? WHERE id = ?",
+                    (scored, matrix_path, utc_now(), session_id),
+                )
     with connect() as conn:
         conn.execute(
             """
@@ -474,6 +481,140 @@ def link_machine_scores_to_review_images(session_id: int) -> None:
                 "UPDATE review_session_images SET machine_review_score_id = ?, updated_at = ? WHERE id = ?",
                 (row["score_id"], now, row["image_id"]),
             )
+
+
+def write_review_matrix(session_id: int) -> str:
+    session = fetch_one("SELECT * FROM review_sessions WHERE id = ?", (session_id,))
+    if session is None:
+        raise ValueError(f"Review Session not found: {session_id}")
+    job = fetch_one("SELECT id, name FROM training_jobs WHERE id = ?", (session["job_id"],))
+    conditions = [dict(row) for row in fetch_all("SELECT * FROM review_session_conditions WHERE review_session_id = ? ORDER BY prompt_key, lora_weight, seed, epoch, id", (session_id,))]
+    images = [dict(row) for row in fetch_all("SELECT * FROM review_session_images WHERE review_session_id = ? AND deleted_at IS NULL", (session_id,))]
+    scores = review_session_scores(session_id)
+    by_condition = {int(row["condition_id"]): row for row in images if row.get("condition_id") is not None}
+    prompt_keys = sorted({str(row["prompt_key"] or "-") for row in conditions})
+    weights = sorted({float(row["lora_weight"] or 0) for row in conditions})
+    epochs = sorted({int(row["epoch"] or 0) for row in conditions})
+    matrix_path = review_session_dir(session_id) / "review_matrix.html"
+    lines = [
+        "<!doctype html><html lang=\"ja\"><head><meta charset=\"utf-8\">",
+        f"<title>Review Matrix #{session_id}</title>",
+        review_matrix_style(),
+        "</head><body>",
+        review_matrix_navigation(int(session["job_id"])),
+        f"<h1>候補epoch Review Matrix #{session_id}</h1>",
+        f"<p class=\"muted\">Job #{int(session['job_id'])} {html.escape(str(job['name'] if job else ''))}</p>",
+        "<p class=\"notice\">採用前の候補epoch比較用Matrixです。Machine Reviewは補助情報であり、最終判断は人間評価を優先してください。</p>",
+        "<div class=\"summary-grid\">",
+        summary_card("候補epoch", ", ".join(str(epoch) for epoch in epochs) or "-"),
+        summary_card("条件数", str(len(conditions))),
+        summary_card("登録画像", str(len(images))),
+        summary_card("Machine Review", str(len(scores))),
+        "</div>",
+    ]
+    for prompt_key in prompt_keys:
+        prompt_conditions = [row for row in conditions if str(row["prompt_key"] or "-") == prompt_key]
+        prompt_text = prompt_conditions[0].get("prompt") if prompt_conditions else ""
+        lines.append(f"<h2>{html.escape(prompt_key)}</h2>")
+        lines.append(f"<p>{html.escape(str(prompt_text or ''))}</p>")
+        for weight in weights:
+            weight_conditions = [row for row in prompt_conditions if float(row["lora_weight"] or 0) == weight]
+            if not weight_conditions:
+                continue
+            lines.append(f"<h3>weight {weight:g}</h3>")
+            lines.append("<table><thead><tr><th>条件</th>")
+            for epoch in epochs:
+                lines.append(f"<th>epoch {epoch}</th>")
+            lines.append("</tr></thead><tbody>")
+            lines.append("<tr>")
+            lines.append(f"<th>{html.escape(prompt_key)}<br>seed {int(weight_conditions[0]['seed'])}<br>weight {weight:g}</th>")
+            for epoch in epochs:
+                condition = next((row for row in weight_conditions if int(row["epoch"] or 0) == epoch), None)
+                if condition is None:
+                    lines.append("<td class=\"missing\">条件なし</td>")
+                    continue
+                image = by_condition.get(int(condition["id"]))
+                lines.append("<td class=\"epoch-cell\">")
+                if image is None:
+                    lines.append("<div class=\"missing\">画像未登録</div>")
+                    lines.append(f"<div class=\"muted\">条件 #{int(condition['id'])}</div>")
+                else:
+                    image_path = Path(str(image["image_path"]))
+                    src = path_to_review_matrix_relative(matrix_path, image_path)
+                    lines.append(f"<img src=\"{html.escape(src)}\" alt=\"review image\">")
+                    lines.append(review_image_caption(condition, image))
+                    lines.append(matrix_machine_score(scores.get(int(image["id"]))))
+                lines.append("</td>")
+            lines.append("</tr></tbody></table>")
+    lines.append(review_matrix_navigation(int(session["job_id"])))
+    lines.append("</body></html>")
+    matrix_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return str(matrix_path)
+
+
+def review_session_scores(session_id: int) -> dict[int, dict[str, Any]]:
+    rows = fetch_all(
+        """
+        SELECT mrs.*
+        FROM machine_review_scores mrs
+        JOIN review_session_images rsi ON rsi.id = mrs.source_id
+        WHERE mrs.source_type = 'review_session_image'
+          AND rsi.review_session_id = ?
+        ORDER BY mrs.updated_at DESC, mrs.id DESC
+        """,
+        (session_id,),
+    )
+    scores: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        source_id = row["source_id"]
+        if source_id is not None:
+            scores.setdefault(int(source_id), dict(row))
+    return scores
+
+
+def review_image_caption(condition: dict[str, Any], image: dict[str, Any]) -> str:
+    return (
+        "<div class=\"muted\">"
+        f"image #{int(image['id'])} / condition #{int(condition['id'])}<br>"
+        f"epoch {int(condition['epoch'])} / seed {int(condition['seed'])} / weight {float(condition['lora_weight']):g}<br>"
+        f"{html.escape(Path(str(image['image_path'])).name)}"
+        "</div>"
+    )
+
+
+def review_matrix_navigation(job_id: int) -> str:
+    return (
+        "<div class=\"matrix-actions\">"
+        f"<a class=\"button\" href=\"/jobs/{job_id}#review-preparation\">Jobへ戻る</a>"
+        "<button class=\"button secondary\" type=\"button\" onclick=\"window.close()\">閉じる</button>"
+        "</div>"
+    )
+
+
+def summary_card(label: str, value: str) -> str:
+    return f"<div class=\"summary-card\"><div class=\"muted\">{html.escape(label)}</div><strong>{html.escape(value)}</strong></div>"
+
+
+def review_matrix_style() -> str:
+    return (
+        "<style>"
+        "body{font-family:'Segoe UI','Yu Gothic UI',sans-serif;background:#f6f7f4;color:#20231f;margin:24px;overflow-x:auto}"
+        "table{border-collapse:collapse;width:max-content;min-width:100%;margin:12px 0 28px;background:white}"
+        "th,td{border:1px solid #d8ddd4;padding:8px;vertical-align:top}th{background:#eef2eb;min-width:220px}"
+        ".epoch-cell{min-width:520px}.missing{color:#8b4f39;font-weight:700}.notice{background:#eef5ef;border:1px solid #cfd8d1;border-radius:6px;padding:10px}"
+        "img{width:512px;max-width:none;border-radius:6px;display:block;margin-bottom:6px}.muted{color:#657064;font-size:12px}"
+        ".matrix-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 18px}.button{display:inline-flex;align-items:center;min-height:34px;padding:7px 12px;border-radius:6px;background:#2f7668;color:white;text-decoration:none;font-weight:700;border:0;cursor:pointer;font:inherit}.button.secondary{background:#dce4df;color:#20231f}"
+        ".summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin:10px 0 20px}.summary-card{background:white;border:1px solid #d8ddd4;border-radius:6px;padding:10px}.summary-card strong{font-size:20px}"
+        ".machine-score{display:grid;gap:4px;margin:8px 0;padding:8px;border:1px solid #d8ddd4;border-radius:6px;background:#f8faf7;font-size:13px}.machine-score .badges{display:flex;flex-wrap:wrap;gap:6px}.badge{display:inline-flex;align-items:center;justify-content:center;min-width:56px;padding:3px 8px;border-radius:6px;background:#dce4df;font-weight:700}.badge.low,.badge.low_confidence,.badge.unavailable,.badge.unknown{background:#dce4df}.badge.primary_candidate,.badge.secondary_candidate{background:#c6e7d8}.badge.possible_overfit,.badge.high{background:#f0c2c2}"
+        "</style>"
+    )
+
+
+def path_to_review_matrix_relative(matrix_path: Path, image_path: Path) -> str:
+    try:
+        return os.path.relpath(image_path, start=matrix_path.parent).replace("\\", "/")
+    except ValueError:
+        return str(image_path)
 
 
 def condition_for_review_file(path: Path, conditions: dict[int, dict[str, Any]], hashes: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
