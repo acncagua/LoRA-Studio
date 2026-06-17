@@ -74,6 +74,7 @@ def file_size(path_value: str | None) -> int:
 
 def storage_usage() -> dict[str, Any]:
     jobs = job_storage_rows()
+    review_session_size = review_session_images_size()
     totals = {
         "runs": path_size(settings.RUNS_DIR),
         "exports": path_size(settings.EXPORTS_DIR),
@@ -81,6 +82,7 @@ def storage_usage() -> dict[str, Any]:
         "trash": path_size(trash_root()),
         "model_outputs": sum(job["model_size"] for job in jobs),
         "sample_images": sum(job["sample_size"] for job in jobs),
+        "review_session_images": review_session_size,
         "reports_logs_config": sum(job["support_size"] for job in jobs),
     }
     return {
@@ -134,6 +136,20 @@ def job_storage_rows(project_id: int | None = None) -> list[dict[str, Any]]:
     return result
 
 
+def review_session_images_size(project_id: int | None = None) -> int:
+    sql = """
+        SELECT rsi.image_path
+        FROM review_session_images rsi
+        JOIN review_sessions rs ON rs.id = rsi.review_session_id
+        WHERE rsi.deleted_at IS NULL
+    """
+    params: list[Any] = []
+    if project_id is not None:
+        sql += " AND rs.project_id = ?"
+        params.append(project_id)
+    return sum(file_size(row["image_path"]) for row in fetch_all(sql, tuple(params)))
+
+
 def is_storage_cleanup_candidate(job: Any) -> bool:
     if job["status"] in {"failed", "stopped"}:
         selected = fetch_one("SELECT 1 FROM training_outputs WHERE job_id = ? AND selected = 1 AND deleted_at IS NULL LIMIT 1", (job["id"],))
@@ -152,18 +168,21 @@ def project_storage_summary(project_id: int) -> dict[str, Any]:
     jobs = job_storage_rows(project_id)
     model_size = sum(job["model_size"] for job in jobs)
     sample_size = sum(job["sample_size"] for job in jobs)
+    review_session_size = review_session_images_size(project_id)
     support_size = sum(job["support_size"] for job in jobs)
     cleanup_size = sum(job["cleanup_candidate_size"] for job in jobs)
     return {
         "jobs": jobs,
-        "total_size": model_size + sample_size + support_size,
+        "total_size": model_size + sample_size + review_session_size + support_size,
         "model_size": model_size,
         "sample_size": sample_size,
+        "review_session_size": review_session_size,
         "support_size": support_size,
         "cleanup_candidate_size": cleanup_size,
-        "total_size_label": format_bytes(model_size + sample_size + support_size),
+        "total_size_label": format_bytes(model_size + sample_size + review_session_size + support_size),
         "model_size_label": format_bytes(model_size),
         "sample_size_label": format_bytes(sample_size),
+        "review_session_size_label": format_bytes(review_session_size),
         "support_size_label": format_bytes(support_size),
         "cleanup_candidate_size_label": format_bytes(cleanup_size),
         "onedrive_warning": storage_root_warning(),

@@ -7,12 +7,14 @@ import os
 import re
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
 from app import settings
 from app.db import connect, fetch_all, fetch_one, latest_environment, utc_now
 from app.services.image_store import verify_image_file
+from app.services.embedding_service import reconcile_stale_embedding_jobs
 from app.services.output_collector import image_size, safe_sha256_file
 from app.services.review_candidates import ensure_epoch_candidates
 from app.services.training_runner import archive_existing_log, decode_log_bytes, elapsed_seconds, process_exists, sd_scripts_subprocess_env
@@ -74,7 +76,16 @@ def latest_review_session(job_id: int) -> dict[str, Any] | None:
         """
         SELECT * FROM review_sessions
         WHERE job_id = ? AND preset_id = ?
-        ORDER BY id DESC LIMIT 1
+        ORDER BY
+            CASE
+                WHEN status = 'running' THEN 0
+                WHEN status = 'completed' AND COALESCE(matrix_path, '') != '' THEN 1
+                WHEN status IN ('planned', 'prepared') THEN 2
+                WHEN status = 'completed' THEN 3
+                ELSE 4
+            END,
+            id DESC
+        LIMIT 1
         """,
         (job_id, PRESET_ID),
     )
@@ -346,6 +357,7 @@ def reconcile_stale_review_sessions() -> int:
 
 
 def reject_if_review_gpu_busy() -> None:
+    reconcile_stale_embedding_jobs()
     running_job = fetch_one("SELECT id FROM training_jobs WHERE status = 'running' LIMIT 1")
     if running_job:
         raise RuntimeError(f"学習ジョブ #{running_job['id']} が実行中です。")
@@ -496,8 +508,7 @@ def import_review_session_images(session_id: int) -> int:
 
 def auto_embedding_after_review_generation(session_id: int, log_path: Path) -> None:
     try:
-        from app.services.embedding_service import create_embedding_job, embedding_coverage
-        from app.services.embedding_worker import run_embedding_job
+        from app.services.embedding_service import create_embedding_job, embedding_coverage, start_embedding_job
     except Exception as exc:
         append_log_note(log_path, f"Embedding auto step skipped: import failed: {exc}")
         return
@@ -507,7 +518,25 @@ def auto_embedding_after_review_generation(session_id: int, log_path: Path) -> N
         total = int(embedding_job["total_count"] or 0) if embedding_job else 0
         if total:
             append_log_note(log_path, f"Auto embedding: review_session #{session_id}, {total} item(s).")
-            run_embedding_job(embedding_job_id)
+            start_embedding_job(embedding_job_id)
+            deadline = time.monotonic() + 60 * 60
+            while time.monotonic() < deadline:
+                row = fetch_one("SELECT status, ready_count, failed_count, processed_count, total_count, error_message FROM embedding_jobs WHERE id = ?", (embedding_job_id,))
+                if row is None:
+                    append_log_note(log_path, f"Auto embedding: job #{embedding_job_id} disappeared.")
+                    break
+                if row["status"] not in {"planned", "running"}:
+                    append_log_note(
+                        log_path,
+                        "Auto embedding finished: "
+                        f"status={row['status']} ready={row['ready_count']} "
+                        f"failed={row['failed_count']} processed={row['processed_count']}/{row['total_count']} "
+                        f"error={row['error_message'] or ''}",
+                    )
+                    break
+                time.sleep(2)
+            else:
+                append_log_note(log_path, f"Auto embedding timed out: job #{embedding_job_id}.")
         else:
             append_log_note(log_path, f"Auto embedding: review_session #{session_id}, no missing item.")
         coverage = embedding_coverage("review_session", session_id)
@@ -563,7 +592,7 @@ def write_review_matrix(session_id: int) -> str:
     session = fetch_one("SELECT * FROM review_sessions WHERE id = ?", (session_id,))
     if session is None:
         raise ValueError(f"Review Session not found: {session_id}")
-    job = fetch_one("SELECT id, name FROM training_jobs WHERE id = ?", (session["job_id"],))
+    job = fetch_one("SELECT id, name, adopted_epoch FROM training_jobs WHERE id = ?", (session["job_id"],))
     conditions = [dict(row) for row in fetch_all("SELECT * FROM review_session_conditions WHERE review_session_id = ? ORDER BY prompt_key, lora_weight, seed, epoch, id", (session_id,))]
     images = [dict(row) for row in fetch_all("SELECT * FROM review_session_images WHERE review_session_id = ? AND deleted_at IS NULL", (session_id,))]
     scores = review_session_scores(session_id)
@@ -571,6 +600,7 @@ def write_review_matrix(session_id: int) -> str:
     prompt_keys = sorted({str(row["prompt_key"] or "-") for row in conditions})
     weights = sorted({float(row["lora_weight"] or 0) for row in conditions})
     epochs = sorted({int(row["epoch"] or 0) for row in conditions})
+    selected_epoch = int(job["adopted_epoch"]) if job and job["adopted_epoch"] is not None else None
     matrix_path = review_session_dir(session_id) / "review_matrix.html"
     lines = [
         "<!doctype html><html lang=\"ja\"><head><meta charset=\"utf-8\">",
@@ -583,6 +613,7 @@ def write_review_matrix(session_id: int) -> str:
         "<p class=\"notice\">採用前の候補epoch比較用Matrixです。Machine Reviewは補助情報であり、最終判断は人間評価を優先してください。</p>",
         "<div class=\"summary-grid\">",
         summary_card("候補epoch", ", ".join(str(epoch) for epoch in epochs) or "-"),
+        summary_card("採用epoch", str(selected_epoch) if selected_epoch is not None else "-"),
         summary_card("条件数", str(len(conditions))),
         summary_card("登録画像", str(len(images))),
         summary_card("Machine Review", str(len(scores))),
@@ -600,7 +631,9 @@ def write_review_matrix(session_id: int) -> str:
             lines.append(f"<h3>weight {weight:g}</h3>")
             lines.append("<table><thead><tr><th>条件</th>")
             for epoch in epochs:
-                lines.append(f"<th>epoch {epoch}</th>")
+                marker = " <span class=\"selected-marker\">採用中</span>" if selected_epoch == epoch else ""
+                selected_class = " class=\"selected-epoch\"" if selected_epoch == epoch else ""
+                lines.append(f"<th{selected_class}>epoch {epoch}{marker}</th>")
             lines.append("</tr></thead><tbody>")
             lines.append("<tr>")
             lines.append(f"<th>{html.escape(prompt_key)}<br>seed {int(weight_conditions[0]['seed'])}<br>weight {weight:g}</th>")
@@ -610,7 +643,8 @@ def write_review_matrix(session_id: int) -> str:
                     lines.append("<td class=\"missing\">条件なし</td>")
                     continue
                 image = by_condition.get(int(condition["id"]))
-                lines.append("<td class=\"epoch-cell\">")
+                cell_class = "epoch-cell selected-epoch" if selected_epoch == epoch else "epoch-cell"
+                lines.append(f"<td class=\"{cell_class}\">")
                 if image is None:
                     lines.append("<div class=\"missing\">画像未登録</div>")
                     lines.append(f"<div class=\"muted\">条件 #{int(condition['id'])}</div>")
@@ -679,6 +713,7 @@ def review_matrix_style() -> str:
         "th,td{border:1px solid #d8ddd4;padding:8px;vertical-align:top}th{background:#eef2eb;min-width:220px}"
         ".epoch-cell{min-width:520px}.missing{color:#8b4f39;font-weight:700}.notice{background:#eef5ef;border:1px solid #cfd8d1;border-radius:6px;padding:10px}"
         "img{width:512px;max-width:none;border-radius:6px;display:block;margin-bottom:6px}.muted{color:#657064;font-size:12px}"
+        ".selected-epoch{background:#eef8f1;box-shadow:inset 0 0 0 2px #2f7668}.selected-marker{display:inline-flex;margin-left:6px;padding:2px 6px;border-radius:999px;background:#2f7668;color:white;font-size:11px;font-weight:700}"
         ".matrix-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 18px}.button{display:inline-flex;align-items:center;min-height:34px;padding:7px 12px;border-radius:6px;background:#2f7668;color:white;text-decoration:none;font-weight:700;border:0;cursor:pointer;font:inherit}.button.secondary{background:#dce4df;color:#20231f}"
         ".summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin:10px 0 20px}.summary-card{background:white;border:1px solid #d8ddd4;border-radius:6px;padding:10px}.summary-card strong{font-size:20px}"
         ".machine-score{display:grid;gap:4px;margin:8px 0;padding:8px;border:1px solid #d8ddd4;border-radius:6px;background:#f8faf7;font-size:13px}.machine-score .badges{display:flex;flex-wrap:wrap;gap:6px}.badge{display:inline-flex;align-items:center;justify-content:center;min-width:56px;padding:3px 8px;border-radius:6px;background:#dce4df;font-weight:700}.badge.low,.badge.low_confidence,.badge.unavailable,.badge.unknown{background:#dce4df}.badge.primary_candidate,.badge.secondary_candidate{background:#c6e7d8}.badge.possible_overfit,.badge.high{background:#f0c2c2}"

@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,8 @@ JOB_TYPE_LABELS = {
     "review_session": "Review Session",
     "selected_sources": "Selected Sources",
 }
+
+STALE_RUNNING_GRACE_SECONDS = 10 * 60
 
 
 @dataclass
@@ -47,6 +50,38 @@ def file_sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def process_exists(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        result = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        return str(pid) in result.stdout
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _iso_age_seconds(value: str | None) -> float:
+    if not value:
+        return STALE_RUNNING_GRACE_SECONDS + 1
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return STALE_RUNNING_GRACE_SECONDS + 1
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - parsed).total_seconds()
 
 
 def image_metadata(path: Path, max_image_size: int | None = None) -> dict[str, Any]:
@@ -609,6 +644,7 @@ def create_embedding_job(job_type: str, target_id: int, recompute: str = "missin
 
 
 def start_embedding_job(job_id: int) -> None:
+    reconcile_stale_embedding_jobs()
     running = fetch_one("SELECT id FROM embedding_jobs WHERE status = 'running' AND id != ? LIMIT 1", (job_id,))
     if running:
         raise RuntimeError(f"Embedding Job #{running['id']} が実行中です。")
@@ -640,6 +676,37 @@ def start_embedding_job(job_id: int) -> None:
             "UPDATE embedding_jobs SET status = 'running', process_id = ?, started_at = ?, updated_at = ? WHERE id = ?",
             (proc.pid, now, now, job_id),
         )
+
+
+def reconcile_stale_embedding_jobs() -> int:
+    rows = fetch_all("SELECT * FROM embedding_jobs WHERE status = 'running' ORDER BY id")
+    fixed = 0
+    now = utc_now()
+    for row in rows:
+        pid = row["process_id"]
+        if pid:
+            try:
+                if process_exists(int(pid)):
+                    continue
+            except (TypeError, ValueError):
+                pass
+        elif _iso_age_seconds(row["started_at"] or row["updated_at"] or row["created_at"]) <= STALE_RUNNING_GRACE_SECONDS:
+            continue
+        message = "Embedding process was not found. Marked stopped by stale reconciliation."
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE embedding_jobs
+                SET status = 'stopped', process_id = NULL,
+                    ended_at = COALESCE(ended_at, ?), updated_at = ?,
+                    return_code = COALESCE(return_code, -1),
+                    error_message = COALESCE(NULLIF(error_message, ''), ?)
+                WHERE id = ? AND status = 'running'
+                """,
+                (now, now, message, row["id"]),
+            )
+        fixed += 1
+    return fixed
 
 
 def stop_embedding_job(job_id: int) -> None:

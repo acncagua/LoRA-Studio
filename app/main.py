@@ -29,6 +29,7 @@ from app.services.embedding_service import (
     load_embedding_settings,
     provider_preflight,
     read_embedding_log,
+    reconcile_stale_embedding_jobs,
     start_embedding_job,
     stop_embedding_job,
     update_embedding_settings,
@@ -223,6 +224,7 @@ def on_startup() -> None:
     init_db()
     reconcile_stale_running_jobs()
     reconcile_stale_validation_generations()
+    reconcile_stale_embedding_jobs()
     reconcile_stale_review_sessions()
 
 
@@ -1241,6 +1243,28 @@ def project_detail(request: Request, project_id: int) -> HTMLResponse:
         """,
         (project_id,),
     )
+    review_sessions = fetch_all(
+        """
+        SELECT rs.*,
+               tj.name AS job_name,
+               (
+                   SELECT COUNT(*)
+                   FROM review_session_conditions rsc
+                   WHERE rsc.review_session_id = rs.id
+               ) AS condition_count,
+               (
+                   SELECT COUNT(*)
+                   FROM review_session_images rsi
+                   WHERE rsi.review_session_id = rs.id
+                     AND rsi.deleted_at IS NULL
+               ) AS image_count
+        FROM review_sessions rs
+        LEFT JOIN training_jobs tj ON tj.id = rs.job_id
+        WHERE rs.project_id = ?
+        ORDER BY rs.id DESC
+        """,
+        (project_id,),
+    )
     reference_sets_rows = fetch_all(
         """
         SELECT r.*, v.version_no AS current_version_no, v.image_count,
@@ -1266,6 +1290,7 @@ def project_detail(request: Request, project_id: int) -> HTMLResponse:
         project=project,
         jobs=jobs,
         validation_runs=validation_runs,
+        review_sessions=review_sessions,
         reference_sets=reference_sets_rows,
         recommendations=recommendations,
         workflow_status=project_workflow_status(project, jobs, validation_runs, recommendations),
