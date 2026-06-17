@@ -2553,6 +2553,22 @@ def job_review_session_matrix(job_id: int, session_id: int) -> FileResponse:
     return FileResponse(str(matrix_path), media_type="text/html; charset=utf-8")
 
 
+@app.get("/jobs/{job_id}/review-sessions/{session_id}/images/{filename:path}")
+def job_review_session_image(job_id: int, session_id: int, filename: str) -> FileResponse:
+    session = fetch_one("SELECT * FROM review_sessions WHERE id = ? AND job_id = ?", (session_id, job_id))
+    if session is None:
+        raise HTTPException(status_code=404, detail="Review Session not found")
+    if not session["output_dir"]:
+        raise HTTPException(status_code=404, detail="Review Session image directory not found")
+    output_dir = Path(session["output_dir"]).resolve()
+    try:
+        image_path = ensure_allowed_file(str(output_dir / filename), output_dir, "Review Session image")
+        verify_image_file(image_path)
+    except (PermissionError, FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="Review Session image not found")
+    return FileResponse(image_path)
+
+
 @app.get("/jobs/{job_id}/edit", response_class=HTMLResponse)
 def job_edit(request: Request, job_id: int) -> HTMLResponse:
     job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
