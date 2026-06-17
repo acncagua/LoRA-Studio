@@ -91,6 +91,14 @@ def collect_job_results(job_id: int) -> dict[str, int]:
     from app.services.review_candidates import regenerate_epoch_candidates
 
     regenerate_epoch_candidates(job_id)
+    try:
+        from app.services.review_sessions import ensure_candidate_review_plan
+
+        ensure_candidate_review_plan(job_id)
+    except Exception:
+        # Review Preparation is a follow-up convenience path. Result import must
+        # not fail just because a review plan cannot be prepared.
+        pass
     return {"models": model_count, "samples": sample_count}
 
 
