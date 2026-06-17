@@ -70,6 +70,40 @@ def latest_review_session(job_id: int) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+def review_session_summary(job_id: int) -> dict[str, Any]:
+    session = latest_review_session(job_id)
+    if session is None:
+        return {
+            "session": None,
+            "condition_count": 0,
+            "image_count": 0,
+            "candidate_epochs": [],
+            "matrix_path": "",
+            "can_open_matrix": False,
+        }
+    condition_count = fetch_one(
+        "SELECT COUNT(*) AS c FROM review_session_conditions WHERE review_session_id = ?",
+        (session["id"],),
+    )
+    image_count = fetch_one(
+        "SELECT COUNT(*) AS c FROM review_session_images WHERE review_session_id = ? AND deleted_at IS NULL",
+        (session["id"],),
+    )
+    try:
+        candidate_epochs = json.loads(session.get("candidate_epochs_json") or "[]")
+    except json.JSONDecodeError:
+        candidate_epochs = []
+    matrix_path = session.get("matrix_path") or ""
+    return {
+        "session": session,
+        "condition_count": int(condition_count["c"] if condition_count else 0),
+        "image_count": int(image_count["c"] if image_count else 0),
+        "candidate_epochs": candidate_epochs,
+        "matrix_path": matrix_path,
+        "can_open_matrix": bool(matrix_path and Path(matrix_path).exists()),
+    }
+
+
 def ensure_candidate_review_plan(job_id: int, *, force: bool = False) -> dict[str, Any] | None:
     existing = latest_review_session(job_id)
     if existing and not force:

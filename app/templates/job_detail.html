@@ -20,6 +20,8 @@
 {% if created %}<p class="notice">学習ジョブを作成しました。次はファイル準備を実行してください。</p>{% endif %}
 {% if exported %}<p class="notice">出力しました: {{ exported }}</p>{% endif %}
 {% if preflight == 'edited' %}<p class="notice warning">編集内容を保存しました。実行前にファイル準備を再実行してください。</p>{% elif preflight %}<p class="notice {{ 'warning' if preflight.startswith('NG:') else '' }}">{{ preflight }}</p>{% endif %}
+{% if review_prepare %}<p class="notice">候補epochレビュー計画を作成しました。</p>{% endif %}
+{% if review_prepare_error %}<p class="notice warning">候補epochレビュー計画を作成できませんでした: {{ review_prepare_error }}</p>{% endif %}
 {% if action_state.dirty %}<p class="notice warning">設定が変更されています。実行前にファイル準備を再実行してください。</p>{% endif %}
 <section class="action-panel">
   <div>
@@ -56,6 +58,31 @@
     {% if action_state.contact_sheet %}<form method="post" action="/jobs/{{ job.id }}/export-contact-sheet"><button type="submit">コンタクトシート出力</button></form>{% else %}<span class="button disabled">コンタクトシート出力</span>{% endif %}
     {% if action_state.archive %}<form method="post" action="/jobs/{{ job.id }}/archive"><button type="submit">アーカイブ</button></form>{% endif %}
     {% if action_state.restore %}<form method="post" action="/jobs/{{ job.id }}/restore"><button type="submit">アーカイブから復元</button></form>{% endif %}
+  </div>
+</section>
+<section id="review-preparation" class="notice">
+  <h2>Review Preparation</h2>
+  <p>採用前に候補epochを比較するための準備です。loss候補epochの前後を少数prompt / weightで生成し、横断Matrixで見比べます。採用後の45枚標準検証はWeight Calibrationとして別に実行します。</p>
+  {% if review_preparation.session %}
+  <div class="stats-grid">
+    <div><span>状態</span><strong>{{ review_preparation.session.status }}</strong></div>
+    <div><span>候補epoch</span><strong>{{ review_preparation.candidate_epochs|join(', ') if review_preparation.candidate_epochs else '-' }}</strong></div>
+    <div><span>条件数</span><strong>{{ review_preparation.condition_count }}</strong></div>
+    <div><span>登録画像</span><strong>{{ review_preparation.image_count }}</strong></div>
+    <div><span>Machine Review</span><strong>{{ review_preparation.session.scored_image_count or 0 }} / {{ review_preparation.session.expected_image_count or review_preparation.condition_count }}</strong></div>
+  </div>
+  {% else %}
+  <p class="muted">候補epochレビュー計画はまだありません。学習完了後は結果取り込み時に自動作成されます。既存ジョブでは下のボタンで作成できます。</p>
+  {% endif %}
+  <div class="actions compact-actions">
+    <form method="post" action="/jobs/{{ job.id }}/review-preparation/plan">
+      <button type="submit" {% if outputs|length == 0 %}disabled{% endif %}>候補Review Matrixを準備</button>
+    </form>
+    {% if review_preparation.can_open_matrix %}
+    <a class="button" href="/jobs/{{ job.id }}/review-sessions/{{ review_preparation.session.id }}/matrix">Review Matrixを開く</a>
+    {% else %}
+    <span class="button disabled">Review Matrix未作成</span>
+    {% endif %}
   </div>
 </section>
 {% if project and job.status == 'prepared' and pilot_guidance %}

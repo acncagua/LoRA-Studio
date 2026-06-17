@@ -64,6 +64,7 @@ from app.services.machine_review import (
 from app.services.output_collector import collect_job_results
 from app.services.recommendations import create_draft_job_from_recommendation, list_recommendations, regenerate_recommendations, set_recommendation_status, write_recommendation_report
 from app.services.review_candidates import ensure_epoch_candidates, regenerate_epoch_candidates
+from app.services.review_sessions import ensure_candidate_review_plan, review_session_summary
 from app.services.reference_sets import (
     ROLE_LABELS,
     REFERENCE_TYPE_LABELS,
@@ -2286,6 +2287,8 @@ def job_detail(
     created: str | None = None,
     preflight: str | None = None,
     generation_error: str | None = None,
+    review_prepare: str | None = None,
+    review_prepare_error: str | None = None,
     review_filter: str = Query("candidates"),
 ) -> HTMLResponse:
     reconcile_stale_running_jobs()
@@ -2333,6 +2336,7 @@ def job_detail(
     validation_summary = build_validation_summary(validation_results)
     selected_lora_profile = selected_lora_profile_for_display(job_id, selected_output)
     recommendations = list_recommendations(job_id)
+    review_preparation = review_session_summary(job_id)
     machine_score_map = score_map_for_samples(job_id)
     machine_epoch_summary = epoch_machine_summary(job_id)
     dataset_version = fetch_one("SELECT * FROM dataset_versions WHERE id = ?", (job["dataset_version_id"],)) if job["dataset_version_id"] else None
@@ -2376,6 +2380,7 @@ def job_detail(
         validation_summary=validation_summary,
         selected_lora_profile=selected_lora_profile,
         recommendations=recommendations,
+        review_preparation=review_preparation,
         rubric_options=rubric_options(),
         validation_pack_path=validation_pack_path(job_id),
         default_project_path=str(settings.ROOT_DIR),
@@ -2394,9 +2399,33 @@ def job_detail(
         preflight=preflight,
         exported=exported,
         generation_error=generation_error,
+        review_prepare=review_prepare,
+        review_prepare_error=review_prepare_error,
         running_generation=running_generation,
         sample_embedding_coverage=embedding_coverage("training_job_samples", job_id),
     )
+
+
+@app.post("/jobs/{job_id}/review-preparation/plan")
+def job_review_preparation_plan(job_id: int) -> RedirectResponse:
+    try:
+        session = ensure_candidate_review_plan(job_id, force=True)
+    except Exception as exc:
+        return RedirectResponse(f"/jobs/{job_id}?review_prepare_error={quote(str(exc))}#review-preparation", status_code=303)
+    if session is None:
+        return RedirectResponse(f"/jobs/{job_id}?review_prepare_error={quote('候補epochまたは出力LoRAが見つかりません。')}#review-preparation", status_code=303)
+    return RedirectResponse(f"/jobs/{job_id}?review_prepare=1#review-preparation", status_code=303)
+
+
+@app.get("/jobs/{job_id}/review-sessions/{session_id}/matrix", response_class=HTMLResponse)
+def job_review_session_matrix(job_id: int, session_id: int) -> FileResponse:
+    session = fetch_one("SELECT * FROM review_sessions WHERE id = ? AND job_id = ?", (session_id, job_id))
+    if session is None:
+        raise HTTPException(status_code=404, detail="Review Session not found")
+    matrix_path = session["matrix_path"]
+    if not matrix_path or not Path(str(matrix_path)).exists():
+        raise HTTPException(status_code=404, detail="Review Matrix not generated yet")
+    return FileResponse(str(matrix_path), media_type="text/html; charset=utf-8")
 
 
 @app.get("/jobs/{job_id}/edit", response_class=HTMLResponse)
