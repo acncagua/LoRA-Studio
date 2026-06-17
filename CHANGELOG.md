@@ -7,6 +7,16 @@ Internal Milestone: Phase 11.5
 
 LoRA Studio v0.3.0-beta は、Phase 11.5 時点の運用ベータリリースです。
 
+### Phase 11.6
+
+- Training Job完了後のReview Preparation Pipelineを追加しました。
+- loss候補epochとその前後epochから `review_sessions` / `review_session_conditions` を作成し、候補epochレビュー用の少数条件を固定できるようにしました。
+- Candidate Epoch Review presetとして、`basic_face` / `full_body` / `expression_pose`、seed `111111`、weight `0.6 / 0.8`、Hiresなしの条件を生成します。
+- sd-scripts `gen_img.py` による候補画像生成、生成画像DB登録、Embedding計算、Machine Review Assist、Review Matrix HTML生成をbackground処理としてつなぎました。
+- Job詳細にReview Preparationパネルを追加し、状態、候補epoch、画像数、Embedding coverage、Machine Review coverage、ログ末尾、停止ボタン、Review Matrixリンクを表示します。
+- 採用前のReview Preparationと、採用後のWeight Calibration / Validation RunをUI上で分けて表示するようにしました。
+- Review Sessionのplan作成とMatrix出力に対する最小テストを追加しました。
+
 ### Phase 11.5
 
 - OpenCLIP provider `open_clip` を試験導入しました。
