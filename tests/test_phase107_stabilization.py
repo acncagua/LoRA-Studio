@@ -22,6 +22,7 @@ from app.services.reference_sets import (
     reference_detail,
     set_project_default,
 )
+from app.services.review_sessions import ensure_candidate_review_plan, write_review_matrix
 from app.services.validation_generation import (
     common_gen_img_args,
     normalize_sd_scripts_sampler,
@@ -145,6 +146,127 @@ class ReviewSemanticsTests(IsolatedDbTest):
     def test_init_db_does_not_seed_zuihou_project_from_hardcoded_ids(self) -> None:
         source = Path("app/db.py").read_text(encoding="utf-8")
         self.assertNotIn("seed_zuihou_project(conn)", source)
+
+
+class ReviewPreparationPhase116Tests(IsolatedDbTest):
+    def create_completed_job_with_outputs(self) -> int:
+        now = utc_now()
+        dataset_dir = self.root / "dataset"
+        dataset_dir.mkdir()
+        with connect() as conn:
+            dataset_id = int(
+                conn.execute(
+                    """
+                    INSERT INTO datasets(
+                        name, path, model_family, trigger_word, class_token, image_count,
+                        caption_count, missing_caption_count, resolution_summary_json,
+                        tag_summary_json, scan_status, memo, created_at, updated_at
+                    )
+                    VALUES ('review dataset', ?, 'SDXL', 'testchar', 'person', 3, 3, 0, '{}', '{}', 'ok', '', ?, ?)
+                    """,
+                    (str(dataset_dir), now, now),
+                ).lastrowid
+            )
+            version_id = int(
+                conn.execute(
+                    """
+                    INSERT INTO dataset_versions(dataset_id, version_no, trigger_word, image_count, caption_count, created_at, memo)
+                    VALUES (?, 1, 'testchar', 3, 3, ?, 'v1')
+                    """,
+                    (dataset_id, now),
+                ).lastrowid
+            )
+            job_id = int(
+                conn.execute(
+                    """
+                    INSERT INTO training_jobs(
+                        name, dataset_id, preset_id, status, model_family, training_script,
+                        base_model_path, output_name, output_dir, run_dir, params_json,
+                        adopted_epoch, dataset_version_id, created_at, updated_at
+                    )
+                    VALUES ('review job', ?, 'sdxl_2d_face_adamw8bit_standard', 'completed',
+                            'SDXL', 'sdxl_train_network.py', 'base.safetensors',
+                            'review_job', 'out', 'run', '{}', 2, ?, ?, ?)
+                    """,
+                    (dataset_id, version_id, now, now),
+                ).lastrowid
+            )
+            for epoch, loss in [(1, 0.15), (2, 0.10), (3, 0.12)]:
+                model_path = self.root / "runs" / f"job_{job_id:06d}" / "models" / f"review-{epoch:06d}.safetensors"
+                model_path.parent.mkdir(parents=True, exist_ok=True)
+                model_path.write_bytes(f"model-{epoch}".encode("utf-8"))
+                conn.execute(
+                    """
+                    INSERT INTO training_outputs(job_id, epoch, file_path, file_type, file_size, sha256, selected, created_at)
+                    VALUES (?, ?, ?, 'model', ?, ?, ?, ?)
+                    """,
+                    (job_id, epoch, str(model_path), model_path.stat().st_size, hashlib.sha256(model_path.read_bytes()).hexdigest(), 1 if epoch == 2 else 0, now),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO training_epoch_summaries(
+                        job_id, epoch, step_start, step_end, metric_count, avg_loss,
+                        min_loss, max_loss, final_loss, moving_avg_final_loss,
+                        spike_count, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, 10, ?, ?, ?, ?, ?, 0, ?, ?)
+                    """,
+                    (job_id, epoch, epoch * 10 - 9, epoch * 10, loss, loss, loss + 0.01, loss, loss, now, now),
+                )
+        return job_id
+
+    def test_candidate_review_plan_creates_expected_conditions(self) -> None:
+        job_id = self.create_completed_job_with_outputs()
+        session = ensure_candidate_review_plan(job_id, force=True)
+        self.assertIsNotNone(session)
+        assert session is not None
+        self.assertEqual(session["preset_id"], "candidate_epoch_review_v1")
+        self.assertEqual(session["expected_image_count"], 18)
+        conditions = fetch_all("SELECT * FROM review_session_conditions WHERE review_session_id = ?", (session["id"],))
+        self.assertEqual(len(conditions), 18)
+        self.assertEqual(sorted({row["prompt_key"] for row in conditions}), ["basic_face", "expression_pose", "full_body"])
+        self.assertEqual(sorted({float(row["lora_weight"]) for row in conditions}), [0.6, 0.8])
+
+    def test_review_matrix_html_is_written(self) -> None:
+        job_id = self.create_completed_job_with_outputs()
+        session = ensure_candidate_review_plan(job_id, force=True)
+        assert session is not None
+        condition = fetch_one("SELECT * FROM review_session_conditions WHERE review_session_id = ? ORDER BY id LIMIT 1", (session["id"],))
+        image_path = self.make_png(self.root / "exports" / "review_sessions" / f"review_session_{int(session['id']):06d}" / "images" / "sample.png")
+        now = utc_now()
+        with connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO review_session_images(
+                    review_session_id, condition_id, job_id, epoch, output_id,
+                    prompt_key, prompt_role, seed, lora_weight, image_path,
+                    file_size, sha256, width, height, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 8, 8, ?, ?)
+                """,
+                (
+                    session["id"],
+                    condition["id"],
+                    job_id,
+                    condition["epoch"],
+                    condition["output_id"],
+                    condition["prompt_key"],
+                    condition["prompt_role"],
+                    condition["seed"],
+                    condition["lora_weight"],
+                    str(image_path),
+                    image_path.stat().st_size,
+                    hashlib.sha256(image_path.read_bytes()).hexdigest(),
+                    now,
+                    now,
+                ),
+            )
+        matrix_path = Path(write_review_matrix(int(session["id"])))
+        self.assertTrue(matrix_path.exists())
+        html = matrix_path.read_text(encoding="utf-8")
+        self.assertIn("候補epoch Review Matrix", html)
+        self.assertIn("Machine Review", html)
+        self.assertIn("sample.png", html)
 
 
 class ReferenceSetPhase111Tests(IsolatedDbTest):
