@@ -2518,6 +2518,7 @@ def job_review_session_status(job_id: int, session_id: int) -> JSONResponse:
         output_dir = Path(session["output_dir"])
         if output_dir.exists():
             generated = sum(1 for path in output_dir.rglob("*") if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"})
+    imported_count = int(fetch_one("SELECT COUNT(*) AS count FROM review_session_images WHERE review_session_id = ?", (session_id,))["count"] or 0)
     log_path = Path(session["log_path"]) if session["log_path"] else None
     log_size = log_path.stat().st_size if log_path and log_path.exists() else 0
     return JSONResponse(
@@ -2528,7 +2529,7 @@ def job_review_session_status(job_id: int, session_id: int) -> JSONResponse:
             "expected_image_count": session["expected_image_count"] or 0,
             "generated_image_count": session["generated_image_count"] or generated,
             "live_generated_image_count": generated,
-            "imported_image_count": session["imported_image_count"] or 0,
+            "imported_image_count": imported_count,
             "scored_image_count": session["scored_image_count"] or 0,
             "generation_process_id": session["generation_process_id"],
             "return_code": session["return_code"],

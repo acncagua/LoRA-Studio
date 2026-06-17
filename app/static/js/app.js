@@ -342,14 +342,6 @@ function startReviewPreparationPolling(sessionId, anchorForm = null) {
       const payload = await response.json();
       updateReviewPreparationInline(payload, anchorForm);
       if (["completed", "failed", "stopped"].includes(payload.status)) {
-        window.setTimeout(() => {
-          const url = new URL(window.location.href);
-          url.searchParams.delete("review_prepare");
-          url.searchParams.delete("review_prepare_error");
-          url.hash = "review-preparation";
-          sessionStorage.setItem("loraStudioRestoreScrollY", String(window.scrollY || 0));
-          window.location.href = url.toString();
-        }, 1200);
         return true;
       }
       return false;
@@ -396,6 +388,21 @@ function updateReviewPreparationInline(payload, anchorForm = null) {
   if (log) {
     log.classList.remove("empty");
     log.textContent = payload.log_tail || payload.message || "処理開始待ちです。sd-scripts起動後にログが更新されます。";
+  }
+  const runButton = section.querySelector("[data-review-preparation-run-button]");
+  if (runButton && ["completed", "failed", "stopped"].includes(payload.status)) {
+    runButton.disabled = false;
+    runButton.textContent = runButton.dataset.originalText || "候補Review Matrixを準備";
+  }
+  if (payload.matrix_ready && payload.matrix_url && !section.querySelector(`[href="${payload.matrix_url}"]`)) {
+    const actions = section.querySelector(".actions");
+    if (actions) {
+      const link = document.createElement("a");
+      link.className = "button";
+      link.href = payload.matrix_url;
+      link.textContent = "Review Matrixを開く";
+      actions.appendChild(link);
+    }
   }
 }
 

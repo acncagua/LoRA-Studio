@@ -437,7 +437,8 @@ def monitor_review_generation(
     error_message = session["error_message"] or ""
     if status == "completed":
         try:
-            imported = import_review_session_images(session_id)
+            import_review_session_images(session_id)
+            imported = int(fetch_one("SELECT COUNT(*) AS count FROM review_session_images WHERE review_session_id = ?", (session_id,))["count"] or 0)
             auto_embedding_after_review_generation(session_id, log_path)
             scored = auto_machine_review_after_review_generation(session_id, log_path)
             matrix_path = write_review_matrix(session_id)
