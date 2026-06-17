@@ -5,8 +5,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.db import connect, fetch_all, fetch_one, utc_now
+from app import settings
+from app.db import connect, fetch_all, fetch_one, latest_environment, utc_now
 from app.services.review_candidates import ensure_epoch_candidates
+from app.services.validation_generation import common_gen_img_args, sanitize_filename
 
 
 PRESET_ID = "candidate_epoch_review_v1"
@@ -102,6 +104,150 @@ def review_session_summary(job_id: int) -> dict[str, Any]:
         "matrix_path": matrix_path,
         "can_open_matrix": bool(matrix_path and Path(matrix_path).exists()),
     }
+
+
+def review_session_dir(session_id: int) -> Path:
+    return settings.ROOT_DIR / "exports" / "review_sessions" / f"review_session_{session_id:06d}"
+
+
+def review_session_output_dir(session_id: int) -> Path:
+    return review_session_dir(session_id) / "images"
+
+
+def prepare_review_generation(session_id: int) -> dict[str, Any]:
+    session = fetch_one("SELECT * FROM review_sessions WHERE id = ?", (session_id,))
+    if session is None:
+        raise ValueError(f"Review Session not found: {session_id}")
+    job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (session["job_id"],))
+    if job is None:
+        raise ValueError(f"Job not found: {session['job_id']}")
+    environment = latest_environment()
+    if environment is None:
+        raise RuntimeError("sd-scripts環境が登録されていません。")
+    sd_scripts_path = Path(environment["sd_scripts_path"])
+    gen_img = sd_scripts_path / "gen_img.py"
+    venv_python = Path(environment["venv_python_path"])
+    if not sd_scripts_path.exists():
+        raise RuntimeError(f"sd-scripts path が存在しません: {sd_scripts_path}")
+    if not gen_img.exists():
+        raise RuntimeError(f"gen_img.py が存在しません: {gen_img}")
+    if not venv_python.exists():
+        raise RuntimeError(f"venv python が存在しません: {venv_python}")
+    base_model_path = Path(str(job["base_model_path"]))
+    if not base_model_path.exists():
+        raise RuntimeError(f"ベースモデルが存在しません: {base_model_path}")
+
+    conditions = [dict(row) for row in fetch_all("SELECT * FROM review_session_conditions WHERE review_session_id = ? ORDER BY epoch, prompt_key, lora_weight, id", (session_id,))]
+    if not conditions:
+        raise RuntimeError("Review Sessionに生成条件がありません。")
+    run_dir = review_session_dir(session_id)
+    out_dir = review_session_output_dir(session_id)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    commands = []
+    for lora_path, rows in group_conditions_by_lora(conditions).items():
+        lora_file = Path(lora_path)
+        if not lora_file.exists():
+            raise RuntimeError(f"候補epochのLoRAファイルが存在しません: {lora_file}")
+        epoch = rows[0].get("epoch")
+        prompt_path = run_dir / f"review_prompts_epoch_{epoch or 'unknown'}_output_{rows[0].get('output_id')}.txt"
+        prompt_path.write_text("\n".join(review_prompt_line(session_id, row) for row in rows) + "\n", encoding="utf-8")
+        base_args = common_gen_img_args(
+            venv_python=venv_python,
+            gen_img=gen_img,
+            base_model_path=base_model_path,
+            out_dir=out_dir,
+            model_family=str(job["model_family"] or ""),
+            mixed_precision=str(environment["mixed_precision"] or ""),
+            condition=rows[0],
+        )
+        commands.append(
+            {
+                "name": f"epoch_{epoch}_output_{rows[0].get('output_id')}",
+                "epoch": epoch,
+                "output_id": rows[0].get("output_id"),
+                "prompt_file": str(prompt_path),
+                "condition_count": len(rows),
+                "argv": [
+                    *base_args,
+                    "--from_file",
+                    str(prompt_path),
+                    "--network_module",
+                    "networks.lora",
+                    "--network_weights",
+                    str(lora_file),
+                ],
+            }
+        )
+
+    payload = {"commands": commands, "output_dir": str(out_dir), "preset_id": PRESET_ID}
+    command_argv_path = run_dir / "command_argv.json"
+    command_txt_path = run_dir / "command.txt"
+    prompt_all_path = run_dir / "review_prompts_all.txt"
+    prompt_all_path.write_text("\n".join(review_prompt_line(session_id, row) for row in conditions) + "\n", encoding="utf-8")
+    command_argv_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    command_txt_path.write_text(review_command_text(payload), encoding="utf-8")
+    log_path = run_dir / "review_preparation.log"
+    now = utc_now()
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE review_sessions
+            SET status = 'prepared', run_dir = ?, output_dir = ?, prompt_file_path = ?,
+                command_argv_json = ?, log_path = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (str(run_dir), str(out_dir), str(prompt_all_path), json.dumps(payload, ensure_ascii=False), str(log_path), now, session_id),
+        )
+    return {"session_id": session_id, "run_dir": str(run_dir), "output_dir": str(out_dir), "commands": commands}
+
+
+def group_conditions_by_lora(conditions: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in conditions:
+        grouped.setdefault(str(row["lora_path"]), []).append(row)
+    return grouped
+
+
+def review_prompt_line(session_id: int, row: dict[str, Any]) -> str:
+    filename = review_output_filename(session_id, row)
+    parts = [
+        row.get("prompt") or "",
+        "--n",
+        row.get("negative_prompt") or "",
+        "--d",
+        str(int(row["seed"])),
+        "--w",
+        str(int(row["width"] or WIDTH)),
+        "--h",
+        str(int(row["height"] or HEIGHT)),
+        "--s",
+        str(int(row["steps"] or STEPS)),
+        "--l",
+        f"{float(row['cfg_scale'] or CFG_SCALE):g}",
+        "--am",
+        f"{float(row['lora_weight'] or 0):g}",
+        "--f",
+        filename,
+    ]
+    return " ".join(parts)
+
+
+def review_output_filename(session_id: int, row: dict[str, Any]) -> str:
+    prompt_key = sanitize_filename(str(row.get("prompt_key") or "prompt"))
+    weight = f"{float(row['lora_weight'] or 0):g}".replace(".", "p").replace("-", "m")
+    epoch = int(row["epoch"] or 0)
+    return f"rs{session_id:06d}_rc{int(row['id']):06d}_{str(row['condition_hash'])[:12]}_e{epoch:06d}_{prompt_key}_seed{int(row['seed'])}_w{weight}_nohires.png"
+
+
+def review_command_text(payload: dict[str, Any]) -> str:
+    lines = ["# Generated by LoRA-Studio Review Preparation", ""]
+    for command in payload["commands"]:
+        lines.append(f"## {command['name']} ({command['condition_count']} conditions)")
+        lines.append(" ".join(json.dumps(part, ensure_ascii=False) for part in command["argv"]))
+        lines.append("")
+    return "\n".join(lines)
 
 
 def ensure_candidate_review_plan(job_id: int, *, force: bool = False) -> dict[str, Any] | None:

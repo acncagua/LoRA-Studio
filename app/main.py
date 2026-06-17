@@ -64,7 +64,7 @@ from app.services.machine_review import (
 from app.services.output_collector import collect_job_results
 from app.services.recommendations import create_draft_job_from_recommendation, list_recommendations, regenerate_recommendations, set_recommendation_status, write_recommendation_report
 from app.services.review_candidates import ensure_epoch_candidates, regenerate_epoch_candidates
-from app.services.review_sessions import ensure_candidate_review_plan, review_session_summary
+from app.services.review_sessions import ensure_candidate_review_plan, prepare_review_generation, review_session_summary
 from app.services.reference_sets import (
     ROLE_LABELS,
     REFERENCE_TYPE_LABELS,
@@ -2414,6 +2414,10 @@ def job_review_preparation_plan(job_id: int) -> RedirectResponse:
         return RedirectResponse(f"/jobs/{job_id}?review_prepare_error={quote(str(exc))}#review-preparation", status_code=303)
     if session is None:
         return RedirectResponse(f"/jobs/{job_id}?review_prepare_error={quote('候補epochまたは出力LoRAが見つかりません。')}#review-preparation", status_code=303)
+    try:
+        prepare_review_generation(int(session["id"]))
+    except Exception as exc:
+        return RedirectResponse(f"/jobs/{job_id}?review_prepare_error={quote(str(exc))}#review-preparation", status_code=303)
     return RedirectResponse(f"/jobs/{job_id}?review_prepare=1#review-preparation", status_code=303)
 
 
