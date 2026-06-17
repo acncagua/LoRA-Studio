@@ -203,9 +203,12 @@ function pollEmbeddingJobStatus(panel, jobId, statusText) {
         panel.classList.remove("warning");
         panel.classList.add("success");
         enableEmbeddingButtons();
-        window.setTimeout(() => {
-          reloadAfterEmbeddingJob(panel);
-        }, 900);
+        window.setTimeout(async () => {
+          const updated = await refreshMachineReviewReadiness();
+          if (!updated) {
+            reloadAfterEmbeddingJob(panel);
+          }
+        }, 300);
         return true;
       }
       if (payload.status === "failed") {
@@ -303,6 +306,71 @@ function enableEmbeddingButtons() {
       button.textContent = button.dataset.originalText;
     }
   });
+}
+
+function coverageText(coverage) {
+  if (!coverage) {
+    return "0 / 0";
+  }
+  return `${coverage.ready ?? 0} / ${coverage.total ?? 0}`;
+}
+
+function roleText(distribution) {
+  const roles = distribution?.roles || {};
+  const parts = Object.entries(roles).map(([role, count]) => `${role}:${count}`);
+  return parts.length ? parts.join(", ") : "-";
+}
+
+function updateReadinessList(list, items) {
+  if (!list) {
+    return;
+  }
+  list.innerHTML = "";
+  const values = Array.isArray(items) ? items : [];
+  list.hidden = values.length === 0;
+  values.forEach((item) => {
+    const li = document.createElement("li");
+    li.textContent = item;
+    list.appendChild(li);
+  });
+}
+
+function setReadinessField(container, name, value) {
+  const field = container.querySelector(`[data-readiness-field="${name}"]`);
+  if (field) {
+    field.textContent = value;
+  }
+}
+
+async function refreshMachineReviewReadiness() {
+  const container = document.querySelector("[data-machine-review-readiness]");
+  if (!container) {
+    return false;
+  }
+  const url = container.getAttribute("data-readiness-url");
+  if (!url) {
+    return false;
+  }
+  try {
+    const response = await fetch(url, { headers: { "Accept": "application/json" } });
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    const payload = await response.json();
+    setReadinessField(container, "provider", payload.provider || "-");
+    setReadinessField(container, "reference_count", payload.reference_count ?? 0);
+    setReadinessField(container, "reference_roles", roleText(payload.reference_role_distribution));
+    setReadinessField(container, "reference_coverage", coverageText(payload.reference_coverage));
+    setReadinessField(container, "dataset_coverage", coverageText(payload.dataset_coverage));
+    setReadinessField(container, "target_coverage", coverageText(payload.target_coverage));
+    setReadinessField(container, "score_coverage", coverageText(payload.score_coverage));
+    updateReadinessList(container.querySelector("[data-readiness-warnings]"), payload.warnings);
+    updateReadinessList(container.querySelector("[data-readiness-actions]"), payload.next_actions);
+    return true;
+  } catch (error) {
+    showPageNotice(`準備状況の更新に失敗しました: ${error.message}`, "warning");
+    return false;
+  }
 }
 
 function showPageNotice(message, kind = "info", anchorForm = null) {

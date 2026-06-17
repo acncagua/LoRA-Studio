@@ -1595,6 +1595,14 @@ def embedding_job_status(embedding_job_id: int) -> JSONResponse:
     )
 
 
+@app.get("/jobs/{job_id}/machine-review-readiness/status")
+def job_machine_review_readiness_status(job_id: int) -> JSONResponse:
+    job = fetch_one("SELECT id FROM training_jobs WHERE id = ? AND deleted_at IS NULL", (job_id,))
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return JSONResponse(machine_review_readiness("training_job_samples", job_id))
+
+
 @app.post("/embeddings/jobs/{embedding_job_id}/stop")
 def embedding_job_stop(embedding_job_id: int, return_to: str = Form("")) -> RedirectResponse:
     stop_embedding_job(embedding_job_id)

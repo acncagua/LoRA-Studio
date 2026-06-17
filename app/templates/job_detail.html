@@ -401,25 +401,27 @@
   </details>
 </section>
 {% if machine_review_readiness %}
-<section id="machine-assist-readiness" class="notice">
+<section id="machine-assist-readiness" class="notice" data-machine-review-readiness data-readiness-url="/jobs/{{ job.id }}/machine-review-readiness/status">
   <h2>機械補助レビュー準備状況 <span class="muted">Machine Review Assist readiness</span></h2>
   <p>機械補助レビューは自動判定ではなく、Reference類似度とDataset近傍類似度を並べる補助情報です。最終判断は人間評価を優先してください。</p>
   <div class="summary-grid">
-    <div><span>provider</span><strong>{{ machine_review_readiness.provider }}</strong></div>
-    <div><span>Reference枚数</span><strong>{{ machine_review_readiness.reference_count }}</strong></div>
-    <div><span>Reference role</span><strong>{% for role, count in machine_review_readiness.reference_role_distribution.roles.items() %}{{ role }}:{{ count }}{% if not loop.last %}, {% endif %}{% else %}-{% endfor %}</strong></div>
-    <div><span>Reference Embedding</span><strong>{{ machine_review_readiness.reference_coverage.ready if machine_review_readiness.reference_coverage else 0 }} / {{ machine_review_readiness.reference_coverage.total if machine_review_readiness.reference_coverage else 0 }}</strong></div>
-    <div><span>Dataset Embedding</span><strong>{{ machine_review_readiness.dataset_coverage.ready if machine_review_readiness.dataset_coverage else 0 }} / {{ machine_review_readiness.dataset_coverage.total if machine_review_readiness.dataset_coverage else 0 }}</strong></div>
-    <div><span>{{ machine_review_readiness.target_label }}Embedding</span><strong>{{ machine_review_readiness.target_coverage.ready if machine_review_readiness.target_coverage else 0 }} / {{ machine_review_readiness.target_coverage.total if machine_review_readiness.target_coverage else 0 }}</strong></div>
-    <div><span>Machine Review score</span><strong>{{ machine_review_readiness.score_coverage.ready }} / {{ machine_review_readiness.score_coverage.total }}</strong></div>
+    <div><span>provider</span><strong data-readiness-field="provider">{{ machine_review_readiness.provider }}</strong></div>
+    <div><span>Reference枚数</span><strong data-readiness-field="reference_count">{{ machine_review_readiness.reference_count }}</strong></div>
+    <div><span>Reference role</span><strong data-readiness-field="reference_roles">{% for role, count in machine_review_readiness.reference_role_distribution.roles.items() %}{{ role }}:{{ count }}{% if not loop.last %}, {% endif %}{% else %}-{% endfor %}</strong></div>
+    <div><span>Reference Embedding</span><strong data-readiness-field="reference_coverage">{{ machine_review_readiness.reference_coverage.ready if machine_review_readiness.reference_coverage else 0 }} / {{ machine_review_readiness.reference_coverage.total if machine_review_readiness.reference_coverage else 0 }}</strong></div>
+    <div><span>Dataset Embedding</span><strong data-readiness-field="dataset_coverage">{{ machine_review_readiness.dataset_coverage.ready if machine_review_readiness.dataset_coverage else 0 }} / {{ machine_review_readiness.dataset_coverage.total if machine_review_readiness.dataset_coverage else 0 }}</strong></div>
+    <div><span>{{ machine_review_readiness.target_label }}Embedding</span><strong data-readiness-field="target_coverage">{{ machine_review_readiness.target_coverage.ready if machine_review_readiness.target_coverage else 0 }} / {{ machine_review_readiness.target_coverage.total if machine_review_readiness.target_coverage else 0 }}</strong></div>
+    <div><span>Machine Review score</span><strong data-readiness-field="score_coverage">{{ machine_review_readiness.score_coverage.ready }} / {{ machine_review_readiness.score_coverage.total }}</strong></div>
   </div>
   {% if machine_review_readiness.warnings %}
-  <ul>
+  <ul data-readiness-warnings>
     {% for warning in machine_review_readiness.warnings %}<li>{{ warning }}</li>{% endfor %}
   </ul>
+  {% else %}
+  <ul data-readiness-warnings hidden></ul>
   {% endif %}
   <h3>次にやること</h3>
-  <ul>
+  <ul data-readiness-actions>
     {% for action in machine_review_readiness.next_actions %}<li>{{ action }}</li>{% endfor %}
   </ul>
   <div class="actions compact-actions">
