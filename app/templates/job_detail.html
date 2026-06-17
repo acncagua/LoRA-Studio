@@ -627,11 +627,11 @@
     </div>
   </div>
   {% endif %}
-  <h2>検証Run</h2>
-  <p class="muted">検証プリセットで条件を固定し、採用候補LoRAごとに画像生成・Matrix確認・レビュー保存を行います。WebUI / reForge由来の画像も登録できます。</p>
+  <h2>Weight Calibration / 検証Run</h2>
+  <p class="muted">採用epochを決めた後、標準検証45枚などでweightごとの見え方を確認します。採用前のepoch比較は上のReview Preparationを使い、ここでは採用候補LoRAのweight調整を主目的にします。</p>
   <div class="panel-grid">
     <div>
-      <h3>採用中LoRAで検証Runを作成</h3>
+      <h3>採用中LoRAでWeight Calibrationを作成</h3>
       <form method="post" action="/jobs/{{ job.id }}/validation-runs" class="form-grid">
         <label>プリセット<select name="validation_preset_id">
           {% for preset in validation_presets %}
@@ -641,9 +641,9 @@
         <label>ベースモデル<input name="base_model" value="{{ selected_lora_profile.base_model if selected_lora_profile else '' }}"></label>
         <label>トリガー<input name="trigger_word" value="{{ selected_lora_profile.trigger_word if selected_lora_profile else job.trigger_word_at_creation or '' }}"></label>
         <label class="wide-field">メモ<textarea name="memo"></textarea></label>
-        <button type="submit" {% if not selected_output %}disabled{% endif %}>検証Runを作成</button>
+        <button type="submit" {% if not selected_output %}disabled{% endif %}>Weight Calibration検証Runを作成</button>
       </form>
-      <h3>複数Epochの検証Runをまとめて作成</h3>
+      <h3>複数EpochのWeight Calibrationをまとめて作成</h3>
       <form method="post" action="/jobs/{{ job.id }}/validation-runs/bulk" class="form-grid">
         <label>プリセット<select name="validation_preset_id">
           {% for preset in validation_presets %}
@@ -661,11 +661,11 @@
         </div>
         <label class="wide-field">メモ<textarea name="memo" placeholder="例: 候補epoch 6/7/8 の標準検証"></textarea></label>
         <button type="submit" {% if outputs|length == 0 %}disabled{% endif %}>選択Epochの検証Runを作成</button>
-        <p class="muted wide-field">選択したEpochごとに検証Runを1件ずつ作成します。結果確認は各検証Runの検証Matrixで行います。</p>
+        <p class="muted wide-field">通常はReview Preparationで候補epochを絞ってから使います。選択したEpochごとに検証Runを1件ずつ作成し、weight別の確認は各検証Matrixで行います。</p>
       </form>
     </div>
     <div>
-      <h3>検証Run一覧</h3>
+      <h3>Weight Calibration検証Run一覧</h3>
       {% if generation_error %}<p class="notice warning">{{ generation_error }}</p>{% endif %}
       {% if running_generation %}
       <p class="notice">検証画像生成 #{{ running_generation.id }} が実行中です。他の検証Runの画像生成は、完了または停止後に開始できます。</p>
