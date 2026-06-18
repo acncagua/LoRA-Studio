@@ -12,6 +12,8 @@ CANDIDATE_LABELS = {"primary", "secondary", "check", "low_priority", "avoid"}
 def ensure_epoch_candidates(job_id: int) -> list[dict[str, Any]]:
     rows = fetch_all("SELECT * FROM training_epoch_candidate_summaries WHERE job_id = ? ORDER BY candidate_rank, epoch", (job_id,))
     if rows:
+        if candidate_adoption_marker_is_stale(job_id, rows):
+            return regenerate_epoch_candidates(job_id)
         return [candidate_dict(row) for row in rows]
     return regenerate_epoch_candidates(job_id)
 
@@ -84,7 +86,7 @@ def score_epochs(epochs: list[Any], output_epochs: set[int], sample_epochs: set[
             reasons.append("sample画像あり")
         if epoch in selected_epochs:
             score += 60.0
-            reasons.append("採用済みepoch")
+            reasons.append("現在の採用epoch")
         if epoch >= max_epoch - 1 and moving is not None and min_moving is not None and float(moving) > min_moving * 1.08:
             score -= 15.0
             reasons.append("後半でlossが悪化傾向")
@@ -101,7 +103,7 @@ def pick_labels(scored: list[dict[str, Any]]) -> list[dict[str, Any]]:
     result.append({**primary, "candidate_label": "primary"})
     picked_epochs.add(primary["epoch"])
     by_epoch = {row["epoch"]: row for row in scored}
-    if any("採用済みepoch" in reason for reason in primary["reasons"]):
+    if any(reason in {"現在の採用epoch", "採用済みepoch"} for reason in primary["reasons"]):
         prev_row = by_epoch.get(primary["epoch"] - 1)
         next_row = by_epoch.get(primary["epoch"] + 1)
         if prev_row:
@@ -156,6 +158,25 @@ def update_sample_review_priority(job_id: int) -> None:
 
 def ensure_epoch_candidates_no_create(job_id: int) -> list[dict[str, Any]]:
     return [candidate_dict(row) for row in fetch_all("SELECT * FROM training_epoch_candidate_summaries WHERE job_id = ? ORDER BY candidate_rank, epoch", (job_id,))]
+
+
+def candidate_adoption_marker_is_stale(job_id: int, rows: list[Any]) -> bool:
+    job = fetch_one("SELECT adopted_epoch FROM training_jobs WHERE id = ?", (job_id,))
+    adopted_epoch = int(job["adopted_epoch"]) if job and job["adopted_epoch"] is not None else None
+    marked_epochs: set[int] = set()
+    legacy_marker_found = False
+    for row in rows:
+        data = candidate_dict(row)
+        reasons = set(data.get("reasons") or [])
+        if "採用済みepoch" in reasons:
+            legacy_marker_found = True
+        if reasons.intersection({"現在の採用epoch", "採用済みepoch"}) and data.get("epoch") is not None:
+            marked_epochs.add(int(data["epoch"]))
+    if legacy_marker_found:
+        return True
+    if adopted_epoch is None:
+        return bool(marked_epochs)
+    return marked_epochs != {adopted_epoch}
 
 
 def candidate_dict(row: Any) -> dict[str, Any]:

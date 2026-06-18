@@ -161,9 +161,12 @@ Set-Content -Encoding UTF8 .\data\python_cmd.txt "C:\path\to\python.exe"
 
 - Projectは、1つのLoRA作成作業全体を表します。
 - Jobは、Project内の1回の学習実行を表します。
+- Review Sessionは、採用前に候補epochを比較するための評価単位です。
+- Validation Runは、採用後にweightや条件差を検証するための評価単位です。
 - 軽量確認から標準学習へ進む時は、同じProject内に新しいdraft Jobを作成します。
 - 実行済みJobは履歴保護のため直接編集せず、複製または派生draftを作成します。
-- Project詳細を見ると、Training Jobs、採用LoRA、LoRA Profile、外部検証、次回実験提案をまとめて確認できます。
+- 基本的にはProject詳細から作業を始めます。Project詳細を見ると、学習ジョブ履歴、Review Session、採用LoRA、LoRA Profile、Validation Run、次回実験提案をまとめて確認できます。
+- Job詳細は、1回の学習実行の詳細確認画面です。ファイル準備、実行、ログ、metrics、出力LoRA、cleanupなど、個別ジョブの情報に絞って確認します。
 - 過去Jobを開いた場合も、Job詳細上部にProjectと現在の採用Jobへのリンクが表示されます。
 
 `Prepare Files` では表示用の `command.txt` に加えて、実行用の `command_argv.json` を生成します。実行時はshell文字列ではなくargv配列を `subprocess.Popen` に渡すため、Windowsのスペース入りパスでも壊れにくくしています。`dataset_config.toml` の `batch_size` はプリセットの `train_batch_size` から生成し、コマンドライン側では `--train_batch_size` を重複指定しません。学習時のbatch sizeは `dataset_config.toml` を正とします。

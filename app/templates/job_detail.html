@@ -28,7 +28,35 @@
     <h2>次にやること</h2>
     <p>{{ next_action }}</p>
   </div>
-  <div class="actions">
+  <div>
+    <h2>Primary Action</h2>
+    <div class="actions primary-action">
+      {% if job.status == 'draft' and action_state.prepare %}
+      <form method="post" action="/jobs/{{ job.id }}/prepare"><button type="submit">ファイル準備</button></form>
+      {% elif job.status in ['prepared', 'failed', 'stopped'] and action_state.run %}
+      <form method="post" action="/jobs/{{ job.id }}/run">
+        {% if trigger_status.current_label == 'ERROR' %}<label class="inline-check"><input type="checkbox" name="acknowledge_trigger_mismatch" value="yes"> トリガー不一致を確認済み</label>{% endif %}
+        <button type="submit">実行</button>
+      </form>
+      {% elif job.status == 'running' and action_state.stop %}
+      <form method="post" action="/jobs/{{ job.id }}/stop"><button type="submit" class="danger">停止</button></form>
+      {% elif selected_output %}
+      <a class="button" href="#validation-runs">Weight Calibrationを作成</a>
+      {% elif job.status == 'completed' and review_preparation.can_open_matrix %}
+      <a class="button" href="/jobs/{{ job.id }}/review-sessions/{{ review_preparation.session.id }}/matrix">Review Matrixを開く</a>
+      {% elif job.status == 'completed' and review_preparation.session %}
+      <form method="post" action="/jobs/{{ job.id }}/review-preparation/run" data-review-preparation-run-form><button type="submit" data-review-preparation-run-button {% if review_preparation.session.status == 'running' %}disabled{% endif %}>候補Review Matrixを準備</button></form>
+      {% elif job.status == 'completed' and outputs|length > 0 %}
+      <form method="post" action="/jobs/{{ job.id }}/review-preparation/run" data-review-preparation-run-form><button type="submit" data-review-preparation-run-button>候補Review Matrixを準備</button></form>
+      {% elif job.status == 'failed' %}
+      <a class="button danger" href="#technical-log">ログを確認</a>
+      {% else %}
+      <a class="button" href="#overview">概要を確認</a>
+      {% endif %}
+    </div>
+    <details class="secondary-actions">
+      <summary>その他操作</summary>
+      <div class="actions compact-actions">
     {% if action_state.edit %}<a class="button" href="/jobs/{{ job.id }}/edit">学習ジョブを編集</a>{% else %}<span class="button disabled">学習ジョブを編集</span>{% endif %}
     {% if action_state.prepare %}<form method="post" action="/jobs/{{ job.id }}/prepare"><button type="submit">ファイル準備</button></form>{% else %}<span class="button disabled">ファイル準備</span>{% endif %}
     {% if action_state.preflight %}
@@ -58,8 +86,20 @@
     {% if action_state.contact_sheet %}<form method="post" action="/jobs/{{ job.id }}/export-contact-sheet"><button type="submit">コンタクトシート出力</button></form>{% else %}<span class="button disabled">コンタクトシート出力</span>{% endif %}
     {% if action_state.archive %}<form method="post" action="/jobs/{{ job.id }}/archive"><button type="submit">アーカイブ</button></form>{% endif %}
     {% if action_state.restore %}<form method="post" action="/jobs/{{ job.id }}/restore"><button type="submit">アーカイブから復元</button></form>{% endif %}
+      </div>
+    </details>
   </div>
 </section>
+<nav class="page-tabs" aria-label="学習ジョブ内ナビ">
+  <a href="#overview">Overview</a>
+  <a href="#setup">Setup</a>
+  <a href="#results">Results</a>
+  <a href="#review-preparation">Candidate Review</a>
+  <a href="#validation-runs">Validation</a>
+  <a href="#recommendations">Recommendations</a>
+  <a href="#files-cleanup">Files / Cleanup</a>
+  <a href="#technical">Technical</a>
+</nav>
 <section id="review-preparation" class="notice" {% if review_preparation.session %}data-review-preparation-session-id="{{ review_preparation.session.id }}" data-review-preparation-session-status="{{ review_preparation.session.status }}"{% endif %}>
   <h2>Review Preparation</h2>
   <p>採用前に候補epochを比較するための準備です。loss候補epochの前後を少数prompt / weightで生成し、横断Matrixで見比べます。採用後の45枚標準検証はWeight Calibrationとして別に実行します。</p>
@@ -100,7 +140,7 @@
   {% endif %}
 </section>
 {% if project and job.status == 'prepared' and pilot_guidance %}
-<section>
+<section id="workflow-judgement">
   <h2>次に進む判断</h2>
   <p>軽量確認判定: <span class="label {{ pilot_guidance.label|lower }}">{{ pilot_guidance.label }}</span></p>
   <p>{{ pilot_guidance.reason }}</p>
@@ -121,7 +161,7 @@
   </div>
 </section>
 {% endif %}
-<section class="panel-grid">
+<section id="overview" class="panel-grid">
   <div>
     <h2>ジョブ</h2>
     <dl>
@@ -171,7 +211,7 @@
   </div>
 </section>
 
-<section>
+<section id="files-cleanup">
   <h2>整理 / 削除</h2>
   <p class="muted">実行済み学習ジョブは再現性維持のため、通常は削除ではなくアーカイブ推奨です。下書き・準備済みの未実行ジョブだけ安全に論理削除できます。</p>
   <div class="actions cleanup-actions">
@@ -180,7 +220,7 @@
     <a class="button danger" href="/jobs/{{ job.id }}/delete-preview">削除プレビューを開く</a>
   </div>
 </section>
-<section>
+<section id="runs-cleanup">
   <h2>runsファイル整理</h2>
   <p class="muted">params、metrics、logs、reports、DB記録は残し、大きいモデル出力やsample画像だけを明示操作でTrashへ移動します。採用LoRAは通常の未採用LoRA整理では対象外です。</p>
   <div class="actions">
@@ -190,7 +230,7 @@
     <a class="button danger" href="/jobs/{{ job.id }}/cleanup/samples">サンプル画像整理プレビュー</a>
   </div>
 </section>
-<section>
+<section id="recommendations">
   <h2>次回実験提案</h2>
   <p class="muted">ルールベースの次回実験提案です。自動実行はしません。必要な提案だけ下書きジョブ化して、人間が実行を押してください。</p>
   <div class="actions">
@@ -225,7 +265,7 @@
     </tbody>
   </table>
 </section>
-<section>
+<section id="setup">
   <h2>トリガー / プロンプト整合性</h2>
   <div class="panel-grid">
     <div>
@@ -270,8 +310,8 @@
     </form>
   </div>
 </section>
-<section><h2>コマンド</h2><pre>{{ job.command_line or 'まだ準備されていません。' }}</pre></section>
-<section>
+<section id="technical"><h2>コマンド</h2><pre>{{ job.command_line or 'まだ準備されていません。' }}</pre></section>
+<section id="results">
   <h2>メトリクス / Loss</h2>
   <div class="panel-grid">
     <div>
@@ -393,7 +433,7 @@
     </tbody>
   </table>
 </section>
-<section>
+<section id="technical-log">
   <details class="log-tail-details" {% if job.status in ['running', 'failed'] %}open{% endif %}>
     <summary>train.log末尾（最大40行）</summary>
     <p class="muted">通常は閉じています。実行中や失敗時はエラー確認のため開いた状態で表示します。</p>
@@ -546,7 +586,7 @@
     </tbody>
   </table>
 </section>
-<section>
+<section id="samples">
   <h2>プロンプト別サンプル</h2>
   {% for group in sample_groups %}
   <h3>{{ group.title }} <span class="label">{{ group.prompt_role }}</span></h3>
@@ -735,7 +775,7 @@
     </div>
   </div>
 </section>
-<section>
+<section id="legacy-validation">
   <h2>旧形式の外部検証</h2>
   <p class="notice">新規の標準ワークフローでは、LoRAライブラリまたはジョブ詳細の検証Runを使い、条件カバレッジで条件単位にレビューしてください。この欄は旧形式の外部画像/weightメモを残すための入力です。</p>
   <p class="muted">reForge / WebUIなど外部生成環境で作成した画像とweight評価を、採用LoRAに紐づけて保存します。</p>
@@ -839,7 +879,7 @@
     {% endfor %}
   </div>
 </section>
-<section>
+<section id="validation-results">
   <h2>検証結果</h2>
   <p class="muted">reForge / WebUIで手動生成した結果を記録します。スコアは1〜5、画像パスは任意です。</p>
   <div class="panel-grid">
@@ -910,5 +950,5 @@
     </tbody>
   </table>
 </section>
-<section><h2>パラメータ</h2><pre>{{ job.params_json }}</pre></section>
+<section id="technical-params"><h2>パラメータ</h2><pre>{{ job.params_json }}</pre></section>
 {% endblock %}

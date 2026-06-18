@@ -10,6 +10,30 @@
   </div>
 </header>
 
+<section class="action-panel project-workspace-panel">
+  <div>
+    <h2>Current Status</h2>
+    <p><span class="label {{ project.status }}">{{ project_status_labels.get(project.status, project.status) }}</span></p>
+    <p class="muted">ProjectはLoRA作成単位です。学習ジョブ、Review Session、採用LoRA、Validation Runをここから辿ります。</p>
+  </div>
+  <div>
+    <h2>Next Action</h2>
+    <div class="actions primary-action">
+      {% if not jobs %}
+      <a class="button" href="/jobs/new?project_id={{ project.id }}">このProjectに学習ジョブを追加</a>
+      {% elif project.selected_lora_profile_id %}
+      <a class="button" href="/lora-library/{{ project.selected_lora_profile_id }}/edit">LoRAプロファイルを確認</a>
+      {% elif validation_runs %}
+      <a class="button" href="/validation-runs/{{ validation_runs[0].id }}">最新のValidation Runを開く</a>
+      {% elif project.selected_job_id %}
+      <a class="button" href="/jobs/{{ project.selected_job_id }}">採用中の学習ジョブを開く</a>
+      {% else %}
+      <a class="button" href="/jobs/{{ jobs[0].id }}">最新の学習ジョブを開く</a>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
 <section class="panel-grid">
   <div>
     <h2>Project概要</h2>

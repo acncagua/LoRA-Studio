@@ -1194,6 +1194,68 @@ def projects_list(request: Request, view: str = Query("active")) -> HTMLResponse
     )
 
 
+@app.get("/review-sessions", response_class=HTMLResponse)
+def review_sessions_list(request: Request) -> HTMLResponse:
+    sessions = fetch_all(
+        """
+        SELECT rs.*, p.name AS project_name, tj.name AS job_name,
+               (
+                   SELECT COUNT(*)
+                   FROM review_session_conditions rsc
+                   WHERE rsc.review_session_id = rs.id
+               ) AS condition_count,
+               (
+                   SELECT COUNT(*)
+                   FROM review_session_images rsi
+                   WHERE rsi.review_session_id = rs.id
+                     AND rsi.deleted_at IS NULL
+               ) AS image_count
+        FROM review_sessions rs
+        LEFT JOIN lora_projects p ON p.id = rs.project_id
+        LEFT JOIN training_jobs tj ON tj.id = rs.job_id
+        ORDER BY rs.id DESC
+        LIMIT 100
+        """
+    )
+    return render(request, "review_sessions.html", sessions=sessions)
+
+
+@app.get("/validation-runs", response_class=HTMLResponse)
+def validation_runs_list(request: Request) -> HTMLResponse:
+    runs = fetch_all(
+        """
+        SELECT vr.*, p.name AS project_name, tj.name AS job_name, vp.name AS preset_name,
+               (
+                   SELECT COUNT(*)
+                   FROM validation_images vi
+                   WHERE vi.validation_run_id = vr.id
+                     AND COALESCE(vi.ignored, 0) = 0
+               ) AS image_count,
+               (
+                   SELECT COUNT(*)
+                   FROM validation_images vi
+                   WHERE vi.validation_run_id = vr.id
+                     AND COALESCE(vi.ignored, 0) = 0
+                     AND (
+                         COALESCE(vi.rating_overall, 0) > 0
+                         OR COALESCE(vi.rating_face, 0) > 0
+                         OR COALESCE(vi.rating_costume, 0) > 0
+                         OR COALESCE(vi.rating_style, 0) > 0
+                         OR COALESCE(vi.rating_stability, 0) > 0
+                         OR COALESCE(vi.rating_flexibility, 0) > 0
+                     )
+               ) AS reviewed_count
+        FROM validation_runs vr
+        LEFT JOIN lora_projects p ON p.id = vr.project_id
+        LEFT JOIN training_jobs tj ON tj.id = vr.job_id
+        LEFT JOIN validation_presets vp ON vp.id = vr.validation_preset_id
+        ORDER BY vr.id DESC
+        LIMIT 100
+        """
+    )
+    return render(request, "validation_runs.html", runs=runs)
+
+
 @app.get("/projects/{project_id}", response_class=HTMLResponse)
 def project_detail(request: Request, project_id: int) -> HTMLResponse:
     project = fetch_one(
@@ -2847,6 +2909,7 @@ def job_select_output(request: Request, job_id: int, output_id: int):
             (output["epoch"], output["file_path"], job_id),
         )
     ensure_selected_lora_profile(job_id)
+    regenerate_epoch_candidates(job_id)
     if wants_json_response(request):
         return JSONResponse(
             {
@@ -2886,6 +2949,7 @@ def job_select_epoch(request: Request, job_id: int, epoch: int = Form(...)):
             (output["epoch"], output["file_path"], job_id),
         )
     ensure_selected_lora_profile(job_id)
+    regenerate_epoch_candidates(job_id)
     if wants_json_response(request):
         return JSONResponse(
             {

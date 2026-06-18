@@ -1501,6 +1501,21 @@ class ReviewQueueTests(IsolatedDbTest):
         self.assertEqual(sample["review_priority"], "high")
         self.assertIn("候補epoch", sample["auto_review_reason"])
 
+    def test_epoch_candidates_refresh_when_adopted_epoch_changes(self) -> None:
+        from app.services.review_candidates import ensure_epoch_candidates, regenerate_epoch_candidates
+
+        job_id = self.make_review_job()
+        regenerate_epoch_candidates(job_id)
+        with connect() as conn:
+            conn.execute("UPDATE training_jobs SET adopted_epoch = 5 WHERE id = ?", (job_id,))
+            conn.execute("UPDATE training_outputs SET selected = CASE WHEN epoch = 5 THEN 1 ELSE 0 END WHERE job_id = ?", (job_id,))
+
+        rows = ensure_epoch_candidates(job_id)
+        reasons_by_epoch = {row["epoch"]: row["reasons"] for row in rows}
+        self.assertNotIn("採用済みepoch", reasons_by_epoch[4])
+        self.assertNotIn("現在の採用epoch", reasons_by_epoch[4])
+        self.assertIn("現在の採用epoch", reasons_by_epoch[5])
+
     def test_group_samples_filters_candidates_and_marks_full_body_role(self) -> None:
         from app.main import group_samples
         from app.services.review_candidates import regenerate_epoch_candidates

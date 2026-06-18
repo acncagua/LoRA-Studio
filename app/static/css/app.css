@@ -215,6 +215,51 @@ textarea { min-height: 84px; }
   margin-bottom: 18px;
 }
 .action-panel h2 { margin-top: 0; }
+.primary-action {
+  justify-content: flex-start;
+}
+.primary-action button,
+.primary-action .button {
+  min-height: 44px;
+  font-size: 15px;
+  padding: 11px 18px;
+}
+.secondary-actions {
+  margin-top: 10px;
+}
+.secondary-actions summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 700;
+  padding: 6px 0;
+}
+.page-tabs {
+  position: sticky;
+  top: 104px;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 18px;
+  padding: 8px;
+  background: rgba(246, 247, 244, .96);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.page-tabs a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #eef2eb;
+  color: var(--ink);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.page-tabs a:hover {
+  background: #dce8e0;
+}
 .breadcrumbs {
   display: flex;
   flex-wrap: wrap;

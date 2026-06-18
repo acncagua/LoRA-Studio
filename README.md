@@ -118,11 +118,14 @@ The goal is to make LoRA iteration easier to reproduce, compare, and clean up.
 
 A Project represents one LoRA creation effort.
 It groups datasets, training jobs, selected outputs, validation runs, reference sets, and review notes.
+In normal use, start from the Project detail page. It acts as the workspace for the whole LoRA creation flow.
 
 ### Training Job
 
 A Training Job represents one actual training run.
 Jobs can be prepared, run, stopped, reviewed, cloned, archived, or used as the source for a new variant.
+The Training Job detail page is for inspecting one run: setup, command generation, logs, metrics, outputs, and cleanup.
+It is not intended to replace the Project page as the overall workspace.
 
 ### Dataset Version
 
@@ -132,10 +135,17 @@ This helps compare runs made before and after dataset cleanup.
 ### Validation Run
 
 A Validation Run stores fixed validation conditions such as prompts, seeds, LoRA weights, and generated or imported validation images.
+Validation Runs are mainly for post-selection weight calibration after a candidate epoch has been chosen.
 
 ### Reference Set
 
 A Reference Set contains human-selected reference images used for visual review and Machine Review Assist.
+
+### Review Session
+
+A Review Session is the pre-selection comparison workspace for candidate epochs.
+It stores candidate epoch conditions, generated review images, Machine Review Assist results, and the cross-epoch Review Matrix.
+Use Review Sessions before selecting a final epoch. Use Validation Runs after selecting an epoch.
 
 ### Machine Review Assist
 
