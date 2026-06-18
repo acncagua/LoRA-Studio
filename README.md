@@ -126,6 +126,7 @@ A Training Job represents one actual training run.
 Jobs can be prepared, run, stopped, reviewed, cloned, archived, or used as the source for a new variant.
 The Training Job detail page is for inspecting one run: setup, command generation, logs, metrics, outputs, and cleanup.
 It is not intended to replace the Project page as the overall workspace.
+The detail page is organized into tabs so setup, results, review, validation, recommendations, files, and technical data stay separated.
 
 ### Dataset Version
 
@@ -146,6 +147,7 @@ A Reference Set contains human-selected reference images used for visual review 
 A Review Session is the pre-selection comparison workspace for candidate epochs.
 It stores candidate epoch conditions, generated review images, Machine Review Assist results, and the cross-epoch Review Matrix.
 Use Review Sessions before selecting a final epoch. Use Validation Runs after selecting an epoch.
+Open Review Sessions from the Project or Training Job page when you want to compare candidate epochs and select the final LoRA.
 
 ### Machine Review Assist
 

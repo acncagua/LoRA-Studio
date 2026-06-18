@@ -1,0 +1,90 @@
+{% extends "base.html" %}{% block content %}
+<nav class="breadcrumbs">
+  <a href="/">ダッシュボード</a>
+  <a href="/review-sessions">Review Session</a>
+  <span>#{{ session.id }}</span>
+</nav>
+<header class="page-head">
+  <h1>Review Session #{{ session.id }}</h1>
+  <div class="actions">
+    {% if session.project_id %}<a class="button" href="/projects/{{ session.project_id }}">Projectへ戻る</a>{% endif %}
+    {% if session.job_id %}<a class="button" href="/jobs/{{ session.job_id }}#review-preparation">Jobへ戻る</a>{% endif %}
+    {% if session.matrix_path and session.job_id %}<a class="button" href="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix">Review Matrixを開く</a>{% endif %}
+  </div>
+</header>
+
+<section class="notice">
+  <h2>採用前epoch比較</h2>
+  <p>Review Sessionは、採用LoRAを決める前に候補epochを横並びで確認するための作業画面です。Validation Runは採用epoch決定後のweight検証に使います。</p>
+</section>
+
+<section class="status-strip">
+  <div class="status-card"><span>状態</span><strong>{{ session.status }}</strong></div>
+  <div class="status-card"><span>Project</span><strong>{% if session.project_id %}#{{ session.project_id }} {{ session.project_name or '' }}{% else %}-{% endif %}</strong></div>
+  <div class="status-card"><span>学習ジョブ</span><strong>{% if session.job_id %}#{{ session.job_id }} {{ session.job_name or '' }}{% else %}-{% endif %}</strong></div>
+  <div class="status-card"><span>候補epoch</span><strong>{{ candidate_epochs|join(', ') if candidate_epochs else '-' }}</strong></div>
+  <div class="status-card"><span>登録画像</span><strong>{{ images.active or 0 }} / {{ session.expected_image_count or 0 }}</strong></div>
+  <div class="status-card"><span>Machine Review</span><strong>{{ scores.total or 0 }} / {{ session.expected_image_count or 0 }}</strong></div>
+</section>
+
+<section class="panel-grid">
+  <div>
+    <h2>Review Session概要</h2>
+    <dl>
+      <dt>ID</dt><dd>#{{ session.id }}</dd>
+      <dt>状態</dt><dd><span class="label {{ session.status }}">{{ session.status }}</span></dd>
+      <dt>条件数</dt><dd>{{ session.expected_image_count or 0 }}</dd>
+      <dt>出力先</dt><dd>{{ session.output_dir or '-' }}</dd>
+      <dt>Matrix</dt><dd>{% if session.matrix_path %}{{ session.matrix_path }}{% else %}-{% endif %}</dd>
+      <dt>開始</dt><dd>{{ session.started_at or '-' }}</dd>
+      <dt>終了</dt><dd>{{ session.ended_at or '-' }}</dd>
+      <dt>エラー</dt><dd>{{ session.error_message or '-' }}</dd>
+    </dl>
+  </div>
+  <div>
+    <h2>次にやること</h2>
+    {% if session.status in ['running', 'planned'] %}
+    <p>画像生成、Embedding、Machine Reviewの完了を待ちます。必要ならJob詳細でログを確認してください。</p>
+    {% elif session.matrix_path %}
+    <p>Review Matrixを開き、候補epochを比較して採用epochを選択してください。</p>
+    {% else %}
+    <p>Review Matrixがまだありません。Job詳細のReview Preparationから準備を実行してください。</p>
+    {% endif %}
+    <div class="actions">
+      {% if session.matrix_path and session.job_id %}<a class="button" href="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix">Review Matrixを開く</a>{% endif %}
+      {% if session.job_id %}<a class="button" href="/jobs/{{ session.job_id }}#review-preparation">Jobへ戻る</a>{% endif %}
+      {% if session.project_id %}<a class="button" href="/projects/{{ session.project_id }}">Projectへ戻る</a>{% endif %}
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Candidate Epochs</h2>
+  <table>
+    <thead><tr><th>epoch</th><th>条件数</th><th>出力LoRA</th><th>採用</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for condition in conditions %}
+      {% set output = output_by_epoch.get(condition.epoch) %}
+      <tr>
+        <td>{{ condition.epoch }}</td>
+        <td>{{ condition.count }}</td>
+        <td>{% if output %}{{ output.file_path }}{% else %}-{% endif %}</td>
+        <td>{% if output and output.selected %}<span class="label ok">採用中</span>{% else %}-{% endif %}</td>
+        <td>
+          {% if output and session.job_id %}
+          <form method="post" action="/jobs/{{ session.job_id }}/select-epoch" class="inline-form">
+            <input type="hidden" name="epoch" value="{{ condition.epoch }}">
+            <button class="small-button" type="submit">このepochを採用</button>
+          </form>
+          {% else %}
+          -
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">候補epochはまだありません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

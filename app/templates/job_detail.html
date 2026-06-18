@@ -91,14 +91,14 @@
   </div>
 </section>
 <nav class="page-tabs" aria-label="学習ジョブ内ナビ">
-  <a href="#overview">Overview</a>
-  <a href="#setup">Setup</a>
-  <a href="#results">Results</a>
-  <a href="#review-preparation">Candidate Review</a>
-  <a href="#validation-runs">Validation</a>
-  <a href="#recommendations">Recommendations</a>
-  <a href="#files-cleanup">Files / Cleanup</a>
-  <a href="#technical">Technical</a>
+  <a href="#tab-overview" data-job-tab="overview">Overview</a>
+  <a href="#tab-setup" data-job-tab="setup">Setup</a>
+  <a href="#tab-results" data-job-tab="results">Results</a>
+  <a href="#tab-review" data-job-tab="review">Review</a>
+  <a href="#tab-validation" data-job-tab="validation">Validation</a>
+  <a href="#tab-recommendations" data-job-tab="recommendations">Recommendations</a>
+  <a href="#tab-files" data-job-tab="files">Files</a>
+  <a href="#tab-technical" data-job-tab="technical">Technical</a>
 </nav>
 <section id="review-preparation" class="notice" {% if review_preparation.session %}data-review-preparation-session-id="{{ review_preparation.session.id }}" data-review-preparation-session-status="{{ review_preparation.session.status }}"{% endif %}>
   <h2>Review Preparation</h2>
@@ -951,4 +951,59 @@
   </table>
 </section>
 <section id="technical-params"><h2>パラメータ</h2><pre>{{ job.params_json }}</pre></section>
+<script>
+(() => {
+  const tabMap = {
+    overview: ["overview", "workflow-judgement"],
+    setup: ["setup"],
+    results: ["results", "outputs", "samples"],
+    review: ["review-preparation", "review-queue", "machine-assist-readiness", "machine-assist"],
+    validation: ["validation-runs", "legacy-validation", "validation-results"],
+    recommendations: ["recommendations"],
+    files: ["files-cleanup", "runs-cleanup"],
+    technical: ["technical", "technical-log", "technical-params"],
+  };
+  const allIds = Object.values(tabMap).flat();
+  const tabBySection = {};
+  for (const [tab, ids] of Object.entries(tabMap)) {
+    for (const id of ids) tabBySection[id] = tab;
+  }
+  const links = Array.from(document.querySelectorAll("[data-job-tab]"));
+  const panels = allIds.map((id) => document.getElementById(id)).filter(Boolean);
+
+  function tabFromHash() {
+    const raw = decodeURIComponent((location.hash || "").replace(/^#/, ""));
+    if (!raw) return "overview";
+    if (raw.startsWith("tab-")) return raw.slice(4);
+    const exact = tabBySection[raw];
+    if (exact) return exact;
+    const target = document.getElementById(raw);
+    if (target) {
+      const parent = target.closest("section[id]");
+      if (parent && tabBySection[parent.id]) return tabBySection[parent.id];
+    }
+    return "overview";
+  }
+
+  function showTab(tab, scrollTarget = false) {
+    if (!tabMap[tab]) tab = "overview";
+    const visible = new Set(tabMap[tab]);
+    for (const panel of panels) {
+      panel.classList.toggle("job-tab-hidden", !visible.has(panel.id));
+    }
+    for (const link of links) {
+      link.classList.toggle("active", link.dataset.jobTab === tab);
+    }
+    if (scrollTarget) {
+      const raw = decodeURIComponent((location.hash || "").replace(/^#/, ""));
+      const targetId = raw && !raw.startsWith("tab-") ? raw : tabMap[tab][0];
+      const target = document.getElementById(targetId);
+      if (target) target.scrollIntoView({ block: "start" });
+    }
+  }
+
+  window.addEventListener("hashchange", () => showTab(tabFromHash(), true));
+  showTab(tabFromHash(), Boolean(location.hash && !location.hash.startsWith("#tab-")));
+})();
+</script>
 {% endblock %}

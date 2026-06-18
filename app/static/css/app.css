@@ -260,6 +260,42 @@ textarea { min-height: 84px; }
 .page-tabs a:hover {
   background: #dce8e0;
 }
+.page-tabs a.active {
+  background: var(--accent);
+  color: white;
+}
+.job-tab-hidden {
+  display: none !important;
+}
+.status-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin: 12px 0;
+}
+.status-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  min-width: 0;
+}
+.status-card span {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.status-card strong {
+  display: block;
+  font-size: 18px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.session-summary {
+  display: grid;
+  gap: 12px;
+}
 .breadcrumbs {
   display: flex;
   flex-wrap: wrap;

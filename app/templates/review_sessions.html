@@ -20,7 +20,7 @@
       <tbody>
         {% for session in sessions %}
         <tr>
-          <td>#{{ session.id }}</td>
+          <td><a href="/review-sessions/{{ session.id }}">#{{ session.id }}</a></td>
           <td>{% if session.project_id %}<a href="/projects/{{ session.project_id }}">#{{ session.project_id }} {{ session.project_name or '' }}</a>{% else %}-{% endif %}</td>
           <td>{% if session.job_id %}<a href="/jobs/{{ session.job_id }}">#{{ session.job_id }} {{ session.job_name or '' }}</a>{% else %}-{% endif %}</td>
           <td><span class="label {{ session.status }}">{{ session.status }}</span></td>
@@ -30,6 +30,7 @@
           <td>{{ session.scored_image_count or 0 }}</td>
           <td>{{ session.created_at or '-' }}</td>
           <td class="inline-actions">
+            <a class="button small-button" href="/review-sessions/{{ session.id }}">詳細</a>
             {% if session.job_id %}<a class="button small-button" href="/jobs/{{ session.job_id }}#review-preparation">ジョブへ</a>{% endif %}
             {% if session.matrix_path and session.job_id %}<a class="button small-button" href="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix">Matrix</a>{% endif %}
           </td>

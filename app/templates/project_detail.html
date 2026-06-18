@@ -17,7 +17,7 @@
     <p class="muted">ProjectはLoRA作成単位です。学習ジョブ、Review Session、採用LoRA、Validation Runをここから辿ります。</p>
   </div>
   <div>
-    <h2>Next Action</h2>
+    <h2>次にやること</h2>
     <div class="actions primary-action">
       {% if not jobs %}
       <a class="button" href="/jobs/new?project_id={{ project.id }}">このProjectに学習ジョブを追加</a>
@@ -31,6 +31,37 @@
       <a class="button" href="/jobs/{{ jobs[0].id }}">最新の学習ジョブを開く</a>
       {% endif %}
     </div>
+  </div>
+</section>
+
+<section class="status-strip">
+  <div class="status-card">
+    <span>現在の採用LoRA</span>
+    <strong>{% if project.selected_output_id %}epoch {{ project.selected_epoch or '-' }}{% elif project.selected_lora_profile_id %}LoRAプロファイル選択済み{% else %}未選択{% endif %}</strong>
+  </div>
+  <div class="status-card">
+    <span>最新の学習ジョブ</span>
+    <strong>{% if jobs %}<a href="/jobs/{{ jobs[0].id }}">#{{ jobs[0].id }} {{ jobs[0].name }}</a>{% else %}-{% endif %}</strong>
+  </div>
+  <div class="status-card">
+    <span>最新のReview Session</span>
+    <strong>{% if review_sessions %}<a href="/review-sessions/{{ review_sessions[0].id }}">#{{ review_sessions[0].id }} {{ review_sessions[0].status }}</a>{% else %}-{% endif %}</strong>
+  </div>
+  <div class="status-card">
+    <span>最新のValidation Run</span>
+    <strong>{% if validation_runs %}<a href="/validation-runs/{{ validation_runs[0].id }}">#{{ validation_runs[0].id }} {{ display_validation_status(validation_runs[0].status) }}</a>{% else %}-{% endif %}</strong>
+  </div>
+  <div class="status-card">
+    <span>次にやること</span>
+    <strong>
+      {% if not jobs %}学習ジョブ作成
+      {% elif project.selected_lora_profile_id %}LoRAプロファイル確認
+      {% elif validation_runs %}検証結果確認
+      {% elif project.selected_job_id %}採用ジョブ確認
+      {% elif review_sessions %}候補epoch確認
+      {% else %}最新ジョブ確認
+      {% endif %}
+    </strong>
   </div>
 </section>
 
@@ -83,25 +114,6 @@
   </div>
 </section>
 
-<section>
-  <h2>Projectストレージ</h2>
-  {% if storage_summary.onedrive_warning %}
-  <p class="notice warning">{{ storage_summary.onedrive_warning }}</p>
-  {% endif %}
-  <div class="summary-grid">
-    <div><span>合計</span><strong>{{ storage_summary.total_size_label }}</strong></div>
-    <div><span>モデル出力</span><strong>{{ storage_summary.model_size_label }}</strong></div>
-    <div><span>サンプル</span><strong>{{ storage_summary.sample_size_label }}</strong></div>
-    <div><span>Review Session画像</span><strong>{{ storage_summary.review_session_size_label }}</strong></div>
-    <div><span>logs/config/reports</span><strong>{{ storage_summary.support_size_label }}</strong></div>
-    <div><span>整理候補</span><strong>{{ storage_summary.cleanup_candidate_size_label }}</strong></div>
-  </div>
-  <div class="actions">
-    <a class="button danger" href="/projects/{{ project.id }}/cleanup?mode=unselected_models">このProjectの未採用LoRA削除Preview</a>
-    <a class="button danger" href="/projects/{{ project.id }}/cleanup?mode=failed_outputs">このProjectの失敗/停止出力削除Preview</a>
-  </div>
-</section>
-
 <section id="training-jobs">
   <h2>学習ジョブ履歴</h2>
   <table>
@@ -138,14 +150,19 @@
     <tbody>
       {% for session in review_sessions %}
       <tr>
-        <td>#{{ session.id }}</td>
+        <td><a href="/review-sessions/{{ session.id }}">#{{ session.id }}</a></td>
         <td>{% if session.job_id %}<a href="/jobs/{{ session.job_id }}">#{{ session.job_id }} {{ session.job_name or '' }}</a>{% else %}-{% endif %}</td>
         <td><span class="label {{ session.status }}">{{ session.status }}</span></td>
         <td>{{ session.candidate_epochs_json or '-' }}</td>
         <td>{{ session.condition_count or 0 }}</td>
         <td>{{ session.imported_image_count if session.imported_image_count is not none else session.image_count or 0 }} / {{ session.expected_image_count or 0 }}</td>
         <td>{{ session.scored_image_count or 0 }}</td>
-        <td>{% if session.matrix_path %}<a class="button small-button" href="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix">開く</a>{% else %}-{% endif %}</td>
+        <td>
+          <div class="actions compact-actions">
+            <a class="button small-button" href="/review-sessions/{{ session.id }}">詳細</a>
+            {% if session.matrix_path %}<a class="button small-button" href="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix">Matrix</a>{% endif %}
+          </div>
+        </td>
       </tr>
       {% else %}
       <tr><td colspan="8" class="muted">Review Sessionはまだありません。</td></tr>
@@ -234,6 +251,25 @@
       {% endfor %}
     </tbody>
   </table>
+</section>
+
+<section>
+  <h2>Projectストレージ</h2>
+  {% if storage_summary.onedrive_warning %}
+  <p class="notice warning">{{ storage_summary.onedrive_warning }}</p>
+  {% endif %}
+  <div class="summary-grid">
+    <div><span>合計</span><strong>{{ storage_summary.total_size_label }}</strong></div>
+    <div><span>モデル出力</span><strong>{{ storage_summary.model_size_label }}</strong></div>
+    <div><span>サンプル</span><strong>{{ storage_summary.sample_size_label }}</strong></div>
+    <div><span>Review Session画像</span><strong>{{ storage_summary.review_session_size_label }}</strong></div>
+    <div><span>logs/config/reports</span><strong>{{ storage_summary.support_size_label }}</strong></div>
+    <div><span>整理候補</span><strong>{{ storage_summary.cleanup_candidate_size_label }}</strong></div>
+  </div>
+  <div class="actions">
+    <a class="button danger" href="/projects/{{ project.id }}/cleanup?mode=unselected_models">このProjectの未採用LoRA削除Preview</a>
+    <a class="button danger" href="/projects/{{ project.id }}/cleanup?mode=failed_outputs">このProjectの失敗/停止出力削除Preview</a>
+  </div>
 </section>
 
 <section>

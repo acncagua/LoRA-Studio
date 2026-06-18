@@ -166,7 +166,9 @@ Set-Content -Encoding UTF8 .\data\python_cmd.txt "C:\path\to\python.exe"
 - 軽量確認から標準学習へ進む時は、同じProject内に新しいdraft Jobを作成します。
 - 実行済みJobは履歴保護のため直接編集せず、複製または派生draftを作成します。
 - 基本的にはProject詳細から作業を始めます。Project詳細を見ると、学習ジョブ履歴、Review Session、採用LoRA、LoRA Profile、Validation Run、次回実験提案をまとめて確認できます。
-- Job詳細は、1回の学習実行の詳細確認画面です。ファイル準備、実行、ログ、metrics、出力LoRA、cleanupなど、個別ジョブの情報に絞って確認します。
+- Job詳細は、1回の学習実行の詳細確認画面です。Overview、Setup、Results、Review、Validation、Recommendations、Files、Technicalのタブに分け、ファイル準備、実行、ログ、metrics、出力LoRA、cleanupなどを個別ジョブの情報として確認します。
+- Review Sessionは採用前epoch比較の中心画面です。ProjectまたはJob詳細から開き、候補epoch、画像生成状況、Embedding / Machine Review、Review Matrix、採用epoch選択を確認します。
+- Validation Runは採用epoch決定後のweight検証画面です。採用前のepoch比較とは分けて扱います。
 - 過去Jobを開いた場合も、Job詳細上部にProjectと現在の採用Jobへのリンクが表示されます。
 
 `Prepare Files` では表示用の `command.txt` に加えて、実行用の `command_argv.json` を生成します。実行時はshell文字列ではなくargv配列を `subprocess.Popen` に渡すため、Windowsのスペース入りパスでも壊れにくくしています。`dataset_config.toml` の `batch_size` はプリセットの `train_batch_size` から生成し、コマンドライン側では `--train_batch_size` を重複指定しません。学習時のbatch sizeは `dataset_config.toml` を正とします。

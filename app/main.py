@@ -1220,6 +1220,87 @@ def review_sessions_list(request: Request) -> HTMLResponse:
     return render(request, "review_sessions.html", sessions=sessions)
 
 
+@app.get("/review-sessions/{session_id}", response_class=HTMLResponse)
+def review_session_detail(request: Request, session_id: int) -> HTMLResponse:
+    session = fetch_one(
+        """
+        SELECT rs.*, p.name AS project_name, tj.name AS job_name, tj.adopted_epoch,
+               so.epoch AS selected_epoch
+        FROM review_sessions rs
+        LEFT JOIN lora_projects p ON p.id = rs.project_id
+        LEFT JOIN training_jobs tj ON tj.id = rs.job_id
+        LEFT JOIN training_outputs so ON so.id = (
+            SELECT id FROM training_outputs
+            WHERE job_id = rs.job_id AND selected = 1
+            ORDER BY id DESC LIMIT 1
+        )
+        WHERE rs.id = ?
+        """,
+        (session_id,),
+    )
+    if session is None:
+        raise HTTPException(status_code=404, detail="Review Session not found")
+    conditions = fetch_all(
+        """
+        SELECT epoch, COUNT(*) AS count
+        FROM review_session_conditions
+        WHERE review_session_id = ?
+        GROUP BY epoch
+        ORDER BY epoch
+        """,
+        (session_id,),
+    )
+    images = fetch_one(
+        """
+        SELECT COUNT(*) AS total,
+               SUM(CASE WHEN deleted_at IS NULL THEN 1 ELSE 0 END) AS active
+        FROM review_session_images
+        WHERE review_session_id = ?
+        """,
+        (session_id,),
+    )
+    scores = fetch_one(
+        """
+        SELECT COUNT(*) AS total
+        FROM machine_review_scores mrs
+        JOIN review_session_images rsi ON rsi.id = mrs.source_id
+        WHERE mrs.source_type = 'review_session_image'
+          AND rsi.review_session_id = ?
+        """,
+        (session_id,),
+    )
+    candidate_epochs: list[int] = []
+    if session["candidate_epochs_json"]:
+        try:
+            candidate_epochs = [int(value) for value in json.loads(session["candidate_epochs_json"])]
+        except Exception:
+            candidate_epochs = []
+    outputs = []
+    if session["job_id"] and candidate_epochs:
+        placeholders = ",".join("?" for _ in candidate_epochs)
+        outputs = fetch_all(
+            f"""
+            SELECT id, epoch, file_path, selected
+            FROM training_outputs
+            WHERE job_id = ? AND epoch IN ({placeholders})
+            ORDER BY epoch, id
+            """,
+            (session["job_id"], *candidate_epochs),
+        )
+    output_by_epoch = {int(row["epoch"]): row for row in outputs if row["epoch"] is not None}
+    return render(
+        request,
+        "review_session_detail.html",
+        session=session,
+        conditions=conditions,
+        images=images,
+        scores=scores,
+        candidate_epochs=candidate_epochs,
+        outputs=outputs,
+        output_by_epoch=output_by_epoch,
+    )
+
+
 @app.get("/validation-runs", response_class=HTMLResponse)
 def validation_runs_list(request: Request) -> HTMLResponse:
     runs = fetch_all(
@@ -2613,14 +2694,30 @@ def job_review_session_status(job_id: int, session_id: int) -> JSONResponse:
 
 
 @app.get("/jobs/{job_id}/review-sessions/{session_id}/matrix", response_class=HTMLResponse)
-def job_review_session_matrix(job_id: int, session_id: int) -> FileResponse:
+def job_review_session_matrix(job_id: int, session_id: int) -> HTMLResponse:
     session = fetch_one("SELECT * FROM review_sessions WHERE id = ? AND job_id = ?", (session_id, job_id))
     if session is None:
         raise HTTPException(status_code=404, detail="Review Session not found")
     matrix_path = session["matrix_path"]
     if not matrix_path or not Path(str(matrix_path)).exists():
         raise HTTPException(status_code=404, detail="Review Matrix not generated yet")
-    return FileResponse(str(matrix_path), media_type="text/html; charset=utf-8")
+    matrix_file = Path(str(matrix_path))
+    body = matrix_file.read_text(encoding="utf-8", errors="replace")
+    project_id = session["project_id"] if "project_id" in session.keys() else None
+    nav_parts = [
+        '<div class="matrix-actions">',
+        f'<a class="button" href="/review-sessions/{session_id}">Review Sessionへ戻る</a>',
+        f'<a class="button" href="/jobs/{job_id}#review-preparation">Jobへ戻る</a>',
+    ]
+    if project_id:
+        nav_parts.append(f'<a class="button" href="/projects/{project_id}">Projectへ戻る</a>')
+    nav_parts.append('<button type="button" onclick="window.close()">閉じる</button>')
+    nav_parts.append("</div>")
+    nav = "".join(nav_parts)
+    replaced = re.sub(r'(<body>\s*)<div class="matrix-actions">.*?</div>', r"\1" + nav, body, count=1, flags=re.S)
+    if replaced == body:
+        replaced = body.replace("<body>", f"<body>\n{nav}", 1)
+    return HTMLResponse(replaced)
 
 
 @app.get("/jobs/{job_id}/review-sessions/{session_id}/images/{filename:path}")
