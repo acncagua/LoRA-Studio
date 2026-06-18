@@ -18,18 +18,10 @@
   </div>
   <div>
     <h2>次にやること</h2>
+    <p><strong>{{ project_next_action.label }}</strong></p>
+    <p class="muted">{{ project_next_action.description }}</p>
     <div class="actions primary-action">
-      {% if not jobs %}
-      <a class="button" href="/jobs/new?project_id={{ project.id }}">このProjectに学習ジョブを追加</a>
-      {% elif project.selected_lora_profile_id %}
-      <a class="button" href="/lora-library/{{ project.selected_lora_profile_id }}/edit">LoRAプロファイルを確認</a>
-      {% elif validation_runs %}
-      <a class="button" href="/validation-runs/{{ validation_runs[0].id }}">最新のValidation Runを開く</a>
-      {% elif project.selected_job_id %}
-      <a class="button" href="/jobs/{{ project.selected_job_id }}">採用中の学習ジョブを開く</a>
-      {% else %}
-      <a class="button" href="/jobs/{{ jobs[0].id }}">最新の学習ジョブを開く</a>
-      {% endif %}
+      <a class="button" href="{{ project_next_action.href }}">{{ project_next_action.button }}</a>
     </div>
   </div>
 </section>
@@ -53,15 +45,7 @@
   </div>
   <div class="status-card">
     <span>次にやること</span>
-    <strong>
-      {% if not jobs %}学習ジョブ作成
-      {% elif project.selected_lora_profile_id %}LoRAプロファイル確認
-      {% elif validation_runs %}検証結果確認
-      {% elif project.selected_job_id %}採用ジョブ確認
-      {% elif review_sessions %}候補epoch確認
-      {% else %}最新ジョブ確認
-      {% endif %}
-    </strong>
+    <strong>{{ project_next_action.label }}</strong>
   </div>
 </section>
 
@@ -200,8 +184,9 @@
   </div>
 </section>
 
-<section>
-  <h2>リファレンスセット</h2>
+<details class="project-foldout">
+  <summary>リファレンスセット</summary>
+  <div class="detail-panel">
   <p class="muted">採用LoRAやValidation Runを人間が確認するときの基準画像です。Machine Review Assistの前段階として、顔・全身・styleなどの役割を固定します。</p>
   <div class="actions">
     <a class="button" href="/reference-sets">リファレンスセット一覧</a>
@@ -230,10 +215,12 @@
       {% endfor %}
     </tbody>
   </table>
-</section>
+</div>
+</details>
 
-<section>
-  <h2>次回実験提案</h2>
+<details class="project-foldout" id="recommendations">
+  <summary>次回実験提案</summary>
+  <div class="detail-panel">
   <table>
     <thead><tr><th>優先度</th><th>種別</th><th>タイトル</th><th>状態</th><th>作成ジョブ</th><th>操作</th></tr></thead>
     <tbody>
@@ -251,10 +238,12 @@
       {% endfor %}
     </tbody>
   </table>
-</section>
+</div>
+</details>
 
-<section>
-  <h2>Projectストレージ</h2>
+<details class="project-foldout">
+  <summary>Projectストレージ</summary>
+  <div class="detail-panel">
   {% if storage_summary.onedrive_warning %}
   <p class="notice warning">{{ storage_summary.onedrive_warning }}</p>
   {% endif %}
@@ -270,10 +259,12 @@
     <a class="button danger" href="/projects/{{ project.id }}/cleanup?mode=unselected_models">このProjectの未採用LoRA削除Preview</a>
     <a class="button danger" href="/projects/{{ project.id }}/cleanup?mode=failed_outputs">このProjectの失敗/停止出力削除Preview</a>
   </div>
-</section>
+</div>
+</details>
 
-<section>
-  <h2>Project整理</h2>
+<details class="project-foldout">
+  <summary>Project整理</summary>
+  <div class="detail-panel">
   <p class="muted">Projectは作業単位なので、標準操作はアーカイブ推奨です。Dataset画像、caption、base model、sd-scripts環境はProject整理では削除しません。</p>
   <div class="actions">
     {% if not project.archived_at and not project.deleted_at %}
@@ -286,5 +277,6 @@
     {% if project.archived_at and not project.deleted_at %}<form method="post" action="/projects/{{ project.id }}/restore"><button type="submit">Projectを復元</button></form>{% endif %}
     <a class="button danger" href="/projects/{{ project.id }}/delete-preview">Project削除Previewを開く</a>
   </div>
-</section>
+</div>
+</details>
 {% endblock %}

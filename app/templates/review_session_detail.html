@@ -27,6 +27,27 @@
   <div class="status-card"><span>Machine Review</span><strong>{{ scores.total or 0 }} / {{ session.expected_image_count or 0 }}</strong></div>
 </section>
 
+<section class="action-panel review-session-summary">
+  <div>
+    <h2>Candidate Epoch summary</h2>
+    <p><strong>{{ candidate_epochs|join(', ') if candidate_epochs else '-' }}</strong></p>
+    <p class="muted">採用前の候補epochです。Matrixで同一prompt / seed / weightごとに横並び比較します。</p>
+  </div>
+  <div>
+    <h2>Machine Assist summary</h2>
+    <p><strong>{{ scores.total or 0 }} / {{ session.expected_image_count or 0 }}</strong></p>
+    <p class="muted">機械補助レビューは参考情報です。最終判断は人間評価と画像比較を優先してください。</p>
+  </div>
+  <div>
+    <h2>主要操作</h2>
+    <div class="actions">
+      {% if session.matrix_path and session.job_id %}<a class="button" href="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix">Review Matrixを開く</a>{% endif %}
+      {% if session.job_id %}<a class="button" href="/jobs/{{ session.job_id }}#review-preparation">Jobへ戻る</a>{% endif %}
+      {% if session.project_id %}<a class="button" href="/projects/{{ session.project_id }}">Projectへ戻る</a>{% endif %}
+    </div>
+  </div>
+</section>
+
 <section class="panel-grid">
   <div>
     <h2>Review Session概要</h2>
@@ -58,7 +79,7 @@
   </div>
 </section>
 
-<section>
+<section class="session-summary">
   <h2>Candidate Epochs</h2>
   <table>
     <thead><tr><th>epoch</th><th>条件数</th><th>出力LoRA</th><th>採用</th><th>操作</th></tr></thead>

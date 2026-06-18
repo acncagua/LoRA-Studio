@@ -743,6 +743,93 @@ def project_workflow_status(project: Any, jobs: list[dict[str, Any]], validation
     ]
 
 
+def project_next_action(project: Any, jobs: list[Any], review_sessions: list[Any], validation_runs: list[Any], recommendations: list[Any]) -> dict[str, str]:
+    """Return the highest-priority next action for the project workspace."""
+    running_job = next((job for job in jobs if job["status"] == "running"), None)
+    if running_job:
+        return {
+            "label": "学習ジョブが実行中です",
+            "description": f"#{running_job['id']} {running_job['name']} の進捗とログを確認してください。",
+            "href": f"/jobs/{running_job['id']}#technical-log",
+            "button": "実行中ジョブを開く",
+        }
+    running_session = next((session for session in review_sessions if session["status"] == "running"), None)
+    if running_session:
+        return {
+            "label": "Review Sessionが実行中です",
+            "description": f"#{running_session['id']} の画像生成、Embedding、Machine Reviewの完了を待ってください。",
+            "href": f"/review-sessions/{running_session['id']}",
+            "button": "Review Sessionを開く",
+        }
+    ready_session = next((session for session in review_sessions if session["matrix_path"] and not project["selected_output_id"]), None)
+    if ready_session:
+        return {
+            "label": "候補epochを選んでください",
+            "description": f"Review Matrix #{ready_session['id']} は準備済みです。画像を比較して採用epochを選択してください。",
+            "href": f"/review-sessions/{ready_session['id']}",
+            "button": "Review Sessionを開く",
+        }
+    incomplete_run = next(
+        (
+            run
+            for run in validation_runs
+            if (run["expected_image_count"] or 0) > (run["actual_image_count"] or 0)
+            or (run["actual_image_count"] or 0) > (run["reviewed_count"] or 0)
+        ),
+        None,
+    )
+    if incomplete_run:
+        return {
+            "label": "検証Runが未完了です",
+            "description": f"検証Run #{incomplete_run['id']} の画像登録またはレビューが残っています。",
+            "href": f"/validation-runs/{incomplete_run['id']}",
+            "button": "検証Runを開く",
+        }
+    unresolved_rec = next((rec for rec in recommendations if rec["status"] not in {"accepted", "dismissed", "job_created"}), None)
+    if unresolved_rec:
+        return {
+            "label": "次回実験提案を確認してください",
+            "description": unresolved_rec["title"] or "未処理の提案があります。",
+            "href": f"/jobs/{unresolved_rec['source_job_id']}#recommendations" if unresolved_rec["source_job_id"] else f"/projects/{project['id']}#recommendations",
+            "button": "提案を見る",
+        }
+    draft_job = next((job for job in jobs if job["status"] in {"draft", "prepared", "prepared_dirty"}), None)
+    if draft_job:
+        return {
+            "label": "未実行の学習ジョブがあります",
+            "description": f"#{draft_job['id']} {draft_job['name']} を準備または実行してください。",
+            "href": f"/jobs/{draft_job['id']}",
+            "button": "学習ジョブを開く",
+        }
+    if project["selected_lora_profile_id"]:
+        return {
+            "label": "採用LoRAプロファイルを確認できます",
+            "description": "採用LoRA、推奨weight、外部検証結果を確認してください。",
+            "href": f"/lora-library/{project['selected_lora_profile_id']}/edit",
+            "button": "LoRAプロファイルを開く",
+        }
+    if project["selected_job_id"]:
+        return {
+            "label": "採用学習ジョブを確認できます",
+            "description": "採用済みの学習ジョブからExportや検証Run作成へ進めます。",
+            "href": f"/jobs/{project['selected_job_id']}",
+            "button": "採用ジョブを開く",
+        }
+    if jobs:
+        return {
+            "label": "最新の学習ジョブを確認してください",
+            "description": f"#{jobs[0]['id']} {jobs[0]['name']} の状態を確認してください。",
+            "href": f"/jobs/{jobs[0]['id']}",
+            "button": "最新ジョブを開く",
+        }
+    return {
+        "label": "学習ジョブを作成してください",
+        "description": "このProjectに最初の学習ジョブを追加します。",
+        "href": f"/jobs/new?project_id={project['id']}",
+        "button": "学習ジョブを追加",
+    }
+
+
 def decorate_validation_runs_for_job(validation_runs: list[Any]) -> list[dict[str, Any]]:
     decorated: list[dict[str, Any]] = []
     for row in validation_runs:
@@ -1437,6 +1524,7 @@ def project_detail(request: Request, project_id: int) -> HTMLResponse:
         reference_sets=reference_sets_rows,
         recommendations=recommendations,
         workflow_status=project_workflow_status(project, jobs, validation_runs, recommendations),
+        project_next_action=project_next_action(project, jobs, review_sessions, validation_runs, recommendations),
         pilot_guidance=pilot_recommendation(project),
         storage_summary=project_storage_summary(project_id),
         project_status_labels=PROJECT_STATUS_LABELS,

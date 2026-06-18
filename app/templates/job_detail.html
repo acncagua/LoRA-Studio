@@ -92,13 +92,18 @@
 </section>
 <nav class="page-tabs" aria-label="学習ジョブ内ナビ">
   <a href="#tab-overview" data-job-tab="overview">Overview</a>
-  <a href="#tab-setup" data-job-tab="setup">Setup</a>
   <a href="#tab-results" data-job-tab="results">Results</a>
   <a href="#tab-review" data-job-tab="review">Review</a>
   <a href="#tab-validation" data-job-tab="validation">Validation</a>
-  <a href="#tab-recommendations" data-job-tab="recommendations">Recommendations</a>
-  <a href="#tab-files" data-job-tab="files">Files</a>
-  <a href="#tab-technical" data-job-tab="technical">Technical</a>
+  <details class="tab-more">
+    <summary>More</summary>
+    <div>
+      <a href="#tab-setup" data-job-tab="setup">Setup</a>
+      <a href="#tab-recommendations" data-job-tab="recommendations">Recommendations</a>
+      <a href="#tab-files" data-job-tab="files">Files</a>
+      <a href="#tab-technical" data-job-tab="technical">Technical</a>
+    </div>
+  </details>
 </nav>
 <section id="review-preparation" class="notice" {% if review_preparation.session %}data-review-preparation-session-id="{{ review_preparation.session.id }}" data-review-preparation-session-status="{{ review_preparation.session.status }}"{% endif %}>
   <h2>Review Preparation</h2>

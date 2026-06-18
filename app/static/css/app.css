@@ -264,6 +264,42 @@ textarea { min-height: 84px; }
   background: var(--accent);
   color: white;
 }
+.page-tabs .tab-more {
+  position: relative;
+  display: inline-block;
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+.page-tabs .tab-more > summary {
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #eef2eb;
+  color: var(--ink);
+  font-weight: 700;
+  list-style: none;
+  cursor: pointer;
+}
+.page-tabs .tab-more > summary::-webkit-details-marker { display: none; }
+.page-tabs .tab-more[open] > summary {
+  background: #dce8e0;
+}
+.page-tabs .tab-more > div {
+  position: absolute;
+  z-index: 15;
+  right: 0;
+  top: calc(100% + 6px);
+  min-width: 210px;
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .12);
+}
+.page-tabs .tab-more > div a { justify-content: flex-start; }
 .job-tab-hidden {
   display: none !important;
 }
@@ -296,6 +332,7 @@ textarea { min-height: 84px; }
   display: grid;
   gap: 12px;
 }
+.project-foldout { margin-top: 18px; }
 .breadcrumbs {
   display: flex;
   flex-wrap: wrap;
