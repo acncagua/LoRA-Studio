@@ -1,0 +1,5 @@
+__pycache__/ export-ignore
+**/__pycache__/ export-ignore
+data/embeddings/ export-ignore
+exports/ export-ignore
+trash/ export-ignore

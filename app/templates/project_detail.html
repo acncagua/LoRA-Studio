@@ -12,9 +12,9 @@
 
 <section class="action-panel project-workspace-panel">
   <div>
-    <h2>Current Status</h2>
+    <h2>現在の状態</h2>
     <p><span class="label {{ project.status }}">{{ project_status_labels.get(project.status, project.status) }}</span></p>
-    <p class="muted">ProjectはLoRA作成単位です。学習ジョブ、Review Session、採用LoRA、Validation Runをここから辿ります。</p>
+    <p class="muted">ProjectはLoRA作成単位です。学習ジョブ、レビューセッション、採用LoRA、検証Runをここから辿ります。</p>
   </div>
   <div>
     <h2>次にやること</h2>
@@ -36,11 +36,11 @@
     <strong>{% if jobs %}<a href="/jobs/{{ jobs[0].id }}">#{{ jobs[0].id }} {{ jobs[0].name }}</a>{% else %}-{% endif %}</strong>
   </div>
   <div class="status-card">
-    <span>最新のReview Session</span>
+    <span>最新のレビューセッション</span>
     <strong>{% if review_sessions %}<a href="/review-sessions/{{ review_sessions[0].id }}">#{{ review_sessions[0].id }} {{ review_sessions[0].status }}</a>{% else %}-{% endif %}</strong>
   </div>
   <div class="status-card">
-    <span>最新のValidation Run</span>
+    <span>最新の検証Run</span>
     <strong>{% if validation_runs %}<a href="/validation-runs/{{ validation_runs[0].id }}">#{{ validation_runs[0].id }} {{ display_validation_status(validation_runs[0].status) }}</a>{% else %}-{% endif %}</strong>
   </div>
   <div class="status-card">
@@ -127,10 +127,10 @@
 </section>
 
 <section>
-  <h2>Review Session</h2>
-  <p class="muted">採用前の候補epoch比較用に作成したReview Preparationの履歴です。Matrixはここからも確認できます。</p>
+  <h2>レビューセッション</h2>
+  <p class="muted">採用前の候補epoch比較用に作成したレビュー準備の履歴です。レビューMatrixはここからも確認できます。</p>
   <table>
-    <thead><tr><th>ID</th><th>学習ジョブ</th><th>状態</th><th>候補epoch</th><th>条件</th><th>画像</th><th>Machine Review</th><th>Matrix</th></tr></thead>
+    <thead><tr><th>ID</th><th>学習ジョブ</th><th>状態</th><th>候補epoch</th><th>条件</th><th>画像</th><th>機械補助レビュー</th><th>Matrix</th></tr></thead>
     <tbody>
       {% for session in review_sessions %}
       <tr>
@@ -144,12 +144,12 @@
         <td>
           <div class="actions compact-actions">
             <a class="button small-button" href="/review-sessions/{{ session.id }}">詳細</a>
-            {% if session.matrix_path %}<a class="button small-button" href="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix">Matrix</a>{% endif %}
+            {% if session.matrix_path %}<a class="button small-button" href="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix">Matrixを開く</a>{% endif %}
           </div>
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="8" class="muted">Review Sessionはまだありません。</td></tr>
+      <tr><td colspan="8" class="muted">レビューセッションはまだありません。</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -187,12 +187,12 @@
 <details class="project-foldout">
   <summary>リファレンスセット</summary>
   <div class="detail-panel">
-  <p class="muted">採用LoRAやValidation Runを人間が確認するときの基準画像です。Machine Review Assistの前段階として、顔・全身・styleなどの役割を固定します。</p>
+  <p class="muted">採用LoRAや検証Runを人間が確認するときの基準画像です。機械補助レビューの前段階として、顔・全身・styleなどの役割を固定します。</p>
   <div class="actions">
     <a class="button" href="/reference-sets">リファレンスセット一覧</a>
   </div>
   <table>
-    <thead><tr><th>ID</th><th>名前</th><th>種別</th><th>Version</th><th>画像</th><th>Completeness</th><th>標準</th><th>操作</th></tr></thead>
+    <thead><tr><th>ID</th><th>名前</th><th>種別</th><th>Version</th><th>画像</th><th>構成チェック</th><th>標準</th><th>操作</th></tr></thead>
     <tbody>
       {% for ref in reference_sets %}
       <tr>
@@ -251,7 +251,7 @@
     <div><span>合計</span><strong>{{ storage_summary.total_size_label }}</strong></div>
     <div><span>モデル出力</span><strong>{{ storage_summary.model_size_label }}</strong></div>
     <div><span>サンプル</span><strong>{{ storage_summary.sample_size_label }}</strong></div>
-    <div><span>Review Session画像</span><strong>{{ storage_summary.review_session_size_label }}</strong></div>
+    <div><span>レビューセッション画像</span><strong>{{ storage_summary.review_session_size_label }}</strong></div>
     <div><span>logs/config/reports</span><strong>{{ storage_summary.support_size_label }}</strong></div>
     <div><span>整理候補</span><strong>{{ storage_summary.cleanup_candidate_size_label }}</strong></div>
   </div>

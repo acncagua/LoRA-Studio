@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block content %}
-<nav class="breadcrumbs"><a href="/">ダッシュボード</a><a href="/projects">Project一覧</a><a href="/projects/{{ preview.project.id }}">Project #{{ preview.project.id }}</a><span>Cleanup Preview</span></nav>
+<nav class="breadcrumbs"><a href="/">ダッシュボード</a><a href="/projects">Project一覧</a><a href="/projects/{{ preview.project.id }}">Project #{{ preview.project.id }}</a><span>整理プレビュー</span></nav>
 <header class="page-head">
   <h1>{{ preview.title }}</h1>
   <div class="actions"><a class="button" href="/projects/{{ preview.project.id }}">Projectへ戻る</a></div>
@@ -14,7 +14,7 @@
     <h2>対象</h2>
     <dl>
       <dt>Project</dt><dd>#{{ preview.project.id }} {{ preview.project.name }}</dd>
-      <dt>Cleanup種類</dt><dd>{{ preview.mode }}</dd>
+      <dt>整理種類</dt><dd>{{ preview.mode }}</dd>
       <dt>対象ファイル</dt><dd>{{ preview.files|length }} 件</dd>
       <dt>合計サイズ</dt><dd>{{ preview.total_size_label }}</dd>
     </dl>

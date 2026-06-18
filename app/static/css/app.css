@@ -97,8 +97,10 @@ th { color: var(--muted); font-size: 13px; font-weight: 600; background: #eef2eb
   line-height: 1.2;
 }
 .dashboard-job-actions .small-button {
-  min-width: 56px;
+  min-width: 64px;
   text-align: center;
+  font-size: 14px;
+  padding: 8px 13px;
 }
 .lora-library-table { min-width: 2100px; }
 .lora-library-table th:nth-child(1), .lora-library-table td:nth-child(1) { width: 46px; }
@@ -177,6 +179,36 @@ textarea { min-height: 84px; }
 .mini-log-meta { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; color: #4f5b54; font-size: 13px; }
 .mini-log { max-height: 110px; overflow: auto; margin: 8px 0 0; padding: 8px; background: #1a2824; color: #d7eee6; border-radius: 6px; font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
 .compact-actions { justify-content: flex-start; align-items: center; }
+.review-preparation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.review-preparation-actions .action-group,
+.review-preparation-actions .advanced-actions,
+.review-preparation-actions form {
+  margin: 0;
+}
+.review-preparation-actions .advanced-actions {
+  flex-basis: 100%;
+}
+.review-preparation-actions .advanced-actions summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 700;
+}
+.button.secondary {
+  background: #e4ebe7;
+  color: var(--ink);
+}
+.stats-grid small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
 .next-job-actions {
   justify-content: flex-start;
   align-items: end;
@@ -217,6 +249,22 @@ textarea { min-height: 84px; }
 .action-panel h2 { margin-top: 0; }
 .primary-action {
   justify-content: flex-start;
+}
+.review-session-summary {
+  position: static;
+  grid-template-columns: minmax(240px, 1fr) minmax(240px, 1fr) minmax(360px, 1.25fr);
+}
+.review-session-summary > div {
+  min-width: 0;
+}
+.review-session-summary .actions {
+  justify-content: flex-start;
+}
+.review-session-summary .compact-actions {
+  align-items: flex-start;
+}
+.review-session-navigation {
+  margin-top: 14px;
 }
 .primary-action button,
 .primary-action .button {
@@ -559,6 +607,68 @@ code { background: #eef2eb; border: 1px solid var(--line); border-radius: 5px; p
   margin-top: 8px;
   color: var(--muted);
   font-size: 12px;
+}
+.active-operation-monitor {
+  margin: 14px 0;
+  padding: 14px;
+  background: #eef7ef;
+  border: 1px solid #cfe2d4;
+  border-radius: 8px;
+}
+.operation-monitor-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+.operation-monitor-head h2 { margin: 0 0 6px; }
+.operation-monitor-head p { margin: 0; color: var(--muted); }
+.operation-monitor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin: 12px 0;
+}
+.operation-monitor-grid > div {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  min-width: 0;
+}
+.operation-monitor-grid span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+.operation-monitor-grid strong {
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+.operation-log-preview {
+  margin-top: 10px;
+}
+.operation-log-preview .tiny-log {
+  max-height: 140px;
+  white-space: pre-wrap;
+  overflow: auto;
+}
+.operation-log-preview .compact-log {
+  max-height: 360px;
+  white-space: pre-wrap;
+  overflow: auto;
+}
+.subsection {
+  margin-top: 18px;
+}
+.compact-table th,
+.compact-table td {
+  padding: 8px 10px;
+  vertical-align: top;
+}
+.pending-review-session td {
+  background: #fbf8ef;
 }
 details {
   background: var(--panel);

@@ -58,9 +58,9 @@
 </section>
 
 <section>
-  <h2>Embedding Cache / Jobs</h2>
+  <h2>Embeddingキャッシュ / ジョブ</h2>
   <div class="summary-grid">
-    <div><span>Embedding cache</span><strong>{{ format_bytes(storage.embedding_cache.total) }}</strong></div>
+    <div><span>Embeddingキャッシュ</span><strong>{{ format_bytes(storage.embedding_cache.total) }}</strong></div>
     <div><span>Failed cleanup候補</span><strong>{{ failed_embedding_cleanup.count }}</strong></div>
     <div><span>Stale cleanup候補</span><strong>{{ stale_embedding_cleanup.count }}</strong></div>
   </div>
@@ -75,7 +75,7 @@
         <td>{{ job.processed_count }} / {{ job.total_count }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="5" class="muted">Embedding Jobはまだありません。</td></tr>
+      <tr><td colspan="5" class="muted">Embeddingジョブはまだありません。</td></tr>
       {% endfor %}
     </tbody>
   </table>

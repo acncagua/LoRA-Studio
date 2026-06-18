@@ -98,12 +98,12 @@ document.addEventListener("submit", async (event) => {
       throw new Error(payload.message || await response.text());
     }
     if (payload.embedding_job_id) {
-      startEmbeddingJobPolling(payload.embedding_job_id, payload.message || "Embedding Jobを開始しました。", payload.redirect_url || window.location.href, form);
+      startEmbeddingJobPolling(payload.embedding_job_id, payload.message || "Embeddingジョブを開始しました。", payload.redirect_url || window.location.href, form);
       return;
     }
-    showPageNotice(payload.message || "Embedding Jobを開始しました。", "info", form);
+    showPageNotice(payload.message || "Embeddingジョブを開始しました。", "info", form);
   } catch (error) {
-    showPageNotice(error.message || "Embedding Jobを開始できませんでした。", "warning", form);
+    showPageNotice(error.message || "Embeddingジョブを開始できませんでした。", "warning", form);
     buttons.forEach((otherButton) => {
       otherButton.disabled = false;
       if (otherButton.dataset.originalText) {
@@ -127,8 +127,8 @@ document.addEventListener("submit", async (event) => {
   }
   updateReviewPreparationInline({
     status: "starting",
-    message: "Review Preparationを開始しています。二重実行を避けるためボタンを無効化しました。",
-    log_tail: "Review Preparationを開始しています。sd-scripts起動後にログが更新されます。",
+    message: "レビュー準備を開始しています。二重実行を避けるためボタンを無効化しました。",
+    log_tail: "レビュー準備を開始しています。sd-scripts起動後にログが更新されます。",
   }, form);
   try {
     const response = await fetch(form.action, {
@@ -140,12 +140,12 @@ document.addEventListener("submit", async (event) => {
     if (!response.ok || payload.ok === false) {
       throw new Error(payload.message || await response.text());
     }
-    showPageNotice(payload.message || "Review Preparationを開始しました。", "info", form);
+    showPageNotice(payload.message || "レビュー準備を開始しました。", "info", form);
     if (payload.review_session_id) {
       startReviewPreparationPolling(payload.review_session_id, form);
     }
   } catch (error) {
-    showPageNotice(error.message || "Review Preparationを開始できませんでした。", "warning", form);
+    showPageNotice(error.message || "レビュー準備を開始できませんでした。", "warning", form);
     if (button) {
       button.disabled = false;
       if (button.dataset.originalText) {
@@ -414,7 +414,7 @@ function startReviewPreparationPolling(sessionId, anchorForm = null) {
       }
       return false;
     } catch (error) {
-      showPageNotice(`Review Preparation状態確認に失敗: ${error.message}`, "warning", anchorForm);
+      showPageNotice(`レビュー準備の状態確認に失敗: ${error.message}`, "warning", anchorForm);
       return true;
     }
   };
@@ -460,7 +460,7 @@ function updateReviewPreparationInline(payload, anchorForm = null) {
   const runButton = section.querySelector("[data-review-preparation-run-button]");
   if (runButton && ["completed", "failed", "stopped"].includes(payload.status)) {
     runButton.disabled = false;
-    runButton.textContent = runButton.dataset.originalText || "候補Review Matrixを準備";
+    runButton.textContent = runButton.dataset.originalText || "候補レビューを開始";
   }
   if (payload.matrix_ready && payload.matrix_url && !section.querySelector(`[href="${payload.matrix_url}"]`)) {
     const actions = section.querySelector(".actions");
@@ -468,7 +468,7 @@ function updateReviewPreparationInline(payload, anchorForm = null) {
       const link = document.createElement("a");
       link.className = "button";
       link.href = payload.matrix_url;
-      link.textContent = "Review Matrixを開く";
+      link.textContent = "レビューMatrixを開く";
       actions.appendChild(link);
     }
   }
@@ -929,7 +929,7 @@ function openLightbox(src, title) {
       <div class="lightbox-inner">
         <div class="lightbox-actions">
           <span class="lightbox-title"></span>
-          <a class="button" target="_blank" rel="noopener">Open original</a>
+          <a class="button" target="_blank" rel="noopener">元画像を開く</a>
           <button type="button" data-lightbox-close>閉じる</button>
         </div>
         <img alt="">
@@ -1139,9 +1139,157 @@ function applyValidationGenerationDetailStatus(panel, payload) {
   syncGenerationButtons(panel, payload.status || "");
 }
 
+function initTrainLogPolling() {
+  const panel = document.querySelector("[data-train-log-panel]");
+  if (!panel) {
+    return;
+  }
+  const url = panel.getAttribute("data-train-log-url");
+  const tail = panel.querySelector("[data-train-log-tail]");
+  const status = panel.querySelector("[data-train-log-status]");
+  if (!url || !tail) {
+    return;
+  }
+
+  const update = async () => {
+    try {
+      const response = await fetch(url, { headers: { "Accept": "application/json" } });
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      const payload = await response.json();
+      tail.textContent = payload.log_tail || "train.logはまだありません。";
+      const size = payload.log_size ?? 0;
+      const updated = payload.log_updated_at || "-";
+      const pid = payload.process_id || "-";
+      if (status) {
+        status.textContent = `状態: ${payload.status || "-"} / PID: ${pid} / ログ: ${size} bytes / 更新: ${updated}`;
+      }
+      panel.setAttribute("data-train-log-running", payload.status === "running" ? "1" : "0");
+      return payload.status === "running";
+    } catch (error) {
+      if (status) {
+        status.textContent = `train.log更新確認に失敗: ${error.message}`;
+      }
+      return false;
+    }
+  };
+
+  if (panel.getAttribute("data-train-log-running") !== "1") {
+    update();
+    return;
+  }
+  update();
+  const timer = window.setInterval(async () => {
+    const keepPolling = await update();
+    if (!keepPolling) {
+      window.clearInterval(timer);
+    }
+  }, 5000);
+}
+
+function initActiveOperationMonitorPolling() {
+  const panel = document.querySelector("[data-active-operation-monitor]");
+  if (!panel) {
+    return;
+  }
+  const url = panel.getAttribute("data-operation-status-url");
+  const refreshButton = panel.querySelector("[data-operation-refresh]");
+  const statusText = panel.querySelector('[data-operation-field="status"]');
+  const pidText = panel.querySelector('[data-operation-field="pid"]');
+  const returnCodeText = panel.querySelector('[data-operation-field="return_code"]');
+  const progressText = panel.querySelector('[data-operation-field="progress"]');
+  const logUpdateText = panel.querySelector('[data-operation-field="last_log_update"]');
+  const shortLog = panel.querySelector("[data-operation-log-short]");
+  const fullLog = panel.querySelector("[data-operation-log-full]");
+  const warning = panel.querySelector("[data-operation-log-warning]");
+
+  const applyPayload = (payload) => {
+    if (statusText && payload.status !== undefined) statusText.textContent = payload.status || "-";
+    const processId = payload.process_id ?? payload.generation_process_id;
+    if (pidText && processId !== undefined) pidText.textContent = processId || "-";
+    if (returnCodeText && payload.return_code !== undefined) returnCodeText.textContent = payload.return_code ?? "-";
+    const current = payload.current
+      ?? payload.processed_count
+      ?? payload.generated_image_count
+      ?? payload.live_generated_image_count
+      ?? payload.imported_image_count
+      ?? payload.scored_image_count;
+    const total = payload.total
+      ?? payload.total_count
+      ?? payload.expected_image_count;
+    const progress = payload.progress_label
+      || (payload.current != null && payload.total != null ? `${payload.current} / ${payload.total}` : "")
+      || (current != null && total != null ? `${current} / ${total}` : "")
+      || (current != null ? `${current}` : "");
+    if (progressText && progress) progressText.textContent = progress;
+    const logTail = payload.log_tail || payload.log_preview || payload.generation_log_tail || "";
+    if (shortLog && logTail) shortLog.textContent = logTail;
+    if (fullLog && logTail) fullLog.textContent = logTail;
+    const size = payload.log_size ?? "";
+    const updated = payload.log_updated_at || "";
+    if (logUpdateText && (size !== "" || updated)) {
+      logUpdateText.textContent = `${updated || "-"}${size !== "" ? ` / ${size} bytes` : ""}`;
+    }
+    if (warning && payload.log_warning) {
+      warning.hidden = false;
+      warning.textContent = payload.log_warning;
+    }
+    if (warning && !payload.log_warning) {
+      warning.hidden = true;
+      warning.textContent = "";
+    }
+    const runningStatuses = new Set(["running", "generating_images", "embedding_images", "machine_reviewing", "building_matrix"]);
+    const isRunning = runningStatuses.has(payload.status);
+    panel.setAttribute("data-operation-running", isRunning ? "1" : "0");
+    return isRunning;
+  };
+
+  const update = async () => {
+    if (!url) {
+      return false;
+    }
+    try {
+      const response = await fetch(url, { headers: { "Accept": "application/json" } });
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      return applyPayload(await response.json());
+    } catch (error) {
+      if (warning) {
+        warning.hidden = false;
+        warning.textContent = `状態更新に失敗: ${error.message}`;
+      }
+      return false;
+    }
+  };
+
+  if (refreshButton) {
+    refreshButton.addEventListener("click", async () => {
+      if (url) {
+        await update();
+      } else {
+        window.location.reload();
+      }
+    });
+  }
+  if (!url || panel.getAttribute("data-operation-running") !== "1") {
+    return;
+  }
+  update();
+  const timer = window.setInterval(async () => {
+    const keepPolling = await update();
+    if (!keepPolling) {
+      window.clearInterval(timer);
+    }
+  }, 5000);
+}
+
 document.addEventListener("DOMContentLoaded", initValidationGenerationPolling);
 document.addEventListener("DOMContentLoaded", initValidationGenerationDetailPolling);
 document.addEventListener("DOMContentLoaded", restoreScrollAfterInlineRefresh);
 document.addEventListener("DOMContentLoaded", initEmbeddingJobStatusPolling);
 document.addEventListener("DOMContentLoaded", initMachineReviewJobStatusPolling);
 document.addEventListener("DOMContentLoaded", initReviewPreparationPolling);
+document.addEventListener("DOMContentLoaded", initTrainLogPolling);
+document.addEventListener("DOMContentLoaded", initActiveOperationMonitorPolling);

@@ -1,12 +1,12 @@
 {% extends "base.html" %}{% block content %}
-<nav class="breadcrumbs"><a href="/">ダッシュボード</a><span>Validation Run</span></nav>
+<nav class="breadcrumbs"><a href="/">ダッシュボード</a><span>検証Run</span></nav>
 <header class="page-head">
-  <h1>Validation Run</h1>
+  <h1>検証Run</h1>
 </header>
 
 <section class="notice">
   <h2>採用後weight検証</h2>
-  <p>Validation Runは、採用候補LoRAのweightや条件差を検証する履歴です。通常はLoRAプロファイル、Project、または学習ジョブ詳細から作成します。</p>
+  <p>検証Runは、採用候補LoRAのweightや条件差を検証する履歴です。通常はLoRAプロファイル、Project、または学習ジョブ詳細から作成します。</p>
 </section>
 
 <section>
@@ -35,7 +35,7 @@
           </td>
         </tr>
         {% else %}
-        <tr><td colspan="10" class="muted">Validation Runはまだありません。</td></tr>
+        <tr><td colspan="10" class="muted">検証Runはまだありません。</td></tr>
         {% endfor %}
       </tbody>
     </table>

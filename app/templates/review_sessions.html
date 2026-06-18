@@ -1,12 +1,12 @@
 {% extends "base.html" %}{% block content %}
-<nav class="breadcrumbs"><a href="/">ダッシュボード</a><span>Review Session</span></nav>
+<nav class="breadcrumbs"><a href="/">ダッシュボード</a><span>レビューセッション</span></nav>
 <header class="page-head">
-  <h1>Review Session</h1>
+  <h1>レビューセッション</h1>
 </header>
 
 <section class="notice">
   <h2>採用前epoch比較</h2>
-  <p>Review Sessionは、採用LoRAを決める前に候補epochを横並びで見るための履歴です。通常はProjectまたは学習ジョブ詳細から開きます。</p>
+  <p>レビューセッションは、採用LoRAを決める前に候補epochを横並びで見るための履歴です。通常はProjectまたは学習ジョブ詳細から開きます。</p>
 </section>
 
 <section>
@@ -14,7 +14,7 @@
     <table class="wide-table">
       <thead>
         <tr>
-          <th>ID</th><th>Project</th><th>学習ジョブ</th><th>状態</th><th>候補epoch</th><th>条件</th><th>登録画像</th><th>Machine Review</th><th>作成日時</th><th>操作</th>
+          <th>ID</th><th>Project</th><th>学習ジョブ</th><th>状態</th><th>候補epoch</th><th>条件</th><th>登録画像</th><th>機械補助レビュー</th><th>作成日時</th><th>操作</th>
         </tr>
       </thead>
       <tbody>
@@ -36,7 +36,7 @@
           </td>
         </tr>
         {% else %}
-        <tr><td colspan="10" class="muted">Review Sessionはまだありません。</td></tr>
+        <tr><td colspan="10" class="muted">レビューセッションはまだありません。</td></tr>
         {% endfor %}
       </tbody>
     </table>

@@ -5,7 +5,7 @@
   <div class="actions">
     <a class="button" href="/reference-sets">一覧へ戻る</a>
     {% if reference_set.project_id %}<a class="button" href="/projects/{{ reference_set.project_id }}">Projectへ</a>{% endif %}
-    <form method="post" action="/reference-sets/{{ reference_set.id }}/export"><button type="submit">Contact Sheet / Report出力</button></form>
+    <form method="post" action="/reference-sets/{{ reference_set.id }}/export"><button type="submit">コンタクトシート / レポート出力</button></form>
     {% if reference_set.project_id and not reference_set.is_default %}
     <form method="post" action="/reference-sets/{{ reference_set.id }}/set-default"><button type="submit">Project標準にする</button></form>
     {% endif %}
@@ -22,12 +22,12 @@
 
 <section class="panel-grid">
   <div>
-    <h2>Summary</h2>
+    <h2>概要</h2>
     <dl>
       <dt>Project</dt><dd>{% if reference_set.project_id %}<a href="/projects/{{ reference_set.project_id }}">#{{ reference_set.project_id }} {{ reference_set.project_name or '' }}</a>{% else %}-{% endif %}</dd>
       <dt>データセット</dt><dd>{{ reference_set.dataset_name or '-' }}</dd>
       <dt>データセットVersion</dt><dd>{% if reference_set.dataset_version_no %}v{{ reference_set.dataset_version_no }} (#{{ reference_set.current_dataset_version_id }}){% else %}-{% endif %}</dd>
-      <dt>Reference Version</dt><dd>{% if reference_set.current_version_no %}v{{ reference_set.current_version_no }} (#{{ reference_set.current_version_id }}){% else %}-{% endif %}</dd>
+      <dt>リファレンスVersion</dt><dd>{% if reference_set.current_version_no %}v{{ reference_set.current_version_no }} (#{{ reference_set.current_version_id }}){% else %}-{% endif %}</dd>
       <dt>種別</dt><dd>{{ reference_type_labels.get(reference_set.reference_type, reference_set.reference_type or '-') }}</dd>
       <dt>選択モード</dt><dd>{{ reference_set.selection_mode or '-' }}</dd>
       <dt>トリガー</dt><dd>{{ reference_set.trigger_word or '-' }}</dd>
@@ -36,7 +36,7 @@
     </dl>
   </div>
   <div>
-    <h2>Completeness</h2>
+    <h2>構成チェック</h2>
     <p><span class="label {{ (reference_set.completeness_label or 'unknown')|lower }}" data-reference-completeness-label>{{ reference_set.completeness_label or 'UNKNOWN' }}</span></p>
     <p data-reference-completeness-message>{{ reference_set.completeness_message or '-' }}</p>
     <table>
@@ -49,14 +49,14 @@
         {% endfor %}
       </tbody>
     </table>
-    <p class="muted">Completenessは画像数と役割の偏りを見る補助表示です。品質評価やAI判定ではありません。</p>
+    <p class="muted">構成チェックは画像数と役割の偏りを見る補助表示です。品質評価やAI判定ではありません。</p>
   </div>
 </section>
 
 {% if reference_embedding_coverage %}
 <section class="notice embedding-coverage">
-  <h2>リファレンス画像Embedding状況 <span class="muted">Reference Embedding Coverage</span></h2>
-  <p>対象Reference Version: #{{ reference_set.current_version_id }} / モデル: {{ reference_embedding_coverage.model_name }}</p>
+  <h2>リファレンス画像Embedding状況</h2>
+  <p>対象リファレンスVersion: #{{ reference_set.current_version_id }} / モデル: {{ reference_embedding_coverage.model_name }}</p>
   <div class="summary-grid">
     <div><span>画像</span><strong>{{ reference_embedding_coverage.total }}</strong></div>
     <div><span>計算済み</span><strong>{{ reference_embedding_coverage.ready }}</strong></div>
@@ -66,7 +66,7 @@
     <div><span>未計算</span><strong>{{ reference_embedding_coverage.not_computed }}</strong></div>
   </div>
   {% if reference_set.completeness_label == 'ERROR' %}
-  <p class="warning">Reference Setが未完成です。Embedding計算はできますが、機械補助レビューの信頼度は低くなります。</p>
+  <p class="warning">リファレンスセットが未完成です。Embedding計算はできますが、機械補助レビューの信頼度は低くなります。</p>
   {% endif %}
   <div class="actions compact-actions">
     <form method="post" action="/embeddings/jobs" data-embedding-job-form>
@@ -89,15 +89,15 @@
 
 {% if machine_review_readiness %}
 <section class="notice">
-  <h2>機械補助レビュー準備状況 <span class="muted">Machine Review readiness</span></h2>
-  <p>Reference Setの枚数・Completeness・Embedding状況から、機械補助レビューに使える状態かを確認します。</p>
+  <h2>機械補助レビュー準備状況</h2>
+  <p>リファレンスセットの枚数・構成チェック・Embedding状況から、機械補助レビューに使える状態かを確認します。</p>
   <div class="summary-grid">
     <div><span>準備</span><strong><span class="label {{ machine_review_readiness.label|lower }}">{{ machine_review_readiness.label }}</span></strong></div>
-    <div><span>Completeness</span><strong>{{ machine_review_readiness.completeness_label }}</strong></div>
-    <div><span>Reference画像</span><strong>{{ machine_review_readiness.image_count }}</strong></div>
+    <div><span>構成チェック</span><strong>{{ machine_review_readiness.completeness_label }}</strong></div>
+    <div><span>リファレンス画像</span><strong>{{ machine_review_readiness.image_count }}</strong></div>
     <div><span>Embedding</span><strong>{{ machine_review_readiness.ready }} / {{ machine_review_readiness.total }}</strong></div>
   </div>
-  <p class="muted">Reference Setが1枚だけの場合、判定が偏る可能性があります。キャラLoRAは3〜5枚、画風LoRAは6〜12枚程度を推奨します。</p>
+  <p class="muted">リファレンスセットが1枚だけの場合、判定が偏る可能性があります。キャラLoRAは3〜5枚、画風LoRAは6〜12枚程度を推奨します。</p>
 </section>
 {% endif %}
 
@@ -113,11 +113,11 @@
     <label>役割<select name="image_role">
       {% for role, label in roles.items() %}<option value="{{ role }}">{{ label }}</option>{% endfor %}
     </select></label>
-    <label>Prompt role hint<input name="prompt_role_hint" placeholder="例: basic_face"></label>
-    <label>Source<select name="source_type"><option value="manual">手動</option><option value="dataset">データセット</option><option value="external">外部</option></select></label>
-    <label>Sort<input type="number" name="sort_order" value="0"></label>
+    <label>prompt role hint<input name="prompt_role_hint" placeholder="例: basic_face"></label>
+    <label>登録元<select name="source_type"><option value="manual">手動</option><option value="dataset">データセット</option><option value="external">外部</option></select></label>
+    <label>並び順<input type="number" name="sort_order" value="0"></label>
     <label class="inline-check"><input type="checkbox" name="include_in_machine_review" value="1" checked> 機械補助レビュー対象に含める</label>
-    <label class="wide-field">Caption snapshot<textarea name="caption"></textarea></label>
+    <label class="wide-field">caption snapshot<textarea name="caption"></textarea></label>
     <label class="wide-field">除外理由<textarea name="exclude_reason"></textarea></label>
     <label class="wide-field">メモ<textarea name="memo"></textarea></label>
     <button type="submit">画像を登録</button>
@@ -156,12 +156,12 @@
 {% endif %}
 
 <section>
-  <h2>Reference Images</h2>
+  <h2>リファレンス画像</h2>
   <input type="hidden" data-reference-set-id value="{{ reference_set.id }}">
   <div class="sample-grid reference-grid" data-reference-image-grid>
     {% for image in images %}
     <figure data-reference-image-card="{{ image.id }}">
-      <img src="/reference-images/{{ image.id }}" alt="リファレンス画像 {{ image.id }}" data-lightbox-src="/reference-images/{{ image.id }}" data-lightbox-title="Reference #{{ image.id }}">
+      <img src="/reference-images/{{ image.id }}" alt="リファレンス画像 {{ image.id }}" data-lightbox-src="/reference-images/{{ image.id }}" data-lightbox-title="リファレンス #{{ image.id }}">
       <figcaption class="reference-caption">
         #{{ image.id }} / {{ roles.get(image.image_role, image.image_role) }}<br>
         {{ image.width or '-' }} x {{ image.height or '-' }} / {{ image.file_size or '-' }} bytes<br>
@@ -172,7 +172,7 @@
         <label>役割<select name="image_role">
           {% for role, label in roles.items() %}<option value="{{ role }}" {{ 'selected' if image.image_role == role else '' }}>{{ label }}</option>{% endfor %}
         </select></label>
-        <label>Prompt hint<input name="prompt_role_hint" value="{{ image.prompt_role_hint or '' }}"></label>
+        <label>prompt hint<input name="prompt_role_hint" value="{{ image.prompt_role_hint or '' }}"></label>
         <label class="inline-check"><input type="checkbox" name="include_in_machine_review" value="1" {{ 'checked' if image.include_in_machine_review else '' }}> 機械補助レビュー対象</label>
         <label>除外理由<input name="exclude_reason" value="{{ image.exclude_reason or '' }}"></label>
         <label>メモ<input name="memo" value="{{ image.memo or '' }}"></label>
@@ -184,15 +184,15 @@
       </form>
     </figure>
     {% else %}
-    <p class="muted">Reference画像はまだありません。</p>
+    <p class="muted">リファレンス画像はまだありません。</p>
     {% endfor %}
   </div>
 </section>
 
 <section>
-  <h2>Version History</h2>
+  <h2>Version履歴</h2>
   <table>
-    <thead><tr><th>Version</th><th>画像</th><th>Completeness</th><th>Roles</th><th>Locked</th><th>メモ</th></tr></thead>
+    <thead><tr><th>Version</th><th>画像</th><th>構成チェック</th><th>役割</th><th>ロック</th><th>メモ</th></tr></thead>
     <tbody>
       {% for version in versions %}
       <tr>

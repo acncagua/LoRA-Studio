@@ -6,9 +6,9 @@
 <section class="panel-grid">
   <div>
     <h2>新規作成</h2>
-    <p class="muted">Machine Review Assistの前段階として、人間が「比較の基準にしたい画像」を固定しておく場所です。現時点ではAI評価には使わず、参照画像と役割を管理します。</p>
+    <p class="muted">機械補助レビューの前段階として、人間が「比較の基準にしたい画像」を固定しておく場所です。現時点ではAI評価には使わず、参照画像と役割を管理します。</p>
     <form method="post" action="/reference-sets" class="form-grid">
-      <label>名前<input name="name" required placeholder="例: zuihou 顔・全身基準"></label>
+      <label>名前<input name="name" required placeholder="例: fantasy_knight 顔・全身基準"></label>
       <label>種別<select name="reference_type">
         {% for value, label in reference_type_labels.items() %}
         <option value="{{ value }}">{{ label }}</option>
@@ -31,7 +31,7 @@
         <option value="dataset_candidates">データセット候補から選択</option>
         <option value="external">外部画像</option>
       </select></label>
-      <label>トリガー<input name="trigger_word" placeholder="例: zuihou"></label>
+      <label>トリガー<input name="trigger_word" placeholder="例: knight"></label>
       <label class="wide-field">説明<textarea name="description"></textarea></label>
       <label class="wide-field">メモ<textarea name="memo"></textarea></label>
       <button type="submit">リファレンスセットを作成</button>
@@ -42,7 +42,7 @@
     <dl>
       <dt>キャラクター</dt><dd>顔正面・上半身・全身を中心に、表情や角度違いを補足します。</dd>
       <dt>スタイル</dt><dd>寄り、上半身、全身、背景、色味、線、塗り、光の偏りを見ます。</dd>
-      <dt>Completeness</dt><dd>画像数と役割の偏りを軽く確認するだけです。品質評価ではありません。</dd>
+      <dt>構成チェック</dt><dd>画像数と役割の偏りを軽く確認するだけです。品質評価ではありません。</dd>
     </dl>
   </div>
 </section>
@@ -53,7 +53,7 @@
     <thead>
       <tr>
         <th>ID</th><th>名前</th><th>Project</th><th>データセット</th><th>Version</th>
-        <th>種別</th><th>画像</th><th>Completeness</th><th>デフォルト</th><th>更新</th><th>操作</th>
+        <th>種別</th><th>画像</th><th>構成チェック</th><th>デフォルト</th><th>更新</th><th>操作</th>
       </tr>
     </thead>
     <tbody>
@@ -67,7 +67,7 @@
         <td>{{ reference_type_labels.get(row.reference_type, row.reference_type or '-') }}</td>
         <td>{{ row.version_image_count if row.version_image_count is not none else 0 }}</td>
         <td><span class="label {{ (row.completeness_label or 'unknown')|lower }}">{{ row.completeness_label or 'UNKNOWN' }}</span><br><span class="muted">{{ row.completeness_message or '' }}</span></td>
-        <td>{{ 'Default' if row.is_default else '-' }}</td>
+        <td>{{ '標準' if row.is_default else '-' }}</td>
         <td>{{ row.updated_at }}</td>
         <td>
           <div class="actions compact-actions">

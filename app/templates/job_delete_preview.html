@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% block content %}
-<nav class="breadcrumbs"><a href="/">ダッシュボード</a><a href="/jobs">学習ジョブ一覧</a><a href="/jobs/{{ preview.job.id }}">学習ジョブ #{{ preview.job.id }}</a><span>削除Preview</span></nav>
+<nav class="breadcrumbs"><a href="/">ダッシュボード</a><a href="/jobs">学習ジョブ一覧</a><a href="/jobs/{{ preview.job.id }}">学習ジョブ #{{ preview.job.id }}</a><span>削除プレビュー</span></nav>
 <header class="page-head">
-  <h1>学習ジョブ削除Preview #{{ preview.job.id }}</h1>
+  <h1>学習ジョブ削除プレビュー #{{ preview.job.id }}</h1>
   <div class="actions">
     <a class="button" href="/jobs/{{ preview.job.id }}">戻る</a>
   </div>
@@ -60,7 +60,7 @@
   </form>
   <div>
     <h2>DB + files削除</h2>
-    <p class="muted">物理ファイル削除は初期版では未実装です。Dataset画像、caption、base modelは削除対象外です。</p>
+    <p class="muted">物理ファイル削除は初期版では未実装です。データセット画像、caption、base modelは削除対象外です。</p>
     <span class="button disabled">未実装</span>
   </div>
 </section>

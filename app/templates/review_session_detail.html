@@ -1,22 +1,24 @@
 {% extends "base.html" %}{% block content %}
 <nav class="breadcrumbs">
   <a href="/">ダッシュボード</a>
-  <a href="/review-sessions">Review Session</a>
+  <a href="/review-sessions">レビューセッション</a>
   <span>#{{ session.id }}</span>
 </nav>
 <header class="page-head">
-  <h1>Review Session #{{ session.id }}</h1>
+  <h1>レビューセッション #{{ session.id }}</h1>
   <div class="actions">
+    {% if session.job_id %}<a class="button" href="/jobs/{{ session.job_id }}#review-preparation">学習ジョブへ戻る</a>{% endif %}
     {% if session.project_id %}<a class="button" href="/projects/{{ session.project_id }}">Projectへ戻る</a>{% endif %}
-    {% if session.job_id %}<a class="button" href="/jobs/{{ session.job_id }}#review-preparation">Jobへ戻る</a>{% endif %}
-    {% if session.matrix_path and session.job_id %}<a class="button" href="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix">Review Matrixを開く</a>{% endif %}
   </div>
 </header>
 
 <section class="notice">
   <h2>採用前epoch比較</h2>
-  <p>Review Sessionは、採用LoRAを決める前に候補epochを横並びで確認するための作業画面です。Validation Runは採用epoch決定後のweight検証に使います。</p>
+  <p>レビューセッションは、採用LoRAを決める前に候補epochを横並びで確認するための作業画面です。検証Runは採用epoch決定後のweight検証に使います。</p>
 </section>
+<div id="review-session-log">
+{% include "partials/active_operation_monitor.html" %}
+</div>
 
 <section class="status-strip">
   <div class="status-card"><span>状態</span><strong>{{ session.status }}</strong></div>
@@ -24,45 +26,63 @@
   <div class="status-card"><span>学習ジョブ</span><strong>{% if session.job_id %}#{{ session.job_id }} {{ session.job_name or '' }}{% else %}-{% endif %}</strong></div>
   <div class="status-card"><span>候補epoch</span><strong>{{ candidate_epochs|join(', ') if candidate_epochs else '-' }}</strong></div>
   <div class="status-card"><span>登録画像</span><strong>{{ images.active or 0 }} / {{ session.expected_image_count or 0 }}</strong></div>
-  <div class="status-card"><span>Machine Review</span><strong>{{ scores.total or 0 }} / {{ session.expected_image_count or 0 }}</strong></div>
+  <div class="status-card"><span>機械補助レビュー</span><strong>{{ scores.total or 0 }} / {{ session.expected_image_count or 0 }}</strong></div>
+  <div class="status-card"><span>学習ジョブの採用epoch</span><strong>{% if selected_epoch is not none %}{{ selected_epoch }}{% if selected_epoch_in_session %}<br><small>このレビュー候補内</small>{% else %}<br><small>このレビュー候補外</small>{% endif %}{% else %}-{% endif %}</strong></div>
 </section>
 
 <section class="action-panel review-session-summary">
   <div>
-    <h2>Candidate Epoch summary</h2>
+    <h2>候補epoch概要</h2>
     <p><strong>{{ candidate_epochs|join(', ') if candidate_epochs else '-' }}</strong></p>
     <p class="muted">採用前の候補epochです。Matrixで同一prompt / seed / weightごとに横並び比較します。</p>
   </div>
   <div>
-    <h2>Machine Assist summary</h2>
+    <h2>機械補助レビュー概要</h2>
     <p><strong>{{ scores.total or 0 }} / {{ session.expected_image_count or 0 }}</strong></p>
     <p class="muted">機械補助レビューは参考情報です。最終判断は人間評価と画像比較を優先してください。</p>
   </div>
   <div>
     <h2>主要操作</h2>
-    <p><strong>Select Epoch</strong></p>
+    <div class="actions compact-actions">
+      {% if primary_action == 'start' and session.job_id %}
+      <form method="post" action="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/run"><button type="submit">{{ primary_label }}</button></form>
+      {% elif primary_action == 'progress' %}
+      <a class="button" href="#review-session-log">進捗を確認</a>
+      {% if session.job_id %}<form method="post" action="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/stop"><button type="submit" class="danger">停止</button></form>{% endif %}
+      {% elif primary_action == 'open_matrix' and session.job_id %}
+      <a class="button" href="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix">{{ primary_label }}</a>
+      {% elif primary_action == 'build_matrix' and session.job_id %}
+      <form method="post" action="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix/build"><button type="submit">{{ primary_label }}</button></form>
+      {% elif primary_action == 'check_log' %}
+      <a class="button" href="#review-session-log">{{ primary_label }}</a>
+      {% if session.job_id %}<form method="post" action="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/run"><button type="submit" class="danger">再実行</button></form>{% endif %}
+      {% endif %}
+    </div>
+    {% if session.status in ['planned', 'prepared'] %}
+    <p class="muted">画像生成後にレビューMatrixで比較して採用判断してください。未生成のプランではepoch採用はできません。</p>
+    {% elif can_select_epoch %}
+    <p><strong>epochを採用</strong></p>
     <div class="actions compact-actions">
       {% for epoch in candidate_epochs %}
       {% set output = output_by_epoch.get(epoch) %}
       {% if output and session.job_id %}
       <form method="post" action="/jobs/{{ session.job_id }}/select-epoch" class="inline-form">
         <input type="hidden" name="epoch" value="{{ epoch }}">
+        <input type="hidden" name="return_to" value="/review-sessions/{{ session.id }}">
         <button class="small-button" type="submit" {% if output.selected %}disabled{% endif %}>epoch {{ epoch }}{% if output.selected %} 採用中{% else %} を採用{% endif %}</button>
       </form>
       {% endif %}
       {% endfor %}
     </div>
-    <div class="actions">
-      {% if session.matrix_path and session.job_id %}<a class="button" href="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix">Review Matrixを開く</a>{% endif %}
-      {% if session.job_id %}<a class="button" href="/jobs/{{ session.job_id }}#review-preparation">Jobへ戻る</a>{% endif %}
-      {% if session.project_id %}<a class="button" href="/projects/{{ session.project_id }}">Projectへ戻る</a>{% endif %}
-    </div>
+    {% else %}
+    <p class="muted">採用操作は、画像生成とレビューMatrix作成後に表示されます。</p>
+    {% endif %}
   </div>
 </section>
 
 <section class="panel-grid">
   <div>
-    <h2>Review Session概要</h2>
+    <h2>レビューセッション概要</h2>
     <dl>
       <dt>ID</dt><dd>#{{ session.id }}</dd>
       <dt>状態</dt><dd><span class="label {{ session.status }}">{{ session.status }}</span></dd>
@@ -76,23 +96,20 @@
   </div>
   <div>
     <h2>次にやること</h2>
-    {% if session.status in ['running', 'planned'] %}
-    <p>画像生成、Embedding、Machine Reviewの完了を待ちます。必要ならJob詳細でログを確認してください。</p>
+    {% if session.status in ['planned', 'prepared'] %}
+    <p>このプランで候補レビューを生成してください。画像生成後にMatrixで比較できます。</p>
+    {% elif session.status == 'running' %}
+    <p>画像生成、Embedding、機械補助レビューの完了を待ちます。必要ならログを確認してください。</p>
     {% elif session.matrix_path %}
-    <p>Review Matrixを開き、候補epochを比較して採用epochを選択してください。</p>
+    <p>レビューMatrixを開き、候補epochを比較して採用epochを選択してください。</p>
     {% else %}
-    <p>Review Matrixがまだありません。Job詳細のReview Preparationから準備を実行してください。</p>
+    <p>レビューMatrixがまだありません。この画面の主要操作からMatrixを作成してください。</p>
     {% endif %}
-    <div class="actions">
-      {% if session.matrix_path and session.job_id %}<a class="button" href="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix">Review Matrixを開く</a>{% endif %}
-      {% if session.job_id %}<a class="button" href="/jobs/{{ session.job_id }}#review-preparation">Jobへ戻る</a>{% endif %}
-      {% if session.project_id %}<a class="button" href="/projects/{{ session.project_id }}">Projectへ戻る</a>{% endif %}
-    </div>
   </div>
 </section>
 
 <section class="session-summary">
-  <h2>Candidate Epochs</h2>
+  <h2>候補epoch</h2>
   <table>
     <thead><tr><th>epoch</th><th>条件数</th><th>出力LoRA</th><th>採用</th><th>操作</th></tr></thead>
     <tbody>
@@ -104,11 +121,14 @@
         <td>{% if output %}{{ output.file_path }}{% else %}-{% endif %}</td>
         <td>{% if output and output.selected %}<span class="label ok">採用中</span>{% else %}-{% endif %}</td>
         <td>
-          {% if output and session.job_id %}
+          {% if can_select_epoch and output and session.job_id %}
           <form method="post" action="/jobs/{{ session.job_id }}/select-epoch" class="inline-form">
             <input type="hidden" name="epoch" value="{{ condition.epoch }}">
+            <input type="hidden" name="return_to" value="/review-sessions/{{ session.id }}">
             <button class="small-button" type="submit">このepochを採用</button>
           </form>
+          {% elif session.status in ['planned', 'prepared'] %}
+          <span class="muted">生成後に採用可能</span>
           {% else %}
           -
           {% endif %}

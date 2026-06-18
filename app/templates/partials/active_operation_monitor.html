@@ -1,0 +1,44 @@
+{% if operation_monitor %}
+<section id="active-operation-monitor" class="active-operation-monitor" data-active-operation-monitor data-operation-status-url="{{ operation_monitor.status_url or '' }}" data-operation-running="{{ '1' if operation_monitor.is_running else '0' }}">
+  <div class="operation-monitor-head">
+    <div>
+      <h2>実行中の処理</h2>
+      <p>{{ operation_monitor.message or '処理は実行中です。ログ末尾で進行状況を確認できます。' }}</p>
+    </div>
+    <div class="actions compact-actions">
+      {% if operation_monitor.stop_action %}
+      <form method="post" action="{{ operation_monitor.stop_action }}"><button type="submit" class="danger">停止</button></form>
+      {% endif %}
+      {% if operation_monitor.full_log_anchor %}<a class="button" href="{{ operation_monitor.full_log_anchor }}">全ログ</a>{% endif %}
+      <button type="button" data-operation-refresh>更新</button>
+    </div>
+  </div>
+  <div class="operation-monitor-grid">
+    <div><span>処理</span><strong data-operation-field="type">{{ operation_monitor.type_label }}</strong></div>
+    <div><span>状態</span><strong data-operation-field="status">{{ operation_monitor.status or '-' }}</strong></div>
+    <div><span>段階</span><strong data-operation-field="stage">{{ operation_monitor.stage or '-' }}</strong></div>
+    <div><span>開始</span><strong data-operation-field="started_at">{{ operation_monitor.started_at or '-' }}</strong></div>
+    <div><span>経過</span><strong data-operation-field="elapsed">{{ operation_monitor.elapsed_label or '-' }}</strong></div>
+    <div><span>PID</span><strong data-operation-field="pid">{{ operation_monitor.pid or '-' }}</strong></div>
+    <div><span>終了コード</span><strong data-operation-field="return_code">{{ operation_monitor.return_code if operation_monitor.return_code is not none else '-' }}</strong></div>
+    <div><span>進捗</span><strong data-operation-field="progress">{{ operation_monitor.progress_label or '-' }}</strong></div>
+    <div><span>ログ更新</span><strong data-operation-field="last_log_update">{{ operation_monitor.last_log_update_label or '-' }}</strong></div>
+  </div>
+  {% if operation_monitor.log_warning %}
+  <p class="notice warning" data-operation-log-warning>{{ operation_monitor.log_warning }}</p>
+  {% else %}
+  <p class="notice warning" data-operation-log-warning hidden></p>
+  {% endif %}
+  <details class="operation-log-preview" open>
+    <summary>ログ末尾（短縮表示）</summary>
+    <pre class="tiny-log" data-operation-log-short>{{ operation_monitor.log_tail_short or 'ログファイルはまだ作成されていません。' }}</pre>
+  </details>
+  <details class="operation-log-preview">
+    <summary>もっと見る</summary>
+    <pre class="compact-log" data-operation-log-full>{{ operation_monitor.log_tail_full or operation_monitor.log_tail_short or 'ログファイルはまだ作成されていません。' }}</pre>
+  </details>
+  {% if operation_monitor.log_path %}
+  <p class="muted">ログ: <code data-operation-field="log_path">{{ operation_monitor.log_path }}</code></p>
+  {% endif %}
+</section>
+{% endif %}

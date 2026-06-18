@@ -10,8 +10,8 @@ if str(ROOT) not in sys.path:
 from app.db import connect, utc_now
 
 
-def seed_zuihou_project() -> None:
-    """One-off local migration for the original zuihou beta data.
+def seed_legacy_project() -> None:
+    """One-off local migration for an early private beta dataset.
 
     This script intentionally keeps the Acncagua-local IDs outside normal
     init_db() so new installations never receive project/profile changes based
@@ -24,7 +24,7 @@ def seed_zuihou_project() -> None:
             tuple(job_ids),
         ).fetchall()
         if not jobs:
-            print("No zuihou beta jobs found. Nothing to do.")
+            print("No matching beta jobs found. Nothing to do.")
             return
         selected_job = conn.execute("SELECT * FROM training_jobs WHERE id = 12").fetchone() or jobs[-1]
         selected_output = conn.execute(
@@ -36,7 +36,7 @@ def seed_zuihou_project() -> None:
         version_id = 2
         dataset = conn.execute("SELECT id, name, trigger_word FROM datasets WHERE id = ?", (dataset_id,)).fetchone()
         existing = conn.execute(
-            "SELECT id FROM lora_projects WHERE selected_job_id = 12 OR name IN ('zuihou_v1', 'Dataset #4 zuihou LoRA') ORDER BY id LIMIT 1"
+            "SELECT id FROM lora_projects WHERE selected_job_id = 12 OR name IN ('legacy_character_v1', 'Dataset #4 legacy character LoRA') ORDER BY id LIMIT 1"
         ).fetchone()
         now = utc_now()
         if existing:
@@ -44,10 +44,10 @@ def seed_zuihou_project() -> None:
             conn.execute(
                 """
                 UPDATE lora_projects
-                SET name = COALESCE(NULLIF(name, ''), 'zuihou_v1'),
+                SET name = COALESCE(NULLIF(name, ''), 'legacy_character_v1'),
                     dataset_id = COALESCE(dataset_id, ?),
                     current_dataset_version_id = COALESCE(current_dataset_version_id, ?),
-                    trigger_word = COALESCE(NULLIF(trigger_word, ''), 'zuihou'),
+                    trigger_word = COALESCE(NULLIF(trigger_word, ''), 'legacychar'),
                     base_model_path = COALESCE(NULLIF(base_model_path, ''), ?),
                     status = CASE WHEN status = 'draft' THEN 'selected' ELSE status END,
                     selected_job_id = COALESCE(selected_job_id, ?),
@@ -83,11 +83,11 @@ def seed_zuihou_project() -> None:
                 VALUES (?, ?, ?, ?, ?, ?, 'selected', ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    "zuihou_v1" if dataset else "Dataset #4 zuihou LoRA",
+                    "legacy_character_v1" if dataset else "Dataset #4 legacy character LoRA",
                     "既存のPilot/Standard/Validationをまとめた移行Project",
                     dataset_id,
                     version_id,
-                    "zuihou",
+                    "legacychar",
                     selected_job["base_model_path"] or "",
                     selected_job["id"],
                     selected_output["id"] if selected_output else None,
@@ -96,7 +96,7 @@ def seed_zuihou_project() -> None:
                     selected_profile["recommended_weight_max"] if selected_profile else 0.8,
                     now,
                     now,
-                    "One-off zuihou beta migration",
+                    "One-off legacy beta migration",
                 ),
             )
             project_id = int(cur.lastrowid)
@@ -105,8 +105,8 @@ def seed_zuihou_project() -> None:
         conn.execute("UPDATE selected_lora_profiles SET project_id = ? WHERE id = 1", (project_id,))
         conn.execute("UPDATE validation_runs SET project_id = ? WHERE id = 2", (project_id,))
         conn.execute("UPDATE experiment_recommendations SET project_id = ? WHERE source_job_id IN (10, 12, 13)", (project_id,))
-        print(f"zuihou project migration complete: project_id={project_id}")
+        print(f"Legacy project migration complete: project_id={project_id}")
 
 
 if __name__ == "__main__":
-    seed_zuihou_project()
+    seed_legacy_project()

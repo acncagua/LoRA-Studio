@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block content %}
-<nav class="breadcrumbs"><a href="/">ダッシュボード</a><a href="/jobs">学習ジョブ一覧</a><a href="/jobs/{{ preview.job.id }}">学習ジョブ #{{ preview.job.id }}</a><span>Cleanup Preview</span></nav>
+<nav class="breadcrumbs"><a href="/">ダッシュボード</a><a href="/jobs">学習ジョブ一覧</a><a href="/jobs/{{ preview.job.id }}">学習ジョブ #{{ preview.job.id }}</a><span>整理プレビュー</span></nav>
 <header class="page-head">
   <h1>{{ preview.title }}</h1>
   <div class="actions"><a class="button" href="/jobs/{{ preview.job.id }}">ジョブへ戻る</a></div>
@@ -24,7 +24,7 @@
     <h2>方針</h2>
     <p class="muted">DB記録、params、metrics、logs、reportsは残します。ファイルは即完全削除ではなく、アプリ内Trashへ移動します。</p>
     {% if preview.contact_sheet is defined %}
-      <p>Contact Sheet: {% if preview.contact_sheet_exists %}<code>{{ preview.contact_sheet }}</code>{% else %}<span class="label warning">未作成</span>{% endif %}</p>
+      <p>コンタクトシート: {% if preview.contact_sheet_exists %}<code>{{ preview.contact_sheet }}</code>{% else %}<span class="label warning">未作成</span>{% endif %}</p>
       {% if not preview.contact_sheet_exists %}<p class="notice warning">個別サンプルを消す前に、必要ならコンタクトシートを作成してください。</p>{% endif %}
     {% endif %}
     {% if not preview.can_execute %}<p class="notice warning">{{ preview.blocked_reason }}</p>{% endif %}

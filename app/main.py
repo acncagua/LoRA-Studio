@@ -63,6 +63,14 @@ from app.services.machine_review import (
     validation_weight_summary,
 )
 from app.services.output_collector import collect_job_results
+from app.services.operation_monitor import (
+    embedding_monitor,
+    machine_review_monitor,
+    review_session_monitor,
+    running_training_monitor,
+    training_progress_from_log,
+    validation_generation_monitor,
+)
 from app.services.recommendations import create_draft_job_from_recommendation, list_recommendations, regenerate_recommendations, set_recommendation_status, write_recommendation_report
 from app.services.review_candidates import ensure_epoch_candidates, regenerate_epoch_candidates
 from app.services.review_sessions import (
@@ -72,6 +80,7 @@ from app.services.review_sessions import (
     review_session_summary,
     start_review_preparation,
     stop_review_preparation,
+    write_review_matrix,
 )
 from app.services.reference_sets import (
     ROLE_LABELS,
@@ -270,6 +279,17 @@ def add_query_param(url: str, **params: Any) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
+def safe_local_redirect(target: str, fallback: str) -> str:
+    if not target:
+        return fallback
+    parts = urlsplit(target)
+    if parts.scheme or parts.netloc:
+        return fallback
+    if not parts.path.startswith("/") or parts.path.startswith("//"):
+        return fallback
+    return urlunsplit(("", "", parts.path, parts.query, parts.fragment))
+
+
 def display_preset_name(preset: Any) -> str:
     preset_id = ""
     name = ""
@@ -330,6 +350,76 @@ def display_status_text(text: str | None) -> str:
 
 def display_machine_label(value: str | None) -> str:
     return MACHINE_LABELS.get(value or "", value or "-")
+
+
+def running_embedding_job(job_type: str, target_id: int) -> dict[str, Any] | None:
+    row = fetch_one(
+        """
+        SELECT * FROM embedding_jobs
+        WHERE status = 'running' AND job_type = ? AND target_id = ?
+        ORDER BY id DESC LIMIT 1
+        """,
+        (job_type, target_id),
+    )
+    return dict(row) if row else None
+
+
+def running_machine_review_job(target_type: str, target_id: int) -> dict[str, Any] | None:
+    row = fetch_one(
+        """
+        SELECT * FROM machine_review_jobs
+        WHERE status = 'running' AND target_type = ? AND target_id = ?
+        ORDER BY id DESC LIMIT 1
+        """,
+        (target_type, target_id),
+    )
+    return dict(row) if row else None
+
+
+def job_operation_monitor(job: Any, review_preparation: dict[str, Any]) -> dict[str, Any] | None:
+    training = running_training_monitor(dict(job))
+    if training:
+        return training
+    session = review_preparation.get("session") if review_preparation else None
+    if session:
+        monitor = review_session_monitor(dict(session))
+        if monitor:
+            return monitor
+    embedding = running_embedding_job("training_job_samples", int(job["id"]))
+    if embedding:
+        return embedding_monitor(embedding)
+    machine = running_machine_review_job("training_job_samples", int(job["id"]))
+    if machine:
+        return machine_review_monitor(machine)
+    return None
+
+
+def review_session_operation_monitor(session: Any) -> dict[str, Any] | None:
+    monitor = review_session_monitor(dict(session))
+    if monitor:
+        return monitor
+    session_id = int(session["id"])
+    embedding = running_embedding_job("review_session", session_id)
+    if embedding:
+        return embedding_monitor(embedding)
+    machine = running_machine_review_job("review_session_images", session_id)
+    if machine:
+        return machine_review_monitor(machine)
+    return None
+
+
+def validation_run_operation_monitor(run_id: int, generation: Any | None) -> dict[str, Any] | None:
+    generation_dict = dict(generation) if generation else None
+    monitor = validation_generation_monitor(generation_dict, run_id)
+    if monitor:
+        return monitor
+    embedding = running_embedding_job("validation_run", run_id)
+    if embedding:
+        return embedding_monitor(embedding)
+    machine = running_machine_review_job("validation_run_images", run_id)
+    if machine:
+        return machine_review_monitor(machine)
+    return None
 
 
 def job_filter_where(view: str) -> str:
@@ -1375,6 +1465,30 @@ def review_session_detail(request: Request, session_id: int) -> HTMLResponse:
             (session["job_id"], *candidate_epochs),
         )
     output_by_epoch = {int(row["epoch"]): row for row in outputs if row["epoch"] is not None}
+    status = session["status"] or ""
+    matrix_path = str(session["matrix_path"] or "")
+    matrix_ready = bool(matrix_path and Path(matrix_path).exists())
+    can_select_epoch = status == "completed" and matrix_ready
+    if status in {"planned", "prepared"}:
+        primary_action = "start"
+        primary_label = "このプランで候補レビューを生成"
+    elif status == "running":
+        primary_action = "progress"
+        primary_label = "進捗を確認"
+    elif status == "completed" and matrix_ready:
+        primary_action = "open_matrix"
+        primary_label = "レビューMatrixを開く"
+    elif status == "completed":
+        primary_action = "build_matrix"
+        primary_label = "レビューMatrixを作成"
+    elif status in {"failed", "stopped"}:
+        primary_action = "check_log"
+        primary_label = "ログ確認"
+    else:
+        primary_action = "start"
+        primary_label = "このプランで候補レビューを生成"
+    selected_epoch = session["selected_epoch"] if session["selected_epoch"] is not None else session["adopted_epoch"]
+    selected_epoch_in_session = selected_epoch is not None and int(selected_epoch) in set(candidate_epochs)
     return render(
         request,
         "review_session_detail.html",
@@ -1385,6 +1499,13 @@ def review_session_detail(request: Request, session_id: int) -> HTMLResponse:
         candidate_epochs=candidate_epochs,
         outputs=outputs,
         output_by_epoch=output_by_epoch,
+        primary_action=primary_action,
+        primary_label=primary_label,
+        matrix_ready=matrix_ready,
+        can_select_epoch=can_select_epoch,
+        selected_epoch=selected_epoch,
+        selected_epoch_in_session=selected_epoch_in_session,
+        operation_monitor=review_session_operation_monitor(session),
     )
 
 
@@ -1811,6 +1932,9 @@ def embedding_job_status(embedding_job_id: int) -> JSONResponse:
     row = fetch_one("SELECT * FROM embedding_jobs WHERE id = ?", (embedding_job_id,))
     if row is None:
         raise HTTPException(status_code=404, detail="Embedding Job not found")
+    log_path = Path(row["log_path"]) if row["log_path"] else None
+    log_size = log_path.stat().st_size if log_path and log_path.exists() else 0
+    log_updated_at = datetime.fromtimestamp(log_path.stat().st_mtime).isoformat(timespec="seconds") if log_path and log_path.exists() else ""
     return JSONResponse(
         {
             "id": row["id"],
@@ -1822,6 +1946,11 @@ def embedding_job_status(embedding_job_id: int) -> JSONResponse:
             "skipped_count": row["skipped_count"],
             "error_message": row["error_message"],
             "ended_at": row["ended_at"],
+            "process_id": row["process_id"],
+            "return_code": row["return_code"],
+            "log_tail": _tail_file(row["log_path"], 20),
+            "log_size": log_size,
+            "log_updated_at": log_updated_at,
         }
     )
 
@@ -1869,6 +1998,9 @@ def machine_review_job_status(machine_review_job_id: int) -> JSONResponse:
     row = fetch_one("SELECT * FROM machine_review_jobs WHERE id = ?", (machine_review_job_id,))
     if row is None:
         raise HTTPException(status_code=404, detail="Machine Review Job not found")
+    log_path = Path(row["log_path"]) if row["log_path"] else None
+    log_size = log_path.stat().st_size if log_path and log_path.exists() else 0
+    log_updated_at = datetime.fromtimestamp(log_path.stat().st_mtime).isoformat(timespec="seconds") if log_path and log_path.exists() else ""
     return JSONResponse(
         {
             "id": row["id"],
@@ -1880,7 +2012,11 @@ def machine_review_job_status(machine_review_job_id: int) -> JSONResponse:
             "failed_count": row["failed_count"],
             "error_message": row["error_message"],
             "ended_at": row["ended_at"],
+            "process_id": row["process_id"],
             "return_code": row["return_code"],
+            "log_tail": _tail_file(row["log_path"], 20),
+            "log_size": log_size,
+            "log_updated_at": log_updated_at,
         }
     )
 
@@ -2562,6 +2698,7 @@ def job_detail(
     review_prepare: str | None = None,
     review_prepare_error: str | None = None,
     review_filter: str = Query("candidates"),
+    review_session_id: int | None = Query(None),
 ) -> HTMLResponse:
     reconcile_stale_running_jobs()
     reconcile_stale_validation_generations()
@@ -2609,7 +2746,8 @@ def job_detail(
     validation_summary = build_validation_summary(validation_results)
     selected_lora_profile = selected_lora_profile_for_display(job_id, selected_output)
     recommendations = list_recommendations(job_id)
-    review_preparation = review_session_summary(job_id)
+    review_preparation = review_session_summary(job_id, current_session_id=review_session_id)
+    operation_monitor = job_operation_monitor(job, review_preparation)
     machine_score_map = score_map_for_samples(job_id)
     machine_epoch_summary = epoch_machine_summary(job_id)
     dataset_version = fetch_one("SELECT * FROM dataset_versions WHERE id = ?", (job["dataset_version_id"],)) if job["dataset_version_id"] else None
@@ -2654,6 +2792,7 @@ def job_detail(
         selected_lora_profile=selected_lora_profile,
         recommendations=recommendations,
         review_preparation=review_preparation,
+        operation_monitor=operation_monitor,
         rubric_options=rubric_options(),
         validation_pack_path=validation_pack_path(job_id),
         default_project_path=str(settings.ROOT_DIR),
@@ -2676,6 +2815,41 @@ def job_detail(
         review_prepare_error=review_prepare_error,
         running_generation=running_generation,
         sample_embedding_coverage=embedding_coverage("training_job_samples", job_id),
+    )
+
+
+@app.get("/jobs/{job_id}/log-tail/status")
+def job_log_tail_status(job_id: int) -> JSONResponse:
+    reconcile_stale_running_jobs()
+    job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    log_path = Path(job["run_dir"]) / "logs" / "train.log"
+    log_size = 0
+    log_updated_at = ""
+    if log_path.exists():
+        try:
+            stat = log_path.stat()
+            log_size = stat.st_size
+            log_updated_at = datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds")
+        except OSError:
+            log_size = 0
+            log_updated_at = ""
+    log_tail = read_log_tail(dict(job))
+    progress_current, progress_total, progress_label = training_progress_from_log(log_tail)
+    return JSONResponse(
+        {
+            "job_id": job_id,
+            "status": job["status"],
+            "process_id": job["process_id"],
+            "return_code": job["return_code"],
+            "log_tail": log_tail,
+            "current": progress_current,
+            "total": progress_total,
+            "progress_label": progress_label,
+            "log_size": log_size,
+            "log_updated_at": log_updated_at,
+        }
     )
 
 
@@ -2735,6 +2909,35 @@ def job_review_preparation_run(request: Request, job_id: int):
     return RedirectResponse(f"/jobs/{job_id}?review_prepare={quote(f'Review Preparationを開始しました。PID: {pid}')}#review-preparation", status_code=303)
 
 
+@app.post("/jobs/{job_id}/review-sessions/{session_id}/run")
+def job_review_session_run(request: Request, job_id: int, session_id: int):
+    session = fetch_one("SELECT * FROM review_sessions WHERE id = ? AND job_id = ?", (session_id, job_id))
+    if session is None:
+        if _wants_json(request):
+            return JSONResponse({"ok": False, "message": "レビューセッションが見つかりません。"}, status_code=404)
+        raise HTTPException(status_code=404, detail="レビューセッションが見つかりません")
+    if session["status"] == "running":
+        if _wants_json(request):
+            return JSONResponse({"ok": False, "message": "レビュー準備は既に実行中です。"}, status_code=400)
+        return RedirectResponse(f"/jobs/{job_id}?review_prepare_error={quote('レビュー準備は既に実行中です。')}#review-preparation", status_code=303)
+    try:
+        pid = start_review_preparation(session_id)
+    except Exception as exc:
+        if _wants_json(request):
+            return JSONResponse({"ok": False, "message": str(exc)}, status_code=400)
+        return RedirectResponse(f"/jobs/{job_id}?review_prepare_error={quote(str(exc))}#review-preparation", status_code=303)
+    if _wants_json(request):
+        return JSONResponse(
+            {
+                "ok": True,
+                "review_session_id": session_id,
+                "message": f"レビュー準備を開始しました。PID: {pid}",
+                "redirect_url": f"/jobs/{job_id}?review_session_id={session_id}#review-preparation",
+            }
+        )
+    return RedirectResponse(f"/jobs/{job_id}?review_session_id={session_id}&review_prepare={quote(f'レビュー準備を開始しました。PID: {pid}')}#review-preparation", status_code=303)
+
+
 @app.post("/jobs/{job_id}/review-sessions/{session_id}/stop")
 def job_review_session_stop(job_id: int, session_id: int) -> RedirectResponse:
     session = fetch_one("SELECT id FROM review_sessions WHERE id = ? AND job_id = ?", (session_id, job_id))
@@ -2745,6 +2948,25 @@ def job_review_session_stop(job_id: int, session_id: int) -> RedirectResponse:
     except Exception as exc:
         return RedirectResponse(f"/jobs/{job_id}?review_prepare_error={quote(str(exc))}#review-preparation", status_code=303)
     return RedirectResponse(f"/jobs/{job_id}?review_prepare={quote('Review Preparationを停止しました。')}#review-preparation", status_code=303)
+
+
+@app.post("/jobs/{job_id}/review-sessions/{session_id}/matrix/build")
+def job_review_session_matrix_build(job_id: int, session_id: int) -> RedirectResponse:
+    session = fetch_one("SELECT * FROM review_sessions WHERE id = ? AND job_id = ?", (session_id, job_id))
+    if session is None:
+        raise HTTPException(status_code=404, detail="レビューセッションが見つかりません")
+    if session["status"] == "running":
+        return RedirectResponse(f"/jobs/{job_id}?review_prepare_error={quote('レビュー準備が実行中です。完了後にMatrixを作成してください。')}#review-preparation", status_code=303)
+    try:
+        matrix_path = write_review_matrix(session_id)
+        with connect() as conn:
+            conn.execute(
+                "UPDATE review_sessions SET matrix_path = ?, updated_at = ? WHERE id = ?",
+                (matrix_path, datetime.utcnow().isoformat(), session_id),
+            )
+    except Exception as exc:
+        return RedirectResponse(f"/jobs/{job_id}?review_prepare_error={quote(str(exc))}#review-preparation", status_code=303)
+    return RedirectResponse(f"/jobs/{job_id}?review_session_id={session_id}&review_prepare={quote('レビューMatrixを作成しました。')}#review-preparation", status_code=303)
 
 
 @app.get("/jobs/{job_id}/review-sessions/{session_id}/status")
@@ -3110,7 +3332,7 @@ def job_select_output(request: Request, job_id: int, output_id: int):
 
 
 @app.post("/jobs/{job_id}/select-epoch")
-def job_select_epoch(request: Request, job_id: int, epoch: int = Form(...)):
+def job_select_epoch(request: Request, job_id: int, epoch: int = Form(...), return_to: str = Form("")):
     output = fetch_one(
         """
         SELECT * FROM training_outputs
@@ -3146,7 +3368,7 @@ def job_select_epoch(request: Request, job_id: int, epoch: int = Form(...)):
                 "message": "採用LoRAを更新しました。",
             }
         )
-    return RedirectResponse(f"/jobs/{job_id}", status_code=303)
+    return RedirectResponse(safe_local_redirect(return_to, f"/jobs/{job_id}"), status_code=303)
 
 
 @app.post("/jobs/{job_id}/samples/{image_id}/review")
@@ -3693,12 +3915,14 @@ def validation_run_detail(request: Request, run_id: int, generation_error: str |
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     requested_job_return = request.query_params.get("return_to", "") if request is not None else ""
     job_return_to = requested_job_return if requested_job_return.startswith("/jobs/") else f"/jobs/{bundle['run']['job_id']}"
+    generation_state = generation_view_state(run_id)
     return render(
         request,
         "validation_run_detail.html",
         **bundle,
         job_return_to=job_return_to,
-        **generation_view_state(run_id),
+        **generation_state,
+        operation_monitor=validation_run_operation_monitor(run_id, generation_state["generation"]),
         default_project_path=str(settings.ROOT_DIR),
         rubric_options=rubric_options(),
         apply_result=None,
@@ -3729,11 +3953,13 @@ def validation_run_export_report(request: Request, run_id: int) -> HTMLResponse:
         bundle = load_validation_run_bundle(run_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    generation_state = generation_view_state(run_id)
     return render(
         request,
         "validation_run_detail.html",
         **bundle,
-        **generation_view_state(run_id),
+        **generation_state,
+        operation_monitor=validation_run_operation_monitor(run_id, generation_state["generation"]),
         default_project_path=str(settings.ROOT_DIR),
         rubric_options=rubric_options(),
         apply_result=None,
@@ -3762,11 +3988,13 @@ def validation_run_apply_to_profile(request: Request, run_id: int) -> HTMLRespon
         bundle = load_validation_run_bundle(run_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    generation_state = generation_view_state(run_id)
     return render(
         request,
         "validation_run_detail.html",
         **bundle,
-        **generation_view_state(run_id),
+        **generation_state,
+        operation_monitor=validation_run_operation_monitor(run_id, generation_state["generation"]),
         default_project_path=str(settings.ROOT_DIR),
         rubric_options=rubric_options(),
         apply_result=apply_result,

@@ -13,9 +13,9 @@
 {% endif %}
 
 <section class="notice">
-  <h2>Embedding Cache</h2>
+  <h2>Embeddingキャッシュ</h2>
   <dl>
-    <dt>Total</dt><dd>{{ format_bytes(storage.embedding_cache.total) }}</dd>
+    <dt>合計</dt><dd>{{ format_bytes(storage.embedding_cache.total) }}</dd>
     {% for key, size in storage.embedding_cache.by_model.items() %}
     <dt>{{ key }}</dt><dd>{{ format_bytes(size) }}</dd>
     {% endfor %}
@@ -37,7 +37,7 @@
     <dl>
       <dt>モデル出力</dt><dd>{{ storage.totals.model_outputs.label }}</dd>
       <dt>サンプル画像</dt><dd>{{ storage.totals.sample_images.label }}</dd>
-      <dt>Review Session画像</dt><dd>{{ storage.totals.review_session_images.label }}</dd>
+      <dt>レビューセッション画像</dt><dd>{{ storage.totals.review_session_images.label }}</dd>
       <dt>reports / logs / config</dt><dd>{{ storage.totals.reports_logs_config.label }}</dd>
     </dl>
   </div>
@@ -76,7 +76,7 @@
 
 <section>
   <h2>Trash</h2>
-  <p class="muted">削除操作はまずTrashへ移動します。Purge Trashを押すと完全削除します。</p>
+  <p class="muted">削除操作はまずTrashへ移動します。「Trashを完全削除」を押すと完全削除します。</p>
   <form method="post" action="/storage/trash/purge" class="actions">
     <button class="danger" type="submit">Trashを完全削除</button>
   </form>

@@ -1,5 +1,4 @@
 {% extends "base.html" %}{% block content %}
-{% if job.status == 'running' or (review_preparation.session and review_preparation.session.status == 'running') %}<meta http-equiv="refresh" content="8">{% endif %}
 <nav class="breadcrumbs"><a href="/">ダッシュボード</a><a href="/jobs">学習ジョブ一覧</a><span>学習ジョブ #{{ job.id }}</span></nav>
 <header class="page-head">
   <h1>#{{ job.id }} {{ job.name }}</h1>
@@ -29,7 +28,7 @@
     <p>{{ next_action }}</p>
   </div>
   <div>
-    <h2>Primary Action</h2>
+    <h2>主要操作</h2>
     <div class="actions primary-action">
       {% if job.status == 'draft' and action_state.prepare %}
       <form method="post" action="/jobs/{{ job.id }}/prepare"><button type="submit">ファイル準備</button></form>
@@ -41,17 +40,17 @@
       {% elif job.status == 'running' and action_state.stop %}
       <form method="post" action="/jobs/{{ job.id }}/stop"><button type="submit" class="danger">停止</button></form>
       {% elif review_preparation.session and review_preparation.session.status == 'running' %}
-      <a class="button" href="#review-preparation">Review Preparation進捗を確認</a>
+      <a class="button" href="#review-preparation">レビュー準備の進捗を確認</a>
       {% elif job.status == 'completed' and review_preparation.can_open_matrix and not selected_output %}
-      <a class="button" href="/jobs/{{ job.id }}/review-sessions/{{ review_preparation.session.id }}/matrix">Review Matrixを開く</a>
+      <a class="button" href="/jobs/{{ job.id }}/review-sessions/{{ review_preparation.session.id }}/matrix">レビューMatrixを開く</a>
       {% elif job.status == 'completed' and review_preparation.session and review_preparation.session.status not in ['completed'] %}
-      <a class="button" href="/review-sessions/{{ review_preparation.session.id }}">Review Sessionを確認</a>
+      <a class="button" href="/review-sessions/{{ review_preparation.session.id }}">レビューセッションを確認</a>
       {% elif selected_output %}
-      <a class="button" href="#validation-runs">Weight Calibrationを作成</a>
+      <a class="button" href="#validation-runs">weight検証Runを作成</a>
       {% elif job.status == 'completed' and review_preparation.session %}
-      <form method="post" action="/jobs/{{ job.id }}/review-preparation/run" data-review-preparation-run-form><button type="submit" data-review-preparation-run-button {% if review_preparation.session.status == 'running' %}disabled{% endif %}>候補Review Matrixを準備</button></form>
+      <form method="post" action="/jobs/{{ job.id }}/review-preparation/run" data-review-preparation-run-form><button type="submit" data-review-preparation-run-button {% if review_preparation.session.status == 'running' %}disabled{% endif %}>候補レビューMatrixを準備</button></form>
       {% elif job.status == 'completed' and outputs|length > 0 %}
-      <form method="post" action="/jobs/{{ job.id }}/review-preparation/run" data-review-preparation-run-form><button type="submit" data-review-preparation-run-button>候補Review Matrixを準備</button></form>
+      <form method="post" action="/jobs/{{ job.id }}/review-preparation/run" data-review-preparation-run-form><button type="submit" data-review-preparation-run-button>候補レビューMatrixを準備</button></form>
       {% elif job.status == 'failed' %}
       <a class="button danger" href="#technical-log">ログを確認</a>
       {% else %}
@@ -94,58 +93,138 @@
     </details>
   </div>
 </section>
+{% include "partials/active_operation_monitor.html" %}
 <nav class="page-tabs" aria-label="学習ジョブ内ナビ">
-  <a href="#tab-overview" data-job-tab="overview">Overview</a>
-  <a href="#tab-results" data-job-tab="results">Results</a>
-  <a href="#tab-review" data-job-tab="review">Review</a>
-  <a href="#tab-validation" data-job-tab="validation">Validation</a>
+  <a href="#tab-overview" data-job-tab="overview">概要</a>
+  <a href="#tab-results" data-job-tab="results">結果</a>
+  <a href="#tab-review" data-job-tab="review">レビュー</a>
+  <a href="#tab-validation" data-job-tab="validation">検証</a>
   <details class="tab-more">
-    <summary>More</summary>
+    <summary>その他</summary>
     <div>
-      <a href="#tab-setup" data-job-tab="setup">Setup</a>
-      <a href="#tab-recommendations" data-job-tab="recommendations">Recommendations</a>
-      <a href="#tab-files" data-job-tab="files">Files</a>
-      <a href="#tab-technical" data-job-tab="technical">Technical</a>
+      <a href="#tab-setup" data-job-tab="setup">設定</a>
+      <a href="#tab-recommendations" data-job-tab="recommendations">提案</a>
+      <a href="#tab-files" data-job-tab="files">ファイル</a>
+      <a href="#tab-technical" data-job-tab="technical">技術情報</a>
     </div>
   </details>
 </nav>
 <section id="review-preparation" class="notice" {% if review_preparation.session %}data-review-preparation-session-id="{{ review_preparation.session.id }}" data-review-preparation-session-status="{{ review_preparation.session.status }}"{% endif %}>
-  <h2>Review Preparation</h2>
-  <p>採用前に候補epochを比較するための準備です。loss候補epochの前後を少数prompt / weightで生成し、横断Matrixで見比べます。採用後の45枚標準検証はWeight Calibrationとして別に実行します。</p>
-  {% if review_preparation.session %}
+  <h2>レビュー準備</h2>
+  <p>採用前に候補epochを比較するための準備です。loss候補epochの前後を少数prompt / weightで生成し、横断Matrixで見比べます。採用後の45枚標準検証はweight検証Runとして別に実行します。</p>
+  {% if review_preparation.current %}
+  <h3>現在のレビューセッション #{{ review_preparation.current.session_id }}</h3>
+  <p class="muted">この枠の数値はすべてレビューセッション #{{ review_preparation.current.session_id }}だけから取得しています。</p>
   <div class="stats-grid">
-    <div><span>状態</span><strong data-review-preparation-status>{{ review_preparation.session.status }}</strong></div>
-    <div><span>候補epoch</span><strong>{{ review_preparation.candidate_epochs|join(', ') if review_preparation.candidate_epochs else '-' }}</strong></div>
-    <div><span>条件数</span><strong>{{ review_preparation.condition_count }}</strong></div>
-    <div><span>登録画像</span><strong data-review-preparation-images>{{ review_preparation.image_count }}</strong></div>
-    {% if review_preparation.embedding_coverage %}
-    <div><span>Embedding</span><strong>{{ review_preparation.embedding_coverage.ready }} / {{ review_preparation.embedding_coverage.total }}</strong></div>
-    {% endif %}
-    <div><span>Machine Review</span><strong data-review-preparation-scores>{{ review_preparation.session.scored_image_count or 0 }} / {{ review_preparation.session.expected_image_count or review_preparation.condition_count }}</strong></div>
+    <div><span>状態</span><strong data-review-preparation-status>{{ review_preparation.current.status }}</strong></div>
+    <div><span>候補epoch</span><strong>{{ review_preparation.current.candidate_epochs|join(', ') if review_preparation.current.candidate_epochs else '-' }}</strong></div>
+    <div><span>条件数</span><strong>{{ review_preparation.current.condition_count }}</strong><small>候補epochとprompt/seed/weightの全条件</small></div>
+    <div><span>生成対象</span><strong>{{ review_preparation.current.generation_target_count }}</strong><small>実際に画像生成する対象</small></div>
+    <div><span>登録画像</span><strong data-review-preparation-images>{{ review_preparation.current.registered_image_count }} / {{ review_preparation.current.generation_target_count }}{% if review_preparation.current.generated_image_count %}（生成 {{ review_preparation.current.generated_image_count }}）{% endif %}</strong></div>
+    <div><span>Embedding</span><strong>{{ review_preparation.current.embedding_display }}</strong></div>
+    <div><span>機械補助レビュー</span><strong data-review-preparation-scores>{{ review_preparation.current.machine_review_count }} / {{ review_preparation.current.generation_target_count }}</strong></div>
+    <div><span>Matrix</span><strong><span class="label {% if review_preparation.current.can_open_matrix %}completed{% elif review_preparation.current.has_matrix %}warning{% else %}unknown{% endif %}">{% if review_preparation.current.can_open_matrix %}作成済み{% elif review_preparation.current.has_matrix %}パスあり / ファイルなし{% else %}未作成{% endif %}</span></strong></div>
   </div>
   {% else %}
   <p class="muted">候補epochレビュー計画はまだありません。学習完了後は結果取り込み時に自動作成されます。既存ジョブでは下のボタンで作成できます。</p>
   {% endif %}
-  <div class="actions compact-actions">
+  <div class="actions compact-actions review-preparation-actions">
+    <div class="action-group primary-action-group">
+    {% if not review_preparation.current %}
     <form method="post" action="/jobs/{{ job.id }}/review-preparation/run" data-review-preparation-run-form>
-      <button type="submit" data-review-preparation-run-button {% if outputs|length == 0 or (review_preparation.session and review_preparation.session.status == 'running') %}disabled{% endif %}>候補Review Matrixを準備</button>
+      <button type="submit" data-review-preparation-run-button {% if outputs|length == 0 %}disabled{% endif %}>候補レビューを作成</button>
     </form>
-    {% if review_preparation.can_open_matrix %}
-    <a class="button" href="/jobs/{{ job.id }}/review-sessions/{{ review_preparation.session.id }}/matrix">Review Matrixを開く</a>
+    {% elif review_preparation.current.primary_action == 'open_matrix' %}
+    <a class="button" href="/jobs/{{ job.id }}/review-sessions/{{ review_preparation.current.session_id }}/matrix">レビューMatrixを開く</a>
+    {% elif review_preparation.current.primary_action == 'build_matrix' %}
+    <form method="post" action="/jobs/{{ job.id }}/review-sessions/{{ review_preparation.current.session_id }}/matrix/build">
+      <button type="submit">レビューMatrixを作成</button>
+    </form>
+    {% elif review_preparation.current.primary_action == 'start' %}
+    <form method="post" action="/jobs/{{ job.id }}/review-sessions/{{ review_preparation.current.session_id }}/run" data-review-preparation-run-form>
+      <button type="submit" data-review-preparation-run-button {% if outputs|length == 0 %}disabled{% endif %}>候補レビューを開始</button>
+    </form>
+    {% elif review_preparation.current.primary_action == 'progress' %}
+    <a class="button" href="/review-sessions/{{ review_preparation.current.session_id }}">進捗を確認</a>
+    {% elif review_preparation.current.primary_action == 'check_log' %}
+    <a class="button" href="#review-preparation-log">ログを確認</a>
     {% else %}
-    <span class="button disabled">Review Matrix未作成</span>
+    <form method="post" action="/jobs/{{ job.id }}/review-preparation/run" data-review-preparation-run-form>
+      <button type="submit" data-review-preparation-run-button {% if outputs|length == 0 %}disabled{% endif %}>候補レビューを開始</button>
+    </form>
     {% endif %}
+    </div>
+    <div class="action-group secondary-action-group">
+    {% if review_preparation.current %}
+    <a class="button secondary" href="/review-sessions/{{ review_preparation.current.session_id }}">レビューセッションを開く</a>
+    <a class="button secondary" href="#review-preparation-log">ログを表示</a>
+    {% endif %}
+    </div>
+    <details class="advanced-actions">
+      <summary>詳細操作</summary>
+      <div class="inline-actions">
+        <form method="post" action="/jobs/{{ job.id }}/review-preparation/run" data-review-preparation-run-form>
+          <button type="submit" class="danger" data-review-preparation-run-button {% if outputs|length == 0 or (review_preparation.session and review_preparation.session.status == 'running') %}disabled{% endif %}>候補レビューを再実行</button>
+        </form>
+        <span class="button small-button disabled" title="レビューセッションのアーカイブ / 削除は未実装です">セッションをアーカイブ / 削除</span>
+      </div>
+    </details>
     {% if review_preparation.session and review_preparation.session.status == 'running' %}
     <form method="post" action="/jobs/{{ job.id }}/review-sessions/{{ review_preparation.session.id }}/stop">
-      <button type="submit" class="danger">Review Preparationを停止</button>
+      <button type="submit" class="danger">レビュー準備を停止</button>
     </form>
     {% endif %}
   </div>
   {% if review_preparation.session %}
-  <details class="log-tail-details" {% if review_preparation.session.status in ['running', 'failed'] %}open{% endif %}>
-    <summary>Review Preparationログ末尾（最大20行 / <span data-review-preparation-log-size>{{ review_preparation.log_size }}</span> bytes）</summary>
+  <details id="review-preparation-log" class="log-tail-details" {% if review_preparation.session.status in ['running', 'failed', 'stopped'] %}open{% endif %}>
+    <summary>レビュー準備ログ末尾（最大20行 / <span data-review-preparation-log-size>{{ review_preparation.log_size }}</span> bytes）</summary>
     <pre class="mini-log" data-review-preparation-log>{{ review_preparation.log_tail or 'ログはまだありません。' }}</pre>
   </details>
+  {% endif %}
+  {% if review_preparation.other_sessions %}
+  <section class="subsection">
+    <h3>その他のレビューセッション</h3>
+    <p class="muted">未実行の別レビューセッションや過去のレビューセッションです。現在表示に切り替えてもDBは変更せず、この学習ジョブ詳細で表示する対象だけを変えます。</p>
+    <div class="table-scroll">
+      <table class="wide-table compact-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>状態</th>
+            <th>候補epoch</th>
+            <th>条件</th>
+            <th>生成対象</th>
+            <th>登録画像</th>
+            <th>Embedding</th>
+            <th>機械補助レビュー</th>
+            <th>Matrix</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in review_preparation.other_sessions %}
+          <tr class="{% if item.status in ['planned', 'prepared'] %}pending-review-session{% endif %}">
+            <td>#{{ item.session_id }}</td>
+            <td><span class="label {{ item.status }}">{{ item.status }}</span>{% if item.status in ['planned', 'prepared'] %}<br><span class="muted">未実行の別レビューセッション</span>{% endif %}</td>
+            <td>{{ item.candidate_epochs|join(', ') if item.candidate_epochs else '-' }}</td>
+            <td>{{ item.condition_count }}</td>
+            <td>{{ item.generation_target_count }}</td>
+            <td>{{ item.registered_image_count }} / {{ item.generation_target_count }}{% if item.generated_image_count %}<br><span class="muted">生成 {{ item.generated_image_count }}</span>{% endif %}</td>
+            <td>{{ item.embedding_display }}</td>
+            <td>{{ item.machine_review_count }} / {{ item.generation_target_count }}</td>
+            <td><span class="label {% if item.can_open_matrix %}completed{% elif item.has_matrix %}warning{% else %}unknown{% endif %}">{% if item.can_open_matrix %}作成済み{% elif item.has_matrix %}パスあり / ファイルなし{% else %}未作成{% endif %}</span></td>
+            <td class="inline-actions">
+              <a class="button small-button" href="/review-sessions/{{ item.session_id }}">詳細</a>
+              <a class="button small-button" href="/jobs/{{ job.id }}?review_session_id={{ item.session_id }}#review-preparation">Jobレビュー欄に表示</a>
+              {% if item.can_open_matrix %}<a class="button small-button" href="/jobs/{{ job.id }}/review-sessions/{{ item.session_id }}/matrix">Matrix</a>{% elif item.status == 'completed' %}<form method="post" action="/jobs/{{ job.id }}/review-sessions/{{ item.session_id }}/matrix/build"><button class="small-button" type="submit">Matrix作成</button></form>{% endif %}
+              <span class="button small-button disabled" title="レビューセッションのアーカイブ / 削除は未実装です">アーカイブ / 削除</span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
   {% endif %}
 </section>
 {% if project and job.status == 'prepared' and pilot_guidance %}
@@ -442,25 +521,25 @@
     </tbody>
   </table>
 </section>
-<section id="technical-log">
+<section id="technical-log" data-train-log-panel data-train-log-url="/jobs/{{ job.id }}/log-tail/status" data-train-log-running="{{ '1' if job.status == 'running' else '0' }}">
   <details class="log-tail-details" {% if job.status in ['running', 'failed'] %}open{% endif %}>
     <summary>train.log末尾（最大40行）</summary>
-    <p class="muted">通常は閉じています。実行中や失敗時はエラー確認のため開いた状態で表示します。</p>
-    <pre class="compact-log">{{ log_tail or 'train.logはまだありません。' }}</pre>
+    <p class="muted" data-train-log-status>通常は閉じています。実行中や失敗時はエラー確認のため開いた状態で表示します。</p>
+    <pre class="compact-log" data-train-log-tail>{{ log_tail or 'train.logはまだありません。' }}</pre>
   </details>
 </section>
 {% if machine_review_readiness %}
 <section id="machine-assist-readiness" class="notice" data-machine-review-readiness data-readiness-url="/jobs/{{ job.id }}/machine-review-readiness/status">
-  <h2>機械補助レビュー準備状況 <span class="muted">Machine Review Assist readiness</span></h2>
+  <h2>機械補助レビュー準備状況</h2>
   <p>機械補助レビューは自動判定ではなく、Reference類似度とDataset近傍類似度を並べる補助情報です。最終判断は人間評価を優先してください。</p>
   <div class="summary-grid">
     <div><span>provider</span><strong data-readiness-field="provider">{{ machine_review_readiness.provider }}</strong></div>
-    <div><span>Reference枚数</span><strong data-readiness-field="reference_count">{{ machine_review_readiness.reference_count }}</strong></div>
-    <div><span>Reference role</span><strong data-readiness-field="reference_roles">{% for role, count in machine_review_readiness.reference_role_distribution.roles.items() %}{{ role }}:{{ count }}{% if not loop.last %}, {% endif %}{% else %}-{% endfor %}</strong></div>
-    <div><span>Reference Embedding</span><strong data-readiness-field="reference_coverage">{{ machine_review_readiness.reference_coverage.ready if machine_review_readiness.reference_coverage else 0 }} / {{ machine_review_readiness.reference_coverage.total if machine_review_readiness.reference_coverage else 0 }}</strong></div>
-    <div><span>Dataset Embedding</span><strong data-readiness-field="dataset_coverage">{{ machine_review_readiness.dataset_coverage.ready if machine_review_readiness.dataset_coverage else 0 }} / {{ machine_review_readiness.dataset_coverage.total if machine_review_readiness.dataset_coverage else 0 }}</strong></div>
+    <div><span>リファレンス枚数</span><strong data-readiness-field="reference_count">{{ machine_review_readiness.reference_count }}</strong></div>
+    <div><span>リファレンス役割</span><strong data-readiness-field="reference_roles">{% for role, count in machine_review_readiness.reference_role_distribution.roles.items() %}{{ role }}:{{ count }}{% if not loop.last %}, {% endif %}{% else %}-{% endfor %}</strong></div>
+    <div><span>リファレンスEmbedding</span><strong data-readiness-field="reference_coverage">{{ machine_review_readiness.reference_coverage.ready if machine_review_readiness.reference_coverage else 0 }} / {{ machine_review_readiness.reference_coverage.total if machine_review_readiness.reference_coverage else 0 }}</strong></div>
+    <div><span>データセットEmbedding</span><strong data-readiness-field="dataset_coverage">{{ machine_review_readiness.dataset_coverage.ready if machine_review_readiness.dataset_coverage else 0 }} / {{ machine_review_readiness.dataset_coverage.total if machine_review_readiness.dataset_coverage else 0 }}</strong></div>
     <div><span>{{ machine_review_readiness.target_label }}Embedding</span><strong data-readiness-field="target_coverage">{{ machine_review_readiness.target_coverage.ready if machine_review_readiness.target_coverage else 0 }} / {{ machine_review_readiness.target_coverage.total if machine_review_readiness.target_coverage else 0 }}</strong></div>
-    <div><span>Machine Review score</span><strong data-readiness-field="score_coverage">{{ machine_review_readiness.score_coverage.ready }} / {{ machine_review_readiness.score_coverage.total }}</strong></div>
+    <div><span>機械補助レビュースコア</span><strong data-readiness-field="score_coverage">{{ machine_review_readiness.score_coverage.ready }} / {{ machine_review_readiness.score_coverage.total }}</strong></div>
   </div>
   {% if machine_review_readiness.warnings %}
   <ul data-readiness-warnings>
@@ -513,7 +592,7 @@
   <h2>機械補助レビュー</h2>
   <p>機械補助判定は参考情報です。最終判断は人間評価を優先してください。mock providerのスコアは意味的な画像評価ではありません。</p>
   <p>transformers CLIP ViT-B/32は画像全体の意味・構図・雰囲気を見やすい一方、細かい顔特徴や衣装差分の専用判定ではありません。full body画像では顔類似度として過信せず、顔・上半身・全身・表情などReference roleの分散を確認してください。</p>
-  <p>Reference Setが少ない、またはroleが偏っている場合、判定が偏る可能性があります。機械補助レビューだけで採用epochを自動決定しません。</p>
+  <p>リファレンスセットが少ない、またはroleが偏っている場合、判定が偏る可能性があります。機械補助レビューだけで採用epochを自動決定しません。</p>
   <p class="muted">Reference類似度はリファレンス画像への近さ、Dataset近傍は学習元画像への近さです。Referenceが高いほど基準画像に近く、Dataset近傍が高すぎる場合は過学習や元画像への寄りすぎを疑います。</p>
   <div class="actions compact-actions">
     <form method="post" action="/machine-review/jobs">
@@ -524,7 +603,7 @@
     </form>
   </div>
   <table>
-    <thead><tr><th>Epoch</th><th>件数</th><th>Reference平均</th><th>Reference最大</th><th>Dataset近傍平均</th><th>Top Dataset</th><th>Top1差分</th><th>過学習リスク</th><th>補助判定</th><th>信頼度</th></tr></thead>
+    <thead><tr><th>epoch</th><th>件数</th><th>Reference平均</th><th>Reference最大</th><th>Dataset近傍平均</th><th>Top Dataset</th><th>Top1差分</th><th>過学習リスク</th><th>補助判定</th><th>信頼度</th></tr></thead>
     <tbody>
       {% for epoch, score in machine_epoch_summary.items() %}
       <tr>
@@ -547,7 +626,7 @@
 </section>
 
 <section id="review-queue">
-  <h2>Review Queue</h2>
+  <h2>レビューキュー</h2>
   <p class="muted">lossとepoch summaryから候補epochを先に出します。自動候補は画像内容AI判定ではなく、人間評価の入口を軽くするための補助です。</p>
   <div class="actions">
     <a class="button {{ 'active' if review_filter == 'candidates' else '' }}" href="/jobs/{{ job.id }}?review_filter=candidates#review-queue">候補epochのみ</a>
@@ -615,7 +694,7 @@
           {% if sample.machine_score %}
           <br><span class="label {{ sample.machine_score.assist_label }}">{{ display_machine_label(sample.machine_score.assist_label) }}</span>
           <span class="label {{ sample.machine_score.confidence_label }}">{{ display_machine_label(sample.machine_score.confidence_label) }}</span>
-          <br><span class="muted">Ref {{ '%.3f'|format(sample.machine_score.reference_similarity_max) if sample.machine_score.reference_similarity_max is not none else '-' }} (#{{ sample.machine_score.nearest_reference_image_id or '-' }}) / Dataset {{ '%.3f'|format(sample.machine_score.nearest_dataset_similarity) if sample.machine_score.nearest_dataset_similarity is not none else '-' }} (#{{ sample.machine_score.nearest_dataset_image_id or '-' }}) / overfit {{ sample.machine_score.overfit_risk_label }}</span>
+          <br><span class="muted">Reference {{ '%.3f'|format(sample.machine_score.reference_similarity_max) if sample.machine_score.reference_similarity_max is not none else '-' }} (#{{ sample.machine_score.nearest_reference_image_id or '-' }}) / Dataset {{ '%.3f'|format(sample.machine_score.nearest_dataset_similarity) if sample.machine_score.nearest_dataset_similarity is not none else '-' }} (#{{ sample.machine_score.nearest_dataset_image_id or '-' }}) / 過学習 {{ display_machine_label(sample.machine_score.overfit_risk_label) }}</span>
           {% endif %}
         </figcaption>
         <form method="post" action="/jobs/{{ job.id }}/samples/{{ sample.id }}/review" class="review-form" data-review-form>
@@ -678,11 +757,11 @@
     </div>
   </div>
   {% endif %}
-  <h2>Weight Calibration / 検証Run</h2>
-  <p class="muted">採用epochを決めた後、標準検証45枚などでweightごとの見え方を確認します。採用前のepoch比較は上のReview Preparationを使い、ここでは採用候補LoRAのweight調整を主目的にします。</p>
+  <h2>weight検証Run</h2>
+  <p class="muted">採用epochを決めた後、標準検証45枚などでweightごとの見え方を確認します。採用前のepoch比較は上のレビュー準備を使い、ここでは採用候補LoRAのweight調整を主目的にします。</p>
   <div class="panel-grid">
     <div>
-      <h3>採用中LoRAでWeight Calibrationを作成</h3>
+      <h3>採用中LoRAでweight検証Runを作成</h3>
       <form method="post" action="/jobs/{{ job.id }}/validation-runs" class="form-grid">
         <label>プリセット<select name="validation_preset_id">
           {% for preset in validation_presets %}
@@ -692,9 +771,9 @@
         <label>ベースモデル<input name="base_model" value="{{ selected_lora_profile.base_model if selected_lora_profile else '' }}"></label>
         <label>トリガー<input name="trigger_word" value="{{ selected_lora_profile.trigger_word if selected_lora_profile else job.trigger_word_at_creation or '' }}"></label>
         <label class="wide-field">メモ<textarea name="memo"></textarea></label>
-        <button type="submit" {% if not selected_output %}disabled{% endif %}>Weight Calibration検証Runを作成</button>
+        <button type="submit" {% if not selected_output %}disabled{% endif %}>weight検証Runを作成</button>
       </form>
-      <h3>複数EpochのWeight Calibrationをまとめて作成</h3>
+      <h3>複数epochのweight検証Runをまとめて作成</h3>
       <form method="post" action="/jobs/{{ job.id }}/validation-runs/bulk" class="form-grid">
         <label>プリセット<select name="validation_preset_id">
           {% for preset in validation_presets %}
@@ -716,7 +795,7 @@
       </form>
     </div>
     <div>
-      <h3>Weight Calibration検証Run一覧</h3>
+      <h3>weight検証Run一覧</h3>
       {% if generation_error %}<p class="notice warning">{{ generation_error }}</p>{% endif %}
       {% if running_generation %}
       <p class="notice">検証画像生成 #{{ running_generation.id }} が実行中です。他の検証Runの画像生成は、完了または停止後に開始できます。</p>
@@ -965,12 +1044,12 @@
   const tabMap = {
     overview: ["overview", "workflow-judgement"],
     setup: ["setup"],
-    results: ["results", "outputs", "samples"],
+    results: ["results", "technical-log", "outputs", "samples"],
     review: ["review-preparation", "review-queue", "machine-assist-readiness", "machine-assist"],
     validation: ["validation-runs", "legacy-validation", "validation-results"],
     recommendations: ["recommendations"],
     files: ["files-cleanup", "runs-cleanup"],
-    technical: ["technical", "technical-log", "technical-params"],
+    technical: ["technical", "technical-params"],
   };
   const allIds = Object.values(tabMap).flat();
   const tabBySection = {};

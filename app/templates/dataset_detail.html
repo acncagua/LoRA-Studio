@@ -5,8 +5,8 @@
 </header>
 {% if embedding_coverage %}
 <section class="notice embedding-coverage">
-  <h2>Dataset画像Embedding状況 <span class="muted">Embedding Coverage</span></h2>
-  <p>対象Dataset Version: #{{ embedding_target_id }} / モデル: {{ embedding_coverage.model_name }}</p>
+  <h2>データセット画像Embedding状況</h2>
+  <p>対象データセットVersion: #{{ embedding_target_id }} / モデル: {{ embedding_coverage.model_name }}</p>
   <div class="summary-grid">
     <div><span>画像</span><strong>{{ embedding_coverage.total }}</strong></div>
     <div><span>計算済み</span><strong>{{ embedding_coverage.ready }}</strong></div>
@@ -21,7 +21,7 @@
       <input type="hidden" name="target_id" value="{{ embedding_target_id }}">
       <input type="hidden" name="recompute" value="missing">
       <input type="hidden" name="return_to" value="/datasets/{{ dataset.id }}">
-      <button type="submit">Dataset画像Embeddingを計算</button>
+      <button type="submit">データセット画像Embeddingを計算</button>
     </form>
     <form method="post" action="/embeddings/jobs" data-embedding-job-form>
       <input type="hidden" name="job_type" value="dataset_version">

@@ -71,6 +71,9 @@ def preset_snapshot() -> dict[str, Any]:
     }
 
 
+ACTIVE_REVIEW_STATUSES = {"running", "generating_images", "embedding_images", "machine_reviewing", "building_matrix"}
+
+
 def latest_review_session(job_id: int) -> dict[str, Any] | None:
     row = fetch_one(
         """
@@ -78,11 +81,12 @@ def latest_review_session(job_id: int) -> dict[str, Any] | None:
         WHERE job_id = ? AND preset_id = ?
         ORDER BY
             CASE
-                WHEN status = 'running' THEN 0
+                WHEN status IN ('running', 'generating_images', 'embedding_images', 'machine_reviewing', 'building_matrix') THEN 0
                 WHEN status = 'completed' AND COALESCE(matrix_path, '') != '' THEN 1
-                WHEN status IN ('planned', 'prepared') THEN 2
-                WHEN status = 'completed' THEN 3
-                ELSE 4
+                WHEN status = 'completed' THEN 2
+                WHEN status IN ('failed', 'stopped') THEN 3
+                WHEN status IN ('planned', 'prepared') THEN 4
+                ELSE 5
             END,
             id DESC
         LIMIT 1
@@ -92,25 +96,46 @@ def latest_review_session(job_id: int) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
-def review_session_summary(job_id: int) -> dict[str, Any]:
-    session = latest_review_session(job_id)
-    if session is None:
-        return {
-            "session": None,
-            "condition_count": 0,
-            "image_count": 0,
-            "candidate_epochs": [],
-            "matrix_path": "",
-            "can_open_matrix": False,
-            "embedding_coverage": None,
-        }
+def review_session_priority(session: dict[str, Any]) -> tuple[int, int]:
+    status = str(session.get("status") or "")
+    if status in ACTIVE_REVIEW_STATUSES:
+        rank = 0
+    elif status == "completed" and session.get("matrix_path"):
+        rank = 1
+    elif status == "completed":
+        rank = 2
+    elif status in {"failed", "stopped"}:
+        rank = 3
+    elif status in {"planned", "prepared"}:
+        rank = 4
+    else:
+        rank = 5
+    return rank, -int(session.get("id") or 0)
+
+
+def review_session_rows(job_id: int) -> list[dict[str, Any]]:
+    return [
+        dict(row)
+        for row in fetch_all(
+            """
+            SELECT * FROM review_sessions
+            WHERE job_id = ? AND preset_id = ?
+            ORDER BY id DESC
+            """,
+            (job_id, PRESET_ID),
+        )
+    ]
+
+
+def summarize_review_session(session: dict[str, Any]) -> dict[str, Any]:
+    session_id = int(session["id"])
     condition_count = fetch_one(
         "SELECT COUNT(*) AS c FROM review_session_conditions WHERE review_session_id = ?",
-        (session["id"],),
+        (session_id,),
     )
     image_count = fetch_one(
         "SELECT COUNT(*) AS c FROM review_session_images WHERE review_session_id = ? AND deleted_at IS NULL",
-        (session["id"],),
+        (session_id,),
     )
     try:
         candidate_epochs = json.loads(session.get("candidate_epochs_json") or "[]")
@@ -120,19 +145,105 @@ def review_session_summary(job_id: int) -> dict[str, Any]:
     try:
         from app.services.embedding_service import embedding_coverage
 
-        embedding = embedding_coverage("review_session", int(session["id"]))
+        embedding = embedding_coverage("review_session", session_id)
     except Exception:
         embedding = None
+    counted_conditions = int(condition_count["c"] if condition_count else 0)
+    counted_images = int(image_count["c"] if image_count else 0)
+    expected = int(session.get("expected_image_count") or counted_conditions)
+    status = session.get("status") or "-"
+    has_matrix_path = bool(matrix_path)
+    can_open_matrix = bool(matrix_path and Path(matrix_path).exists())
+    if status in {"running", "generating_images", "embedding_images", "machine_reviewing", "building_matrix"}:
+        primary_action = "progress"
+        primary_label = "進捗を確認"
+    elif status == "completed" and can_open_matrix:
+        primary_action = "open_matrix"
+        primary_label = "レビューMatrixを開く"
+    elif status == "completed":
+        primary_action = "build_matrix"
+        primary_label = "レビューMatrixを作成"
+    elif status in {"planned", "prepared"}:
+        primary_action = "start"
+        primary_label = "候補レビューを開始"
+    elif status in {"failed", "stopped"}:
+        primary_action = "check_log"
+        primary_label = "ログを確認"
+    else:
+        primary_action = "start"
+        primary_label = "候補レビューを開始"
+
+    if embedding is None:
+        embedding_display = "未確認"
+    elif int(embedding.get("total") or 0) <= 0:
+        embedding_display = "対象外"
+    else:
+        embedding_display = f"{int(embedding.get('ready') or 0)} / {int(embedding.get('total') or 0)}"
     return {
         "session": session,
-        "condition_count": int(condition_count["c"] if condition_count else 0),
-        "image_count": int(image_count["c"] if image_count else 0),
+        "session_id": session_id,
+        "status": status,
+        "condition_count": counted_conditions,
+        "image_count": counted_images,
+        "registered_image_count": int(session.get("imported_image_count") or counted_images),
+        "generated_image_count": int(session.get("generated_image_count") or 0),
+        "machine_review_count": int(session.get("scored_image_count") or 0),
+        "expected_image_count": expected,
+        "generation_target_count": expected,
         "candidate_epochs": candidate_epochs,
         "matrix_path": matrix_path,
-        "can_open_matrix": bool(matrix_path and Path(matrix_path).exists()),
+        "has_matrix": has_matrix_path,
+        "can_open_matrix": can_open_matrix,
+        "primary_action": primary_action,
+        "primary_label": primary_label,
+        "embedding_display": embedding_display,
         "embedding_coverage": embedding,
         "log_tail": review_session_log_tail(session, max_lines=20),
         "log_size": review_session_log_size(session),
+    }
+
+
+def review_session_summary(job_id: int, current_session_id: int | None = None) -> dict[str, Any]:
+    sessions = review_session_rows(job_id)
+    selected_session: dict[str, Any] | None = None
+    if current_session_id is not None:
+        selected_session = next((session for session in sessions if int(session["id"]) == current_session_id), None)
+    if selected_session is None and sessions:
+        selected_session = sorted(sessions, key=review_session_priority)[0]
+    if selected_session is None:
+        return {
+            "session": None,
+            "current": None,
+            "other_sessions": [],
+            "all_sessions": [],
+            "condition_count": 0,
+            "image_count": 0,
+            "candidate_epochs": [],
+            "matrix_path": "",
+            "can_open_matrix": False,
+            "primary_action": "create",
+            "primary_label": "候補レビューを作成",
+            "embedding_coverage": None,
+        }
+    current = summarize_review_session(selected_session)
+    other_sessions = [summarize_review_session(session) for session in sessions if int(session["id"]) != int(selected_session["id"])]
+    planned_sessions = [item for item in other_sessions if item["status"] in {"planned", "prepared"}]
+    return {
+        "session": current["session"],
+        "current": current,
+        "other_sessions": other_sessions,
+        "planned_sessions": planned_sessions,
+        "all_sessions": [current] + other_sessions,
+        "condition_count": current["condition_count"],
+        "image_count": current["image_count"],
+        "candidate_epochs": current["candidate_epochs"],
+        "matrix_path": current["matrix_path"],
+        "can_open_matrix": current["can_open_matrix"],
+        "primary_action": current["primary_action"],
+        "primary_label": current["primary_label"],
+        "embedding_coverage": current["embedding_coverage"],
+        "log_tail": current["log_tail"],
+        "log_size": current["log_size"],
     }
 
 
@@ -167,7 +278,7 @@ def review_session_log_size(session: dict[str, Any]) -> int:
 def prepare_review_generation(session_id: int) -> dict[str, Any]:
     session = fetch_one("SELECT * FROM review_sessions WHERE id = ?", (session_id,))
     if session is None:
-        raise ValueError(f"Review Session not found: {session_id}")
+        raise ValueError(f"レビューセッションが見つかりません: {session_id}")
     job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (session["job_id"],))
     if job is None:
         raise ValueError(f"Job not found: {session['job_id']}")
@@ -189,7 +300,7 @@ def prepare_review_generation(session_id: int) -> dict[str, Any]:
 
     conditions = [dict(row) for row in fetch_all("SELECT * FROM review_session_conditions WHERE review_session_id = ? ORDER BY epoch, prompt_key, lora_weight, id", (session_id,))]
     if not conditions:
-        raise RuntimeError("Review Sessionに生成条件がありません。")
+        raise RuntimeError("レビューセッションに生成条件がありません。")
     run_dir = review_session_dir(session_id)
     out_dir = review_session_output_dir(session_id)
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -258,7 +369,7 @@ def start_review_preparation(session_id: int) -> int:
     prepare_review_generation(session_id)
     session = fetch_one("SELECT * FROM review_sessions WHERE id = ?", (session_id,))
     if session is None:
-        raise ValueError(f"Review Session not found: {session_id}")
+        raise ValueError(f"レビューセッションが見つかりません: {session_id}")
     payload = json.loads(session["command_argv_json"] or "{}")
     commands = payload.get("commands") or []
     if not commands:
@@ -284,7 +395,7 @@ def start_review_preparation(session_id: int) -> int:
             """,
             (start_time, start_time, session_id),
         )
-    append_log_note(log_path, f"Review Preparation starting. commands={len(commands)}")
+    append_log_note(log_path, f"レビュー準備を開始します。commands={len(commands)}")
     append_log_note(log_path, f"First command: {commands[0].get('name') or 'gen_img.py'}")
     log_handle = log_path.open("ab")
     try:
@@ -299,7 +410,7 @@ def start_review_preparation(session_id: int) -> int:
     except Exception as exc:
         log_handle.close()
         end_time = utc_now()
-        append_log_note(log_path, f"Review Preparation failed to start: {exc}")
+        append_log_note(log_path, f"レビュー準備の開始に失敗しました: {exc}")
         with connect() as conn:
             conn.execute(
                 """
@@ -329,7 +440,7 @@ def start_review_preparation(session_id: int) -> int:
 def stop_review_preparation(session_id: int) -> None:
     session = fetch_one("SELECT * FROM review_sessions WHERE id = ?", (session_id,))
     if session is None:
-        raise ValueError(f"Review Session not found: {session_id}")
+        raise ValueError(f"レビューセッションが見つかりません: {session_id}")
     end_time = utc_now()
     elapsed = elapsed_seconds(session["started_at"], end_time) if session["started_at"] else None
     pid = session["generation_process_id"]
@@ -347,7 +458,7 @@ def stop_review_preparation(session_id: int) -> None:
             (end_time, elapsed, end_time, session_id),
         )
     log_path = Path(str(session["log_path"] or review_session_dir(session_id) / "review_preparation.log"))
-    append_log_note(log_path, "Review Preparation stopped by user.")
+    append_log_note(log_path, "レビュー準備はユーザー操作で停止されました。")
 
 
 def reconcile_stale_review_sessions() -> int:
@@ -368,7 +479,7 @@ def reconcile_stale_review_sessions() -> int:
                     ended_at = COALESCE(ended_at, ?),
                     elapsed_seconds = COALESCE(elapsed_seconds, ?),
                     return_code = COALESCE(return_code, 4294967295),
-                    error_message = COALESCE(error_message, 'Review Preparation process was not found.'),
+                    error_message = COALESCE(error_message, 'レビュー準備プロセスが見つかりませんでした。'),
                     updated_at = ?
                 WHERE id = ? AND status = 'running'
                 """,
@@ -387,13 +498,13 @@ def reject_if_review_gpu_busy() -> None:
         raise RuntimeError(f"学習ジョブ #{running_job['id']} が実行中です。")
     running_generation = fetch_one("SELECT id FROM validation_generation_runs WHERE status = 'running' LIMIT 1")
     if running_generation:
-        raise RuntimeError(f"Validation生成 #{running_generation['id']} が実行中です。")
+        raise RuntimeError(f"検証画像生成 #{running_generation['id']} が実行中です。")
     running_embedding = fetch_one("SELECT id FROM embedding_jobs WHERE status = 'running' LIMIT 1")
     if running_embedding:
         raise RuntimeError(f"Embedding Job #{running_embedding['id']} が実行中です。")
     running_review = fetch_one("SELECT id FROM review_sessions WHERE status = 'running' LIMIT 1")
     if running_review:
-        raise RuntimeError(f"Review Preparation #{running_review['id']} が実行中です。")
+        raise RuntimeError(f"レビュー準備 #{running_review['id']} が実行中です。")
 
 
 def monitor_review_generation(
@@ -468,7 +579,7 @@ def monitor_review_generation(
 def import_review_session_images(session_id: int) -> int:
     session = fetch_one("SELECT * FROM review_sessions WHERE id = ?", (session_id,))
     if session is None:
-        raise ValueError(f"Review Session not found: {session_id}")
+        raise ValueError(f"レビューセッションが見つかりません: {session_id}")
     output_dir = Path(session["output_dir"]) if session["output_dir"] else review_session_output_dir(session_id)
     conditions = {int(row["id"]): dict(row) for row in fetch_all("SELECT * FROM review_session_conditions WHERE review_session_id = ?", (session_id,))}
     hashes = {str(row["condition_hash"]): dict(row) for row in conditions.values()}
@@ -644,7 +755,7 @@ def link_machine_scores_to_review_images(session_id: int) -> None:
 def write_review_matrix(session_id: int) -> str:
     session = fetch_one("SELECT * FROM review_sessions WHERE id = ?", (session_id,))
     if session is None:
-        raise ValueError(f"Review Session not found: {session_id}")
+        raise ValueError(f"レビューセッションが見つかりません: {session_id}")
     job = fetch_one("SELECT id, name, adopted_epoch FROM training_jobs WHERE id = ?", (session["job_id"],))
     conditions = [dict(row) for row in fetch_all("SELECT * FROM review_session_conditions WHERE review_session_id = ? ORDER BY prompt_key, lora_weight, seed, epoch, id", (session_id,))]
     images = [dict(row) for row in fetch_all("SELECT * FROM review_session_images WHERE review_session_id = ? AND deleted_at IS NULL", (session_id,))]
@@ -659,19 +770,19 @@ def write_review_matrix(session_id: int) -> str:
     project_id = int(session["project_id"]) if "project_id" in session.keys() and session["project_id"] else None
     lines = [
         "<!doctype html><html lang=\"ja\"><head><meta charset=\"utf-8\">",
-        f"<title>Review Matrix #{session_id}</title>",
+        f"<title>レビューMatrix #{session_id}</title>",
         review_matrix_style(),
         "</head><body>",
         review_matrix_navigation(session_id, int(session["job_id"]), project_id),
-        f"<h1>候補epoch Review Matrix #{session_id}</h1>",
+        f"<h1>候補epochレビューMatrix #{session_id}</h1>",
         f"<p class=\"muted\">Job #{int(session['job_id'])} {html.escape(str(job['name'] if job else ''))}</p>",
-        "<p class=\"notice\">採用前の候補epoch比較用Matrixです。Machine Reviewは補助情報であり、最終判断は人間評価を優先してください。</p>",
+        "<p class=\"notice\">採用前の候補epoch比較用Matrixです。機械補助レビューは補助情報であり、最終判断は人間評価を優先してください。</p>",
         "<div class=\"summary-grid\">",
         summary_card("候補epoch", ", ".join(str(epoch) for epoch in epochs) or "-"),
         summary_card("採用epoch", str(selected_epoch) if selected_epoch is not None else "-"),
         summary_card("条件数", str(len(conditions))),
         summary_card("登録画像", str(len(images))),
-        summary_card("Machine Review", str(len(scores))),
+        summary_card("機械補助レビュー", str(len(scores))),
         "</div>",
     ]
     for prompt_key in prompt_keys:
@@ -750,8 +861,8 @@ def review_image_caption(condition: dict[str, Any], image: dict[str, Any]) -> st
 def review_matrix_navigation(session_id: int, job_id: int, project_id: int | None = None) -> str:
     parts = [
         "<div class=\"matrix-actions\">",
-        f"<a class=\"button\" href=\"/review-sessions/{session_id}\">Review Sessionへ戻る</a>",
-        f"<a class=\"button\" href=\"/jobs/{job_id}#review-preparation\">Jobへ戻る</a>",
+        f"<a class=\"button\" href=\"/review-sessions/{session_id}\">レビューセッションへ戻る</a>",
+        f"<a class=\"button\" href=\"/jobs/{job_id}#review-preparation\">学習ジョブへ戻る</a>",
     ]
     if project_id:
         parts.append(f"<a class=\"button\" href=\"/projects/{project_id}\">Projectへ戻る</a>")
@@ -847,7 +958,7 @@ def review_output_filename(session_id: int, row: dict[str, Any]) -> str:
 
 
 def review_command_text(payload: dict[str, Any]) -> str:
-    lines = ["# Generated by LoRA-Studio Review Preparation", ""]
+    lines = ["# LoRA-Studio レビュー準備で生成", ""]
     for command in payload["commands"]:
         lines.append(f"## {command['name']} ({command['condition_count']} conditions)")
         lines.append(" ".join(json.dumps(part, ensure_ascii=False) for part in command["argv"]))
@@ -860,7 +971,7 @@ def ensure_candidate_review_plan(job_id: int, *, force: bool = False) -> dict[st
     if existing and not force:
         return existing
     if existing and force and existing.get("status") == "running":
-        raise RuntimeError("Review Preparationが実行中です。完了後に再作成してください。")
+        raise RuntimeError("レビュー準備が実行中です。完了後に再作成してください。")
 
     job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
     if job is None:

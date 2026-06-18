@@ -22,7 +22,7 @@ from app.services.reference_sets import (
     reference_detail,
     set_project_default,
 )
-from app.services.review_sessions import ensure_candidate_review_plan, write_review_matrix
+from app.services.review_sessions import ensure_candidate_review_plan, review_session_summary, write_review_matrix
 from app.services.validation_generation import (
     common_gen_img_args,
     normalize_sd_scripts_sampler,
@@ -88,6 +88,94 @@ class MetricDisplayTests(unittest.TestCase):
         self.assertEqual(chart["max_step"], 18900)
 
 
+class ReviewSessionSummaryTests(IsolatedDbTest):
+    def add_session(self, *, status: str, epochs: list[int], expected: int, imported: int, scored: int, matrix: bool) -> int:
+        now = utc_now()
+        matrix_path = ""
+        if matrix:
+            matrix_file = self.root / "exports" / "review_sessions" / f"review_session_{status}_{expected}" / "review_matrix.html"
+            matrix_file.parent.mkdir(parents=True, exist_ok=True)
+            matrix_file.write_text("<html></html>", encoding="utf-8")
+            matrix_path = str(matrix_file)
+        with connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO review_sessions(
+                    job_id, project_id, name, preset_id, candidate_epochs_json,
+                    expected_image_count, imported_image_count, scored_image_count,
+                    status, matrix_path, created_at, updated_at
+                )
+                VALUES (21, 1, ?, 'candidate_epoch_review_v1', ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    f"session {status}",
+                    json.dumps(epochs),
+                    expected,
+                    imported,
+                    scored,
+                    status,
+                    matrix_path,
+                    now,
+                    now,
+                ),
+            )
+            session_id = int(cur.lastrowid)
+            for index in range(expected):
+                conn.execute(
+                    """
+                    INSERT INTO review_session_conditions(
+                        review_session_id, job_id, epoch, output_id, lora_path,
+                        prompt_key, prompt_role, prompt, negative_prompt, seed,
+                        lora_weight, width, height, sampler, steps, cfg_scale,
+                        condition_hash, expected_order, created_at, updated_at
+                    )
+                    VALUES (?, 21, ?, NULL, '', 'basic_face', 'face', 'prompt', '', 111111,
+                            0.6, 1024, 1024, 'euler_a', 28, 7.0, ?, ?, ?, ?)
+                    """,
+                    (session_id, epochs[index % len(epochs)], f"hash-{session_id}-{index}", index + 1, now, now),
+                )
+            for index in range(imported):
+                image_path = self.make_png(self.root / "exports" / "review_sessions" / f"review_session_{session_id:06d}" / "images" / f"{index}.png")
+                conn.execute(
+                    """
+                    INSERT INTO review_session_images(
+                        review_session_id, job_id, epoch, prompt_key, seed, lora_weight,
+                        image_path, created_at, updated_at
+                    )
+                    VALUES (?, 21, ?, 'basic_face', 111111, 0.6, ?, ?, ?)
+                    """,
+                    (session_id, epochs[index % len(epochs)], str(image_path), now, now),
+                )
+        return session_id
+
+    def test_summary_uses_one_current_session_without_mixing(self) -> None:
+        planned_id = self.add_session(status="planned", epochs=[4, 5, 6, 7, 8, 9, 10], expected=42, imported=0, scored=0, matrix=False)
+        completed_id = self.add_session(status="completed", epochs=[2, 3, 4, 5, 6], expected=30, imported=30, scored=30, matrix=True)
+
+        summary = review_session_summary(21)
+
+        self.assertEqual(summary["current"]["session_id"], completed_id)
+        self.assertEqual(summary["current"]["candidate_epochs"], [2, 3, 4, 5, 6])
+        self.assertEqual(summary["current"]["condition_count"], 30)
+        self.assertEqual(summary["current"]["registered_image_count"], 30)
+        self.assertEqual(summary["current"]["machine_review_count"], 30)
+        self.assertTrue(summary["current"]["can_open_matrix"])
+        self.assertEqual(summary["other_sessions"][0]["session_id"], planned_id)
+        self.assertEqual(summary["other_sessions"][0]["condition_count"], 42)
+        self.assertEqual(summary["other_sessions"][0]["registered_image_count"], 0)
+
+    def test_summary_can_select_planned_session_as_current(self) -> None:
+        planned_id = self.add_session(status="planned", epochs=[4, 5, 6], expected=18, imported=0, scored=0, matrix=False)
+        completed_id = self.add_session(status="completed", epochs=[6, 7], expected=12, imported=12, scored=12, matrix=True)
+
+        summary = review_session_summary(21, current_session_id=planned_id)
+
+        self.assertEqual(summary["current"]["session_id"], planned_id)
+        self.assertEqual(summary["current"]["condition_count"], 18)
+        self.assertFalse(summary["current"]["can_open_matrix"])
+        self.assertEqual(summary["other_sessions"][0]["session_id"], completed_id)
+
+
 class ReviewSemanticsTests(IsolatedDbTest):
     def test_empty_failure_tags_do_not_mark_validation_image_reviewed(self) -> None:
         image = {
@@ -143,9 +231,9 @@ class ReviewSemanticsTests(IsolatedDbTest):
         )
         self.assertEqual(args[args.index("--sampler") + 1], "euler_a")
 
-    def test_init_db_does_not_seed_zuihou_project_from_hardcoded_ids(self) -> None:
+    def test_init_db_does_not_seed_legacy_project_from_hardcoded_ids(self) -> None:
         source = Path("app/db.py").read_text(encoding="utf-8")
-        self.assertNotIn("seed_zuihou_project(conn)", source)
+        self.assertNotIn("seed_legacy_project(conn)", source)
 
 
 class ReviewPreparationPhase116Tests(IsolatedDbTest):
@@ -264,8 +352,8 @@ class ReviewPreparationPhase116Tests(IsolatedDbTest):
         matrix_path = Path(write_review_matrix(int(session["id"])))
         self.assertTrue(matrix_path.exists())
         html = matrix_path.read_text(encoding="utf-8")
-        self.assertIn("候補epoch Review Matrix", html)
-        self.assertIn("Machine Review", html)
+        self.assertIn("候補epochレビューMatrix", html)
+        self.assertIn("機械補助レビュー", html)
         self.assertIn("sample.png", html)
 
 
@@ -352,7 +440,7 @@ class ReferenceSetPhase111Tests(IsolatedDbTest):
         detail = reference_set_detail(request=None, set_id=set_id)
         self.assertEqual(listing.status_code, 200)
         self.assertEqual(detail.status_code, 200)
-        self.assertIn("Completeness", detail.body.decode("utf-8"))
+        self.assertIn("構成チェック", detail.body.decode("utf-8"))
 
     def test_project_profile_validation_link_reference_version(self) -> None:
         dataset_id, version_id, image_path = self.create_dataset_fixture()
@@ -1793,9 +1881,9 @@ class EmbeddingPhase112Tests(IsolatedDbTest):
         run_id = self.make_validation_run_with_image(job_id)
 
         self.assertIn("Embedding設定", embedding_settings_page(request=None).body.decode("utf-8"))
-        self.assertIn("Embedding Coverage", dataset_detail(request=None, dataset_id=dataset_id).body.decode("utf-8"))
-        self.assertIn("Reference Embedding Coverage", reference_page(request=None, set_id=reference_set_id).body.decode("utf-8"))
-        self.assertIn("Validation Image Embedding Coverage", validation_page(request=None, run_id=run_id).body.decode("utf-8"))
+        self.assertIn("データセット画像Embedding状況", dataset_detail(request=None, dataset_id=dataset_id).body.decode("utf-8"))
+        self.assertIn("リファレンス画像Embedding状況", reference_page(request=None, set_id=reference_set_id).body.decode("utf-8"))
+        self.assertIn("検証画像Embedding状況", validation_page(request=None, run_id=run_id).body.decode("utf-8"))
 
     def test_machine_review_scores_samples_and_validation_images(self) -> None:
         from app.services.embedding_service import embedding_coverage
@@ -1860,7 +1948,7 @@ class EmbeddingPhase112Tests(IsolatedDbTest):
 
         self.assertIn("機械補助レビュー設定", embedding_settings_page(request=None).body.decode("utf-8"))
         self.assertIn("機械補助レビュー", job_detail(request=None, job_id=job_id).body.decode("utf-8"))
-        self.assertIn("Machine Review readiness", reference_page(request=None, set_id=reference_set_id).body.decode("utf-8"))
+        self.assertIn("機械補助レビュー準備状況", reference_page(request=None, set_id=reference_set_id).body.decode("utf-8"))
         self.assertIn("機械補助レビュー", validation_page(request=None, run_id=run_id).body.decode("utf-8"))
 
     def test_machine_review_skips_stale_or_missing_embeddings(self) -> None:

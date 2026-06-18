@@ -107,18 +107,18 @@
 
 <section class="panel-grid">
   <div>
-    <h2>Cache Size</h2>
+    <h2>キャッシュ容量</h2>
     <dl>
-      <dt>Total</dt><dd>{{ format_bytes(cache_size.total) }}</dd>
+      <dt>合計</dt><dd>{{ format_bytes(cache_size.total) }}</dd>
       {% for key, size in cache_size.by_model.items() %}
       <dt>{{ key }}</dt><dd>{{ format_bytes(size) }}</dd>
       {% endfor %}
     </dl>
   </div>
   <div>
-    <h2>Cleanup Preview</h2>
+    <h2>整理プレビュー</h2>
     <dl>
-      <dt>Failed embeddings</dt><dd>{{ failed_cleanup.count }}件 / {{ failed_cleanup.label }}</dd>
+      <dt>失敗Embedding</dt><dd>{{ failed_cleanup.count }}件 / {{ failed_cleanup.label }}</dd>
       <dt>古いEmbedding</dt><dd>{{ stale_cleanup.count }}件 / {{ stale_cleanup.label }}</dd>
     </dl>
     <p class="muted">初期版ではpreviewのみです。必要な削除対象を確認してからcleanup実装を拡張します。</p>
@@ -126,7 +126,7 @@
 </section>
 
 <section id="machine-review-jobs">
-  <h2>機械補助レビューJob</h2>
+  <h2>機械補助レビュージョブ</h2>
   <p class="muted">機械補助レビューはbackground jobとして実行します。mock providerの結果は意味的な画像評価ではなく、機能経路確認用です。</p>
   <table>
     <thead><tr><th>ID</th><th>対象種別</th><th>対象ID</th><th>状態</th><th>進捗</th><th>経過秒</th><th>ログ</th><th>操作</th></tr></thead>
@@ -150,14 +150,14 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="8" class="muted">機械補助レビューJobはまだありません。</td></tr>
+      <tr><td colspan="8" class="muted">機械補助レビュージョブはまだありません。</td></tr>
       {% endfor %}
     </tbody>
   </table>
 </section>
 
 <section>
-  <h2>Embedding Jobs</h2>
+  <h2>Embeddingジョブ</h2>
   <table>
     <thead><tr><th>ID</th><th>種別</th><th>対象</th><th>Provider</th><th>状態</th><th>進捗</th><th>開始</th><th>終了</th><th>操作</th></tr></thead>
     <tbody>
@@ -178,7 +178,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="9" class="muted">Embedding Jobはまだありません。</td></tr>
+      <tr><td colspan="9" class="muted">Embeddingジョブはまだありません。</td></tr>
       {% endfor %}
     </tbody>
   </table>

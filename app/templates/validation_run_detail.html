@@ -85,6 +85,7 @@
     </div>
   </div>
 </section>
+{% include "partials/active_operation_monitor.html" %}
 
 {% if generation and generation.status in ['failed'] and generation_log_preview %}
 <section class="notice">
@@ -95,7 +96,7 @@
 
 {% if validation_embedding_coverage %}
 <section class="notice embedding-coverage">
-  <h2>検証画像Embedding状況 <span class="muted">Validation Image Embedding Coverage</span></h2>
+  <h2>検証画像Embedding状況</h2>
   <p>モデル: {{ validation_embedding_coverage.model_name }}</p>
   <div class="summary-grid">
     <div><span>登録画像</span><strong>{{ validation_embedding_coverage.total }}</strong></div>
@@ -126,16 +127,16 @@
 
 {% if machine_review_readiness %}
 <section id="machine-assist-readiness" class="notice">
-  <h2>機械補助レビュー準備状況 <span class="muted">Machine Review Assist readiness</span></h2>
+  <h2>機械補助レビュー準備状況</h2>
   <p>機械補助レビューは自動判定ではなく、Reference類似度とDataset近傍類似度を並べる補助情報です。最終判断は人間評価を優先してください。</p>
   <div class="summary-grid">
     <div><span>provider</span><strong>{{ machine_review_readiness.provider }}</strong></div>
-    <div><span>Reference枚数</span><strong>{{ machine_review_readiness.reference_count }}</strong></div>
-    <div><span>Reference role</span><strong>{% for role, count in machine_review_readiness.reference_role_distribution.roles.items() %}{{ role }}:{{ count }}{% if not loop.last %}, {% endif %}{% else %}-{% endfor %}</strong></div>
-    <div><span>Reference Embedding</span><strong>{{ machine_review_readiness.reference_coverage.ready if machine_review_readiness.reference_coverage else 0 }} / {{ machine_review_readiness.reference_coverage.total if machine_review_readiness.reference_coverage else 0 }}</strong></div>
-    <div><span>Dataset Embedding</span><strong>{{ machine_review_readiness.dataset_coverage.ready if machine_review_readiness.dataset_coverage else 0 }} / {{ machine_review_readiness.dataset_coverage.total if machine_review_readiness.dataset_coverage else 0 }}</strong></div>
+    <div><span>リファレンス枚数</span><strong>{{ machine_review_readiness.reference_count }}</strong></div>
+    <div><span>リファレンス役割</span><strong>{% for role, count in machine_review_readiness.reference_role_distribution.roles.items() %}{{ role }}:{{ count }}{% if not loop.last %}, {% endif %}{% else %}-{% endfor %}</strong></div>
+    <div><span>リファレンスEmbedding</span><strong>{{ machine_review_readiness.reference_coverage.ready if machine_review_readiness.reference_coverage else 0 }} / {{ machine_review_readiness.reference_coverage.total if machine_review_readiness.reference_coverage else 0 }}</strong></div>
+    <div><span>データセットEmbedding</span><strong>{{ machine_review_readiness.dataset_coverage.ready if machine_review_readiness.dataset_coverage else 0 }} / {{ machine_review_readiness.dataset_coverage.total if machine_review_readiness.dataset_coverage else 0 }}</strong></div>
     <div><span>{{ machine_review_readiness.target_label }}Embedding</span><strong>{{ machine_review_readiness.target_coverage.ready if machine_review_readiness.target_coverage else 0 }} / {{ machine_review_readiness.target_coverage.total if machine_review_readiness.target_coverage else 0 }}</strong></div>
-    <div><span>Machine Review score</span><strong>{{ machine_review_readiness.score_coverage.ready }} / {{ machine_review_readiness.score_coverage.total }}</strong></div>
+    <div><span>機械補助レビュースコア</span><strong>{{ machine_review_readiness.score_coverage.ready }} / {{ machine_review_readiness.score_coverage.total }}</strong></div>
   </div>
   {% if machine_review_readiness.warnings %}
   <ul>
@@ -405,7 +406,7 @@
       <dt>ID</dt><dd>#{{ reference_set.id }}</dd>
       <dt>名前</dt><dd>{{ reference_set.name }}</dd>
       <dt>Version</dt><dd>{% if run.reference_set_version_id %}#{{ run.reference_set_version_id }}{% if reference_set.current_version_no %} / v{{ reference_set.current_version_no }}{% endif %}{% else %}-{% endif %}</dd>
-      <dt>Completeness</dt><dd><span class="label {{ (reference_set.completeness_label or 'unknown')|lower }}">{{ reference_set.completeness_label or 'UNKNOWN' }}</span> {{ reference_set.completeness_message or '' }}</dd>
+      <dt>構成チェック</dt><dd><span class="label {{ (reference_set.completeness_label or 'unknown')|lower }}">{{ reference_set.completeness_label or 'UNKNOWN' }}</span> {{ reference_set.completeness_message or '' }}</dd>
       <dt>トリガー</dt><dd>{{ reference_set.trigger_word or '-' }}</dd>
       <dt>メモ</dt><dd>{{ reference_set.memo or '-' }}</dd>
     </dl>
