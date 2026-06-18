@@ -40,6 +40,18 @@
   </div>
   <div>
     <h2>主要操作</h2>
+    <p><strong>Select Epoch</strong></p>
+    <div class="actions compact-actions">
+      {% for epoch in candidate_epochs %}
+      {% set output = output_by_epoch.get(epoch) %}
+      {% if output and session.job_id %}
+      <form method="post" action="/jobs/{{ session.job_id }}/select-epoch" class="inline-form">
+        <input type="hidden" name="epoch" value="{{ epoch }}">
+        <button class="small-button" type="submit" {% if output.selected %}disabled{% endif %}>epoch {{ epoch }}{% if output.selected %} 採用中{% else %} を採用{% endif %}</button>
+      </form>
+      {% endif %}
+      {% endfor %}
+    </div>
     <div class="actions">
       {% if session.matrix_path and session.job_id %}<a class="button" href="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix">Review Matrixを開く</a>{% endif %}
       {% if session.job_id %}<a class="button" href="/jobs/{{ session.job_id }}#review-preparation">Jobへ戻る</a>{% endif %}

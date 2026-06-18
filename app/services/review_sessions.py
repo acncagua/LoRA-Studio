@@ -655,12 +655,14 @@ def write_review_matrix(session_id: int) -> str:
     epochs = sorted({int(row["epoch"] or 0) for row in conditions})
     selected_epoch = int(job["adopted_epoch"]) if job and job["adopted_epoch"] is not None else None
     matrix_path = review_session_dir(session_id) / "review_matrix.html"
+    matrix_path.parent.mkdir(parents=True, exist_ok=True)
+    project_id = int(session["project_id"]) if "project_id" in session.keys() and session["project_id"] else None
     lines = [
         "<!doctype html><html lang=\"ja\"><head><meta charset=\"utf-8\">",
         f"<title>Review Matrix #{session_id}</title>",
         review_matrix_style(),
         "</head><body>",
-        review_matrix_navigation(int(session["job_id"])),
+        review_matrix_navigation(session_id, int(session["job_id"]), project_id),
         f"<h1>候補epoch Review Matrix #{session_id}</h1>",
         f"<p class=\"muted\">Job #{int(session['job_id'])} {html.escape(str(job['name'] if job else ''))}</p>",
         "<p class=\"notice\">採用前の候補epoch比較用Matrixです。Machine Reviewは補助情報であり、最終判断は人間評価を優先してください。</p>",
@@ -709,7 +711,7 @@ def write_review_matrix(session_id: int) -> str:
                     lines.append(matrix_machine_score(scores.get(int(image["id"]))))
                 lines.append("</td>")
             lines.append("</tr></tbody></table>")
-    lines.append(review_matrix_navigation(int(session["job_id"])))
+    lines.append(review_matrix_navigation(session_id, int(session["job_id"]), project_id))
     lines.append("</body></html>")
     matrix_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return str(matrix_path)
@@ -745,13 +747,17 @@ def review_image_caption(condition: dict[str, Any], image: dict[str, Any]) -> st
     )
 
 
-def review_matrix_navigation(job_id: int) -> str:
-    return (
-        "<div class=\"matrix-actions\">"
-        f"<a class=\"button\" href=\"/jobs/{job_id}#review-preparation\">Jobへ戻る</a>"
-        "<button class=\"button secondary\" type=\"button\" onclick=\"window.close()\">閉じる</button>"
-        "</div>"
-    )
+def review_matrix_navigation(session_id: int, job_id: int, project_id: int | None = None) -> str:
+    parts = [
+        "<div class=\"matrix-actions\">",
+        f"<a class=\"button\" href=\"/review-sessions/{session_id}\">Review Sessionへ戻る</a>",
+        f"<a class=\"button\" href=\"/jobs/{job_id}#review-preparation\">Jobへ戻る</a>",
+    ]
+    if project_id:
+        parts.append(f"<a class=\"button\" href=\"/projects/{project_id}\">Projectへ戻る</a>")
+    parts.append("<button class=\"button secondary\" type=\"button\" onclick=\"window.close()\">閉じる</button>")
+    parts.append("</div>")
+    return "".join(parts)
 
 
 def summary_card(label: str, value: str) -> str:

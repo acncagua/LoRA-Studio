@@ -785,14 +785,6 @@ def project_next_action(project: Any, jobs: list[Any], review_sessions: list[Any
             "href": f"/validation-runs/{incomplete_run['id']}",
             "button": "検証Runを開く",
         }
-    unresolved_rec = next((rec for rec in recommendations if rec["status"] not in {"accepted", "dismissed", "job_created"}), None)
-    if unresolved_rec:
-        return {
-            "label": "次回実験提案を確認してください",
-            "description": unresolved_rec["title"] or "未処理の提案があります。",
-            "href": f"/jobs/{unresolved_rec['source_job_id']}#recommendations" if unresolved_rec["source_job_id"] else f"/projects/{project['id']}#recommendations",
-            "button": "提案を見る",
-        }
     draft_job = next((job for job in jobs if job["status"] in {"draft", "prepared", "prepared_dirty"}), None)
     if draft_job:
         return {
@@ -800,6 +792,14 @@ def project_next_action(project: Any, jobs: list[Any], review_sessions: list[Any
             "description": f"#{draft_job['id']} {draft_job['name']} を準備または実行してください。",
             "href": f"/jobs/{draft_job['id']}",
             "button": "学習ジョブを開く",
+        }
+    unresolved_rec = next((rec for rec in recommendations if rec["status"] not in {"accepted", "dismissed", "job_created"}), None)
+    if unresolved_rec:
+        return {
+            "label": "次回実験提案を確認してください",
+            "description": unresolved_rec["title"] or "未処理の提案があります。",
+            "href": f"/jobs/{unresolved_rec['source_job_id']}#recommendations" if unresolved_rec["source_job_id"] else f"/projects/{project['id']}#recommendations",
+            "button": "提案を見る",
         }
     if project["selected_lora_profile_id"]:
         return {
@@ -2802,7 +2802,7 @@ def job_review_session_matrix(job_id: int, session_id: int) -> HTMLResponse:
     nav_parts.append('<button type="button" onclick="window.close()">閉じる</button>')
     nav_parts.append("</div>")
     nav = "".join(nav_parts)
-    replaced = re.sub(r'(<body>\s*)<div class="matrix-actions">.*?</div>', r"\1" + nav, body, count=1, flags=re.S)
+    replaced = re.sub(r'<div class="matrix-actions">.*?</div>', nav, body, flags=re.S)
     if replaced == body:
         replaced = body.replace("<body>", f"<body>\n{nav}", 1)
     return HTMLResponse(replaced)
