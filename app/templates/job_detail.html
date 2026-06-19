@@ -813,9 +813,10 @@
     </div>
     <div>
       <h3>weight検証Run一覧</h3>
+      {% if generation_message %}<p class="notice">{{ generation_message }}</p>{% endif %}
       {% if generation_error %}<p class="notice warning">{{ generation_error }}</p>{% endif %}
       {% if running_generation %}
-      <p class="notice">検証画像生成 #{{ running_generation.id }} が実行中です。他の検証Runの画像生成は、完了または停止後に開始できます。</p>
+      <p class="notice">検証画像生成 #{{ running_generation.id }}（検証Run #{{ running_generation.validation_run_id }} / epoch {{ running_generation.selected_epoch if running_generation.selected_epoch is not none else '-' }}）が実行中です。複数Run一括生成中の場合、このRunの完了後に次のRunへ進みます。</p>
       {% endif %}
       <table>
         <thead><tr><th>比較</th><th>ID</th><th>プリセット</th><th>Epoch</th><th>状態</th><th>画像生成</th><th>画像数</th><th>操作</th></tr></thead>
@@ -849,20 +850,36 @@
           <tr class="sub-row" data-validation-run-log-row="{{ run.id }}">
             <td></td>
             <td colspan="7">
-              <div class="mini-log-panel">
-                <div class="mini-log-meta">
-                  <strong>簡易ログ</strong>
-                  <span>生成ファイル: <span data-generation-file-count>{{ run.generation_file_count }}</span> 件</span>
-                  <span>ログ: <span data-generation-log-size>{{ run.generation_log_size }}</span> bytes</span>
-                  <span>更新: <span data-generation-log-updated>{{ run.generation_log_updated_at or '-' }}</span></span>
-                  <span>PID: <span data-generation-pid>{{ run.generation_process_id or '-' }}</span></span>
-                </div>
+              <details class="mini-log-panel mini-log-details" {% if run.generation_status == 'running' %}open{% endif %}>
+                <summary>
+                  <span class="mini-log-meta">
+                    <strong>{% if run.generation_status == 'running' %}簡易ログ（実行中）{% else %}簡易ログを開く{% endif %}</strong>
+                    <span>生成ファイル: <span data-generation-file-count>{{ run.generation_file_count }}</span> 件</span>
+                    <span>ログ: <span data-generation-log-size>{{ run.generation_log_size }}</span> bytes</span>
+                    <span>更新: <span data-generation-log-updated>{{ run.generation_log_updated_at or '-' }}</span></span>
+                    <span>PID: <span data-generation-pid>{{ run.generation_process_id or '-' }}</span></span>
+                  </span>
+                </summary>
                 {% if run.generation_log_preview %}
                 <pre class="mini-log" data-generation-log-preview>{{ run.generation_log_preview }}</pre>
                 {% else %}
                 <pre class="mini-log empty" data-generation-log-preview>ログはまだありません。生成ファイル数が増えていれば処理は進行中です。</pre>
                 {% endif %}
-              </div>
+              </details>
+              <details class="mini-log-panel mini-log-details" data-assist-log-run="{{ run.id }}" {% if run.assist_log_exists and run.assist_log_size < 2000 %}open{% endif %}>
+                <summary>
+                  <span class="mini-log-meta">
+                    <strong>Embedding / 機械補助レビュー簡易ログ</strong>
+                    <span>ログ: <span data-assist-log-size>{{ run.assist_log_size }}</span> bytes</span>
+                    <span>更新: <span data-assist-log-updated>{{ run.assist_log_updated_at or '-' }}</span></span>
+                  </span>
+                </summary>
+                {% if run.assist_log_preview %}
+                <pre class="mini-log" data-assist-log-preview>{{ run.assist_log_preview }}</pre>
+                {% else %}
+                <pre class="mini-log empty" data-assist-log-preview>ログはまだありません。一括計算を開始するとここに進行状況が表示されます。</pre>
+                {% endif %}
+              </details>
             </td>
           </tr>
           {% endif %}
@@ -871,12 +888,18 @@
           {% endfor %}
         </tbody>
       </table>
-      <form id="epoch-matrix-form" method="get" action="/jobs/{{ job.id }}/validation-runs/epoch-matrix" target="_blank" rel="noopener">
-        <div class="actions">
+      <div class="actions">
+        <form id="bulk-generation-form" method="post" action="/jobs/{{ job.id }}/validation-runs/generation/run-selected" data-bulk-generation-form>
+          <button type="submit" data-bulk-generation-button {% if validation_runs|length == 0 or running_generation %}disabled{% endif %}>選択した検証Runの画像生成を開始</button>
+        </form>
+        <form id="bulk-assist-form" method="post" action="/jobs/{{ job.id }}/validation-runs/assist/run-selected" data-bulk-assist-form>
+          <button type="submit" data-bulk-assist-button {% if validation_runs|length == 0 or running_generation %}disabled{% endif %}>選択した検証RunのEmbedding / 機械補助レビューを開始</button>
+        </form>
+        <form id="epoch-matrix-form" method="get" action="/jobs/{{ job.id }}/validation-runs/epoch-matrix" target="_blank" rel="noopener">
           <button type="submit" {% if validation_runs|length < 2 %}disabled{% endif %}>選択した検証RunでEpoch横断Matrixを開く</button>
-        </div>
-      </form>
-      <p class="muted">まず各検証Runの画像生成を実行し、結果は詳細画面で個別確認します。画像が揃ったら、同じprompt / seed / weight条件をEpoch横断Matrixで横並び比較できます。</p>
+        </form>
+      </div>
+      <p class="muted">複数Runを選択して画像生成を開始すると、同時実行せず上から順に生成します。画像が揃ったらEmbedding / 機械補助レビューを一括で計算し、同じprompt / seed / weight条件をEpoch横断Matrixで横並び比較できます。</p>
     </div>
   </div>
 </section>

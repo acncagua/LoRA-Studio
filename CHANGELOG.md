@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.4.1 - 2026-06-20
+
+Release Version: v0.4.1
+Internal Milestone: Phase 11.6.16.2
+
+LoRA Studio v0.4.1 は、Phase 11.6.16.2 時点の運用ベータリリースです。
+
+### 主な変更
+
+- 検証Matrix / Epoch横断Matrix / Review Matrixに 25% / 50% / 75% / 100% の画像表示倍率切り替えを追加しました。
+- Matrix画像クリック時に、元画像100%表示のポップアップを開けるようにしました。
+- Matrixの初期表示倍率を25%にし、横断比較時の画面占有を抑えました。
+- 複数Validation Runの画像生成、Embedding、機械補助レビューをJob詳細から順番に実行する導線を改善しました。
+- 検証Run一覧の簡易ログを折りたたみ表示にし、完了済みログが画面を占有し続けないようにしました。
+
 ## v0.3.0-beta - 2026-06-17
 
 Release Version: v0.3.0-beta

@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -369,6 +370,129 @@ def start_validation_generation(run_id: int) -> int:
     return first_process.pid
 
 
+def start_validation_generation_sequence(run_ids: list[int]) -> int:
+    unique_run_ids: list[int] = []
+    seen: set[int] = set()
+    for run_id in run_ids:
+        if run_id in seen:
+            continue
+        seen.add(run_id)
+        unique_run_ids.append(run_id)
+    if not unique_run_ids:
+        raise ValueError("画像生成する検証Runを選択してください。")
+    start_validation_generation(unique_run_ids[0])
+    remaining_run_ids = unique_run_ids[1:]
+    if remaining_run_ids:
+        thread = threading.Thread(
+            target=_validation_generation_sequence_worker,
+            args=(remaining_run_ids,),
+            daemon=True,
+        )
+        thread.start()
+    return len(unique_run_ids)
+
+
+def start_validation_assist_sequence(run_ids: list[int]) -> int:
+    unique_run_ids: list[int] = []
+    seen: set[int] = set()
+    for run_id in run_ids:
+        if run_id in seen:
+            continue
+        seen.add(run_id)
+        unique_run_ids.append(run_id)
+    if not unique_run_ids:
+        raise ValueError("Embedding計算する検証Runを選択してください。")
+    if fetch_one("SELECT id FROM validation_generation_runs WHERE status = 'running' LIMIT 1"):
+        raise RuntimeError("検証画像生成が実行中です。画像生成の完了後にEmbedding計算を開始してください。")
+    if fetch_one("SELECT id FROM embedding_jobs WHERE status = 'running' LIMIT 1"):
+        raise RuntimeError("Embedding Jobが実行中です。完了後に再実行してください。")
+    if fetch_one("SELECT id FROM machine_review_jobs WHERE status = 'running' LIMIT 1"):
+        raise RuntimeError("機械補助レビューJobが実行中です。完了後に再実行してください。")
+    thread = threading.Thread(
+        target=_validation_assist_sequence_worker,
+        args=(unique_run_ids,),
+        daemon=True,
+    )
+    thread.start()
+    return len(unique_run_ids)
+
+
+def _validation_assist_sequence_worker(run_ids: list[int]) -> None:
+    for run_id in run_ids:
+        log_path = validation_run_dir(run_id) / "generation" / "assist_sequence.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            _run_validation_assist_for_run(run_id, log_path)
+        except Exception as exc:
+            append_generation_note(log_path, f"検証Run #{run_id} のEmbedding / 機械補助レビューに失敗しました: {exc}")
+
+
+def _wait_for_background_job(table_name: str, job_id: int, timeout_seconds: int = 60 * 60 * 6) -> str:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        row = fetch_one(f"SELECT status FROM {table_name} WHERE id = ?", (job_id,))
+        if row is None:
+            return "missing"
+        status = row["status"]
+        if status in {"completed", "failed", "stopped"}:
+            return status
+        time.sleep(3)
+    return "timeout"
+
+
+def _run_validation_assist_for_run(run_id: int, log_path: Path) -> None:
+    from app.services.embedding_service import create_embedding_job, start_embedding_job
+    from app.services.machine_review import context_for_validation_run, create_machine_review_job, start_machine_review_job
+
+    context = context_for_validation_run(run_id)
+    targets: list[tuple[str, int]] = []
+    if context.get("reference_set_version_id"):
+        targets.append(("reference_set_version", int(context["reference_set_version_id"])))
+    if context.get("dataset_version_id"):
+        targets.append(("dataset_version", int(context["dataset_version_id"])))
+    targets.append(("validation_run", run_id))
+
+    append_generation_note(log_path, f"検証Run #{run_id}: Embedding計算を開始します。")
+    for job_type, target_id in targets:
+        embedding_job_id = create_embedding_job(job_type, target_id, recompute="missing")
+        embedding_job = fetch_one("SELECT total_count FROM embedding_jobs WHERE id = ?", (embedding_job_id,))
+        total = int(embedding_job["total_count"] or 0) if embedding_job else 0
+        if not total:
+            append_generation_note(log_path, f"Embedding: {job_type} #{target_id} は未計算対象がありません。")
+            continue
+        append_generation_note(log_path, f"Embedding Job #{embedding_job_id}: {job_type} #{target_id}, {total}件を開始します。")
+        start_embedding_job(embedding_job_id)
+        status = _wait_for_background_job("embedding_jobs", embedding_job_id)
+        append_generation_note(log_path, f"Embedding Job #{embedding_job_id}: status={status}")
+        if status != "completed":
+            return
+
+    append_generation_note(log_path, f"検証Run #{run_id}: 機械補助レビューを開始します。")
+    review_job_id = create_machine_review_job("validation_run_images", run_id)
+    start_machine_review_job(review_job_id)
+    status = _wait_for_background_job("machine_review_jobs", review_job_id)
+    append_generation_note(log_path, f"Machine Review Job #{review_job_id}: status={status}")
+
+
+def _validation_generation_sequence_worker(run_ids: list[int]) -> None:
+    for run_id in run_ids:
+        while fetch_one("SELECT id FROM validation_generation_runs WHERE status = 'running' LIMIT 1"):
+            time.sleep(5)
+        try:
+            start_validation_generation(run_id)
+        except Exception as exc:
+            log_path = validation_run_dir(run_id) / "generation" / "bulk_generation.log"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with log_path.open("a", encoding="utf-8", errors="replace") as handle:
+                handle.write(f"[LoRA-Studio] 検証Run #{run_id} の画像生成を開始できませんでした: {exc}\n")
+            continue
+        while True:
+            generation = latest_generation_run(run_id)
+            if generation is None or generation["status"] in {"completed", "failed", "stopped"}:
+                break
+            time.sleep(5)
+
+
 def reject_if_gpu_busy() -> None:
     running_job = fetch_one("SELECT id FROM training_jobs WHERE status = 'running' LIMIT 1")
     if running_job:
@@ -691,10 +815,11 @@ def write_validation_matrix(run_id: int) -> str:
         "<!doctype html>",
         "<meta charset=\"utf-8\">",
         f"<title>検証Matrix #{run_id}</title>",
-        "<style>body{font-family:'Segoe UI','Yu Gothic UI',sans-serif;background:#f6f7f4;color:#20231f;margin:24px;overflow-x:auto}table{border-collapse:collapse;width:max-content;min-width:100%;margin:16px 0;background:white}th,td{border:1px solid #d8ddd4;padding:8px;vertical-align:top}th{background:#eef2eb}.cell{min-width:1040px}.missing{color:#8b4f39;font-weight:700}img{width:auto;max-width:none;border-radius:6px;display:block;margin-bottom:6px}.muted{color:#657064;font-size:12px}.matrix-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 18px}.button{display:inline-flex;align-items:center;min-height:34px;padding:7px 12px;border-radius:6px;background:#2f7668;color:white;text-decoration:none;font-weight:700;border:0;cursor:pointer;font:inherit}.button.secondary{background:#dce4df;color:#20231f}.machine-score{display:grid;gap:4px;margin:8px 0;padding:8px;border:1px solid #d8ddd4;border-radius:6px;background:#f8faf7;font-size:13px}.machine-score .badges{display:flex;flex-wrap:wrap;gap:6px}.badge{display:inline-flex;align-items:center;justify-content:center;min-width:56px;padding:3px 8px;border-radius:6px;background:#dce4df;font-weight:700}.badge.low,.badge.low_confidence,.badge.unavailable,.badge.unknown{background:#dce4df}.badge.primary_candidate,.badge.secondary_candidate{background:#c6e7d8}.badge.possible_overfit,.badge.high{background:#f0c2c2}.matrix-review{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr)) auto auto;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid #d8ddd4;align-items:end}.matrix-review label{display:grid;gap:3px;font-size:12px;color:#4a554f}.matrix-review input,.matrix-review select,.matrix-review textarea{box-sizing:border-box;width:100%;border:1px solid #cfd8d1;border-radius:5px;padding:5px;font:inherit}.matrix-review textarea{min-height:34px;resize:vertical}.matrix-review button{border:0;border-radius:6px;background:#2f7668;color:white;font-weight:700;padding:7px 9px;cursor:pointer}.matrix-review button:disabled{background:#cfd8d1;cursor:wait}.matrix-review .save-status{font-size:12px;color:#2f7668;font-weight:700;min-height:16px}.matrix-review.saved{outline:2px solid #b8ded0;border-radius:6px}</style>",
+        "<style>body{font-family:'Segoe UI','Yu Gothic UI',sans-serif;background:#f6f7f4;color:#20231f;margin:24px;overflow-x:auto}table{border-collapse:collapse;width:max-content;min-width:100%;margin:16px 0;background:white}th,td{border:1px solid #d8ddd4;padding:8px;vertical-align:top}th{background:#eef2eb}.cell{min-width:300px}.missing{color:#8b4f39;font-weight:700}img.matrix-image{width:auto;max-width:none;border-radius:6px;display:block;margin-bottom:6px;cursor:zoom-in}.muted{color:#657064;font-size:12px}.matrix-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 18px}.button{display:inline-flex;align-items:center;min-height:34px;padding:7px 12px;border-radius:6px;background:#2f7668;color:white;text-decoration:none;font-weight:700;border:0;cursor:pointer;font:inherit}.button.secondary{background:#dce4df;color:#20231f}.machine-score{display:grid;gap:4px;margin:8px 0;padding:8px;border:1px solid #d8ddd4;border-radius:6px;background:#f8faf7;font-size:13px}.machine-score .badges{display:flex;flex-wrap:wrap;gap:6px}.badge{display:inline-flex;align-items:center;justify-content:center;min-width:56px;padding:3px 8px;border-radius:6px;background:#dce4df;font-weight:700}.badge.low,.badge.low_confidence,.badge.unavailable,.badge.unknown{background:#dce4df}.badge.primary_candidate,.badge.secondary_candidate{background:#c6e7d8}.badge.possible_overfit,.badge.high{background:#f0c2c2}.matrix-review{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr)) auto auto;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid #d8ddd4;align-items:end}.matrix-review label{display:grid;gap:3px;font-size:12px;color:#4a554f}.matrix-review input,.matrix-review select,.matrix-review textarea{box-sizing:border-box;width:100%;border:1px solid #cfd8d1;border-radius:5px;padding:5px;font:inherit}.matrix-review textarea{min-height:34px;resize:vertical}.matrix-review button{border:0;border-radius:6px;background:#2f7668;color:white;font-weight:700;padding:7px 9px;cursor:pointer}.matrix-review button:disabled{background:#cfd8d1;cursor:wait}.matrix-review .save-status{font-size:12px;color:#2f7668;font-weight:700;min-height:16px}.matrix-review.saved{outline:2px solid #b8ded0;border-radius:6px}" + matrix_display_style() + "</style>",
         f"<h1>検証Matrix #{run_id}</h1>",
         matrix_navigation(run_id),
-        "<p class=\"muted\">画像は原寸で表示します。横スクロールしながら細部を比較してください。Matrix上では総合点・強さ・採用判断・メモだけを素早く保存できます。</p>",
+        matrix_display_controls(),
+        "<p class=\"muted\">画像は25%表示を初期値にしています。必要に応じて25% / 50% / 75% / 100%を切り替えてください。画像クリックで100%表示を開けます。</p>",
     ]
     for (prompt_key, hires), rows in sections.items():
         seeds = sorted({int(row["seed"]) for row in rows})
@@ -712,7 +837,7 @@ def write_validation_matrix(run_id: int) -> str:
                     linked = images_by_condition.get(int(condition["id"]), [])
                     if linked:
                         image = linked[-1]
-                        lines.append(f"<img src=\"/validation-images/{int(image['id'])}\" alt=\"validation image\">")
+                        lines.append(f"<img class=\"matrix-image\" src=\"/validation-images/{int(image['id'])}\" alt=\"validation image\">")
                         lines.append(matrix_machine_score(score_by_image_id.get(int(image['id']))))
                         lines.append(matrix_review_form(run_id, image))
                     else:
@@ -727,9 +852,10 @@ def write_validation_matrix(run_id: int) -> str:
     if grid_images:
         lines.append("<h2>Grid画像</h2><div>")
         for image in grid_images:
-            lines.append(f"<figure><img src=\"/validation-images/{int(image['id'])}\" alt=\"grid image\"><figcaption>{html.escape(image['memo'] or '')}</figcaption></figure>")
+            lines.append(f"<figure><img class=\"matrix-image\" src=\"/validation-images/{int(image['id'])}\" alt=\"grid image\"><figcaption>{html.escape(image['memo'] or '')}</figcaption></figure>")
         lines.append("</div>")
     lines.append(matrix_navigation(run_id))
+    lines.append(matrix_display_script())
     lines.append(matrix_review_script())
     matrix_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return str(matrix_path)
@@ -808,7 +934,8 @@ def build_epoch_cross_matrix_html(job_id: int, run_ids: list[int]) -> str:
         cross_matrix_style(),
         f"<h1>{html.escape(title)}</h1>",
         cross_matrix_navigation(job_id),
-        "<p class=\"muted\">prompt単位でまとめ、同じprompt / seed / weight / Hires条件をEpoch横断で横並び比較します。画像は原寸表示です。横スクロールしながら細部を確認してください。</p>",
+        matrix_display_controls(),
+        "<p class=\"muted\">prompt単位でまとめ、同じprompt / seed / weight / Hires条件をEpoch横断で横並び比較します。画像は25%表示を初期値にしています。画像クリックで100%表示を開けます。</p>",
         "<section class=\"run-summary\"><h2>比較対象</h2><div class=\"summary-grid\">",
     ]
     for run in runs:
@@ -842,7 +969,7 @@ def build_epoch_cross_matrix_html(job_id: int, run_ids: list[int]) -> str:
                     else:
                         image = images_by_condition.get(int(condition["id"]))
                         if image:
-                            lines.append(f"<img src=\"/validation-images/{int(image['id'])}\" alt=\"validation image\">")
+                            lines.append(f"<img class=\"matrix-image\" src=\"/validation-images/{int(image['id'])}\" alt=\"validation image\">")
                             lines.append(matrix_machine_score(score_by_image_id.get(int(image['id']))))
                             lines.append(matrix_review_form(int(run["id"]), image))
                         else:
@@ -855,6 +982,7 @@ def build_epoch_cross_matrix_html(job_id: int, run_ids: list[int]) -> str:
     if not sections:
         lines.append("<p class=\"notice\">比較できる検証条件がありません。検証Runの生成ファイル作成または条件再生成を確認してください。</p>")
     lines.append(cross_matrix_navigation(job_id))
+    lines.append(matrix_display_script())
     lines.append(matrix_review_script())
     return "\n".join(lines) + "\n"
 
@@ -956,13 +1084,36 @@ def cross_matrix_style() -> str:
         "body{font-family:'Segoe UI','Yu Gothic UI',sans-serif;background:#f6f7f4;color:#20231f;margin:24px;overflow-x:auto}"
         "table{border-collapse:collapse;width:max-content;min-width:100%;margin:12px 0 28px;background:white}"
         "th,td{border:1px solid #d8ddd4;padding:8px;vertical-align:top}th{background:#eef2eb;min-width:220px}"
-        ".epoch-cell{min-width:1040px}.missing{color:#8b4f39;font-weight:700}.notice{background:#f4ece6;border:1px solid #d7b79f;border-radius:6px;padding:10px}"
-        "img{width:auto;max-width:none;border-radius:6px;display:block;margin-bottom:6px}.muted{color:#657064;font-size:12px}"
+        ".epoch-cell{min-width:300px}.missing{color:#8b4f39;font-weight:700}.notice{background:#f4ece6;border:1px solid #d7b79f;border-radius:6px;padding:10px}"
+        "img.matrix-image{width:auto;max-width:none;border-radius:6px;display:block;margin-bottom:6px;cursor:zoom-in}.muted{color:#657064;font-size:12px}"
         ".matrix-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 18px}.button{display:inline-flex;align-items:center;min-height:34px;padding:7px 12px;border-radius:6px;background:#2f7668;color:white;text-decoration:none;font-weight:700;border:0;cursor:pointer;font:inherit}.button.secondary{background:#dce4df;color:#20231f}"
         ".summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:10px 0 20px}.summary-card{background:white;border:1px solid #d8ddd4;border-radius:6px;padding:10px}"
         ".machine-score{display:grid;gap:4px;margin:8px 0;padding:8px;border:1px solid #d8ddd4;border-radius:6px;background:#f8faf7;font-size:13px}.machine-score .badges{display:flex;flex-wrap:wrap;gap:6px}.badge{display:inline-flex;align-items:center;justify-content:center;min-width:56px;padding:3px 8px;border-radius:6px;background:#dce4df;font-weight:700}.badge.low,.badge.low_confidence,.badge.unavailable,.badge.unknown{background:#dce4df}.badge.primary_candidate,.badge.secondary_candidate{background:#c6e7d8}.badge.possible_overfit,.badge.high{background:#f0c2c2}"
         ".matrix-review{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr)) auto auto;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid #d8ddd4;align-items:end}.matrix-review label{display:grid;gap:3px;font-size:12px;color:#4a554f}.matrix-review input,.matrix-review select,.matrix-review textarea{box-sizing:border-box;width:100%;border:1px solid #cfd8d1;border-radius:5px;padding:5px;font:inherit}.matrix-review textarea{min-height:34px;resize:vertical}.matrix-review button{border:0;border-radius:6px;background:#2f7668;color:white;font-weight:700;padding:7px 9px;cursor:pointer}.matrix-review button:disabled{background:#cfd8d1;cursor:wait}.matrix-review .save-status{font-size:12px;color:#2f7668;font-weight:700;min-height:16px}.matrix-review.saved{outline:2px solid #b8ded0;border-radius:6px}"
-        "</style>"
+        + matrix_display_style()
+        + "</style>"
+    )
+
+
+def matrix_display_style() -> str:
+    return (
+        ".matrix-scale-panel{position:sticky;top:0;z-index:20;display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:10px 0 14px;padding:10px;border:1px solid #d8ddd4;border-radius:8px;background:#f6f7f4cc;backdrop-filter:blur(4px)}"
+        ".matrix-scale-panel strong{margin-right:2px}.matrix-scale-button{border:0;border-radius:6px;background:#dce4df;color:#20231f;font:inherit;font-weight:700;padding:7px 10px;cursor:pointer}.matrix-scale-button.active{background:#2f7668;color:white}.matrix-scale-note{color:#657064;font-size:12px}"
+        ".matrix-lightbox{position:fixed;inset:0;z-index:9999;display:none;background:rgba(20,24,21,.86);overflow:auto;padding:24px}.matrix-lightbox.open{display:block}.matrix-lightbox-inner{min-width:max-content}.matrix-lightbox img{display:block;width:auto;max-width:none;height:auto;border-radius:8px;background:white}.matrix-lightbox-close{position:sticky;top:0;left:0;margin-bottom:12px;border:0;border-radius:6px;background:#f6f7f4;color:#20231f;font:inherit;font-weight:700;padding:8px 12px;cursor:pointer}.matrix-lightbox-caption{color:white;font-weight:700;margin:0 0 8px}"
+    )
+
+
+def matrix_display_controls() -> str:
+    buttons = "".join(
+        f"<button class=\"matrix-scale-button{' active' if scale == 25 else ''}\" type=\"button\" data-matrix-scale=\"{scale}\">{scale}%</button>"
+        for scale in (25, 50, 75, 100)
+    )
+    return (
+        "<div class=\"matrix-scale-panel\" data-matrix-scale-panel>"
+        "<strong>画像表示倍率</strong>"
+        f"{buttons}"
+        "<span class=\"matrix-scale-note\">初期値は25%。画像クリックで100%表示を開きます。</span>"
+        "</div>"
     )
 
 
@@ -1048,6 +1199,74 @@ document.addEventListener("submit", async (event) => {
 """
 
 
+def matrix_display_script() -> str:
+    return """
+<script>
+(() => {
+  const DEFAULT_SCALE = 25;
+  let currentScale = DEFAULT_SCALE;
+
+  function scaledWidth(img) {
+    const naturalWidth = img.naturalWidth || Number(img.dataset.naturalWidth) || 0;
+    if (!naturalWidth) return "";
+    return Math.max(1, Math.round(naturalWidth * currentScale / 100)) + "px";
+  }
+
+  function applyScale() {
+    document.querySelectorAll("img.matrix-image").forEach((img) => {
+      const width = scaledWidth(img);
+      if (width) img.style.width = width;
+    });
+    document.querySelectorAll("[data-matrix-scale]").forEach((button) => {
+      button.classList.toggle("active", Number(button.dataset.matrixScale) === currentScale);
+    });
+  }
+
+  function ensureLightbox() {
+    let box = document.querySelector(".matrix-lightbox");
+    if (box) return box;
+    box = document.createElement("div");
+    box.className = "matrix-lightbox";
+    box.innerHTML = '<button class="matrix-lightbox-close" type="button">閉じる</button><div class="matrix-lightbox-caption"></div><div class="matrix-lightbox-inner"><img alt=""></div>';
+    box.querySelector(".matrix-lightbox-close").addEventListener("click", () => box.classList.remove("open"));
+    box.addEventListener("click", (event) => {
+      if (event.target === box) box.classList.remove("open");
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") box.classList.remove("open");
+    });
+    document.body.appendChild(box);
+    return box;
+  }
+
+  document.querySelectorAll("img.matrix-image").forEach((img) => {
+    if (img.complete) applyScale();
+    img.addEventListener("load", applyScale, {once: true});
+    img.addEventListener("click", () => {
+      const box = ensureLightbox();
+      const preview = box.querySelector("img");
+      const caption = box.querySelector(".matrix-lightbox-caption");
+      preview.src = img.currentSrc || img.src;
+      preview.alt = img.alt || "matrix image";
+      preview.style.width = (img.naturalWidth || Number(img.dataset.naturalWidth) || "") ? (img.naturalWidth || Number(img.dataset.naturalWidth)) + "px" : "auto";
+      caption.textContent = "100%表示";
+      box.classList.add("open");
+    });
+  });
+
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-matrix-scale]");
+    if (!button) return;
+    currentScale = Number(button.dataset.matrixScale) || DEFAULT_SCALE;
+    applyScale();
+  });
+
+  applyScale();
+})();
+</script>
+"""
+
+
 def path_to_matrix_relative(matrix_path: Path, image_path: Path) -> str:
     try:
         return os.path.relpath(image_path, start=matrix_path.parent).replace("\\", "/")
@@ -1065,6 +1284,31 @@ def validation_generation_log_tail(run_id: int, max_lines: int = 80) -> str:
     data = path.read_bytes()
     text = decode_log_bytes(data)
     return "\n".join(text.splitlines()[-max_lines:])
+
+
+def validation_assist_log_path(run_id: int) -> Path:
+    return validation_run_dir(run_id) / "generation" / "assist_sequence.log"
+
+
+def validation_assist_log_tail(run_id: int, max_lines: int = 40) -> str:
+    path = validation_assist_log_path(run_id)
+    if not path.exists():
+        return ""
+    data = path.read_bytes()
+    text = decode_log_bytes(data)
+    return "\n".join(text.splitlines()[-max_lines:])
+
+
+def validation_assist_log_state(run_id: int, max_lines: int = 8) -> dict[str, Any]:
+    path = validation_assist_log_path(run_id)
+    exists = path.exists()
+    return {
+        "exists": exists,
+        "log_path": str(path),
+        "log_preview": validation_assist_log_tail(run_id, max_lines=max_lines) if exists else "",
+        "log_size": path.stat().st_size if exists else 0,
+        "log_updated_at": datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S") if exists else "",
+    }
 
 
 def generation_view_state(run_id: int) -> dict[str, Any]:

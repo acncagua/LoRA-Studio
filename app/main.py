@@ -118,8 +118,11 @@ from app.services.validation_generation import (
     import_generated_images,
     prepare_validation_generation,
     reconcile_stale_validation_generations,
+    start_validation_assist_sequence,
     start_validation_generation,
+    start_validation_generation_sequence,
     stop_validation_generation,
+    validation_assist_log_state,
     validation_run_dir as generation_validation_run_dir,
     validation_generation_log_tail,
     write_validation_matrix,
@@ -931,6 +934,11 @@ def decorate_validation_runs_for_job(validation_runs: list[Any]) -> list[dict[st
         item["generation_log_preview"] = validation_generation_log_tail(run_id, max_lines=5)
         item["generation_log_updated_at"] = datetime.fromtimestamp(log_path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S") if log_path.exists() else ""
         item["generation_log_size"] = log_path.stat().st_size if log_path.exists() else 0
+        assist_log = validation_assist_log_state(run_id, max_lines=6)
+        item["assist_log_exists"] = assist_log["exists"]
+        item["assist_log_preview"] = assist_log["log_preview"]
+        item["assist_log_updated_at"] = assist_log["log_updated_at"]
+        item["assist_log_size"] = assist_log["log_size"]
         decorated.append(item)
     return decorated
 
@@ -2695,6 +2703,7 @@ def job_detail(
     created: str | None = None,
     preflight: str | None = None,
     generation_error: str | None = None,
+    generation_message: str | None = None,
     review_prepare: str | None = None,
     review_prepare_error: str | None = None,
     review_filter: str = Query("candidates"),
@@ -2703,6 +2712,7 @@ def job_detail(
     reconcile_stale_running_jobs()
     reconcile_stale_validation_generations()
     reconcile_stale_review_sessions()
+    reconcile_stale_embedding_jobs()
     job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -2811,6 +2821,7 @@ def job_detail(
         preflight=preflight,
         exported=exported,
         generation_error=generation_error,
+        generation_message=generation_message,
         review_prepare=review_prepare,
         review_prepare_error=review_prepare_error,
         running_generation=running_generation,
@@ -4046,6 +4057,64 @@ def job_validation_generation_run(job_id: int, run_id: int) -> RedirectResponse:
     return RedirectResponse(f"/jobs/{job_id}#validation-runs", status_code=303)
 
 
+@app.post("/jobs/{job_id}/validation-runs/generation/run-selected")
+def job_validation_generation_run_selected(job_id: int, run_ids: list[int] = Form(default=[])) -> RedirectResponse:
+    if not run_ids:
+        return RedirectResponse(f"/jobs/{job_id}?generation_error={quote('画像生成する検証Runを選択してください。')}#validation-runs", status_code=303)
+    placeholders = ",".join("?" for _ in run_ids)
+    rows = fetch_all(
+        f"""
+        SELECT id FROM validation_runs
+        WHERE job_id = ? AND id IN ({placeholders})
+        ORDER BY id DESC
+        """,
+        (job_id, *run_ids),
+    )
+    valid_run_ids = [int(row["id"]) for row in rows]
+    if not valid_run_ids:
+        return RedirectResponse(f"/jobs/{job_id}?generation_error={quote('選択した検証Runが見つかりません。')}#validation-runs", status_code=303)
+    try:
+        count = start_validation_generation_sequence(valid_run_ids)
+    except (ValueError, RuntimeError) as exc:
+        return RedirectResponse(f"/jobs/{job_id}?generation_error={quote(str(exc))}#validation-runs", status_code=303)
+    message = f"選択した検証Run {count} 件の画像生成を順番に開始しました。"
+    return RedirectResponse(f"/jobs/{job_id}?generation_message={quote(message)}#validation-runs", status_code=303)
+
+
+@app.post("/jobs/{job_id}/validation-runs/assist/run-selected")
+def job_validation_assist_run_selected(request: Request, job_id: int, run_ids: list[int] = Form(default=[])):
+    if not run_ids:
+        message = "Embedding計算する検証Runを選択してください。"
+        if wants_json_response(request):
+            return JSONResponse({"ok": False, "message": message}, status_code=400)
+        return RedirectResponse(f"/jobs/{job_id}?generation_error={quote(message)}#validation-runs", status_code=303)
+    placeholders = ",".join("?" for _ in run_ids)
+    rows = fetch_all(
+        f"""
+        SELECT id FROM validation_runs
+        WHERE job_id = ? AND id IN ({placeholders})
+        ORDER BY id DESC
+        """,
+        (job_id, *run_ids),
+    )
+    valid_run_ids = [int(row["id"]) for row in rows]
+    if not valid_run_ids:
+        message = "選択した検証Runが見つかりません。"
+        if wants_json_response(request):
+            return JSONResponse({"ok": False, "message": message}, status_code=404)
+        return RedirectResponse(f"/jobs/{job_id}?generation_error={quote(message)}#validation-runs", status_code=303)
+    try:
+        count = start_validation_assist_sequence(valid_run_ids)
+    except (ValueError, RuntimeError) as exc:
+        if wants_json_response(request):
+            return JSONResponse({"ok": False, "message": str(exc)}, status_code=409)
+        return RedirectResponse(f"/jobs/{job_id}?generation_error={quote(str(exc))}#validation-runs", status_code=303)
+    message = f"選択した検証Run {count} 件のEmbedding / 機械補助レビューを順番に開始しました。"
+    if wants_json_response(request):
+        return JSONResponse({"ok": True, "message": message, "count": count})
+    return RedirectResponse(f"/jobs/{job_id}?generation_message={quote(message)}#validation-runs", status_code=303)
+
+
 @app.post("/validation-runs/{run_id}/generation/stop")
 def validation_generation_stop(run_id: int) -> RedirectResponse:
     stop_validation_generation(run_id)
@@ -4088,6 +4157,45 @@ def validation_generation_status(run_id: int) -> JSONResponse:
             "log_updated_at": state["generation_log_updated_at"],
             "return_code": generation["return_code"] if generation else None,
             "done": status in {"completed", "failed", "stopped"},
+        }
+    )
+
+
+@app.get("/validation-runs/{run_id}/assist/status")
+def validation_assist_status(run_id: int) -> JSONResponse:
+    run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (run_id,))
+    if run is None:
+        raise HTTPException(status_code=404, detail="Validation Run not found")
+    state = validation_assist_log_state(run_id, max_lines=8)
+    embedding = fetch_one(
+        """
+        SELECT id, status, total_count, processed_count, ready_count, failed_count
+        FROM embedding_jobs
+        WHERE job_type = 'validation_run' AND target_id = ?
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (run_id,),
+    )
+    machine_review = fetch_one(
+        """
+        SELECT id, status, total_count, processed_count, scored_count, skipped_count, failed_count
+        FROM machine_review_jobs
+        WHERE target_type = 'validation_run_images' AND target_id = ?
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (run_id,),
+    )
+    return JSONResponse(
+        {
+            "run_id": run_id,
+            "exists": state["exists"],
+            "log_preview": state["log_preview"],
+            "log_size": state["log_size"],
+            "log_updated_at": state["log_updated_at"],
+            "embedding": dict(embedding) if embedding else None,
+            "machine_review": dict(machine_review) if machine_review else None,
         }
     )
 

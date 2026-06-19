@@ -176,6 +176,17 @@ textarea { min-height: 84px; }
 }
 .sub-row td { background: #fbfcfa; border-top: 0; }
 .mini-log-panel { border: 1px solid #d8ddd4; border-radius: 6px; padding: 10px; background: #f8faf7; }
+.mini-log-details { padding: 0; }
+.mini-log-details > summary {
+  padding: 8px 10px;
+  background: transparent;
+  border-radius: 6px;
+}
+.mini-log-details[open] > summary {
+  border-bottom: 1px solid #d8ddd4;
+  border-radius: 6px 6px 0 0;
+}
+.mini-log-details > *:not(summary) { margin: 8px 10px 10px; }
 .mini-log-meta { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; color: #4f5b54; font-size: 13px; }
 .mini-log { max-height: 110px; overflow: auto; margin: 8px 0 0; padding: 8px; background: #1a2824; color: #d7eee6; border-radius: 6px; font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
 .compact-actions { justify-content: flex-start; align-items: center; }

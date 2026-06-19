@@ -660,9 +660,23 @@ def start_embedding_job(job_id: int) -> None:
     log_path = Path(row["log_path"] or settings.LOGS_DIR / "embeddings" / f"embedding_job_{job_id:06d}.log")
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_handle = log_path.open("a", encoding="utf-8", errors="replace")
+    env = os.environ.copy()
+    # Worker Python may be the sd-scripts venv. Do not leak the app venv paths
+    # into it, or binary packages such as NumPy can be imported from the wrong
+    # interpreter environment.
+    env.pop("PYTHONPATH", None)
+    env.pop("PYTHONHOME", None)
+    env.pop("VIRTUAL_ENV", None)
+    app_venv_scripts = str((settings.ROOT_DIR / ".venv" / "Scripts").resolve()).lower()
+    path_parts = []
+    for part in env.get("PATH", "").split(os.pathsep):
+        if part and part.lower() != app_venv_scripts:
+            path_parts.append(part)
+    env["PATH"] = os.pathsep.join(path_parts)
     proc = subprocess.Popen(
         argv,
         cwd=str(settings.ROOT_DIR),
+        env=env,
         stdout=log_handle,
         stderr=subprocess.STDOUT,
         text=True,

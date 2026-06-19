@@ -500,6 +500,10 @@ function clearQueryNoticeParams(keys) {
   }
 }
 
+function clearTransientNoticeParams() {
+  clearQueryNoticeParams(["embedding_error", "embedding_message", "embedding_job_id", "generation_error", "generation_message"]);
+}
+
 function initMachineReviewJobStatusPolling() {
   const panel = document.querySelector("[data-machine-review-job-status]");
   if (!panel) {
@@ -1038,6 +1042,7 @@ function syncAllGenerationRunButtons() {
 }
 
 function applyValidationGenerationStatus(row, payload) {
+  const wasRunning = row.getAttribute("data-generation-status") === "running";
   row.setAttribute("data-generation-status", payload.status || "");
   const label = row.querySelector("[data-generation-status-label]");
   if (label) {
@@ -1067,6 +1072,232 @@ function applyValidationGenerationStatus(row, payload) {
   }
   syncGenerationButtons(row, payload.status || "");
   syncAllGenerationRunButtons();
+  if (wasRunning && ["completed", "failed", "stopped"].includes(payload.status || "") && !document.body.hasAttribute("data-validation-generation-refreshing")) {
+    document.body.setAttribute("data-validation-generation-refreshing", "1");
+    showPageNotice("検証画像生成の状態が変わりました。次のRunを確認するため画面を更新します。");
+    window.setTimeout(() => {
+      const url = new URL(window.location.href);
+      url.hash = "validation-runs";
+      window.location.href = url.toString();
+      window.location.reload();
+    }, 1200);
+  }
+}
+
+function initBulkValidationGenerationSubmit() {
+  const form = document.querySelector("[data-bulk-generation-form]");
+  if (!form) {
+    return;
+  }
+  form.addEventListener("submit", (event) => {
+    const button = form.querySelector("[data-bulk-generation-button]");
+    const checked = appendSelectedValidationRunInputs(form);
+    const selected = checked.length;
+    if (!selected) {
+      event.preventDefault();
+      showPageNotice("画像生成する検証Runを選択してください。", "warning", form);
+      return;
+    }
+    showPageNotice(`選択した検証Run ${selected} 件の画像生成を開始します。`, "info", form);
+    window.setTimeout(() => {
+      if (button) {
+        button.disabled = true;
+        button.textContent = "一括生成を開始中...";
+      }
+      document.querySelectorAll("#validation-runs button").forEach((candidate) => {
+        if (candidate.type === "submit") candidate.disabled = true;
+      });
+    }, 0);
+  });
+}
+
+function initBulkValidationAssistSubmit() {
+  const form = document.querySelector("[data-bulk-assist-form]");
+  if (!form) {
+    return;
+  }
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = form.querySelector("[data-bulk-assist-button]");
+    const checked = appendSelectedValidationRunInputs(form);
+    const selected = checked.length;
+    if (!selected) {
+      showPageNotice("Embedding計算する検証Runを選択してください。", "warning", form);
+      return;
+    }
+    if (button) {
+      button.disabled = true;
+      button.dataset.originalText = button.textContent;
+      button.textContent = "一括計算を開始中...";
+    }
+    const actionButtons = document.querySelectorAll("#validation-runs button");
+    actionButtons.forEach((candidate) => {
+      if (candidate.type === "submit") candidate.disabled = true;
+    });
+    form.dataset.bulkAssistRunning = "1";
+    form.dataset.bulkAssistRunIds = checked.map((checkbox) => checkbox.value).join(",");
+    showPageNotice(`選択した検証Run ${selected} 件のEmbedding / 機械補助レビューを開始します。`, "info", form);
+    try {
+      const response = await fetch(form.action, {
+        method: "POST",
+        body: new FormData(form),
+        headers: { "X-Requested-With": "fetch", "Accept": "application/json" },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.ok === false) {
+        delete form.dataset.bulkAssistRunning;
+        delete form.dataset.bulkAssistRunIds;
+        if (payload.running_job_id) {
+          startEmbeddingJobPolling(
+            payload.running_job_id,
+            payload.message || `Embedding Job #${payload.running_job_id} が実行中です。`,
+            window.location.href,
+            form,
+          );
+          return;
+        }
+        throw new Error(payload.message || await response.text());
+      }
+      showPageNotice(payload.message || "Embedding / 機械補助レビューを開始しました。処理中は同じボタンを押さずに完了を待ってください。", "info", form);
+      createBulkAssistStatusPanel(form, payload.message || "Embedding / 機械補助レビューを開始しました。");
+      openSelectedAssistLogs();
+      pollValidationAssistLogs();
+    } catch (error) {
+      delete form.dataset.bulkAssistRunning;
+      delete form.dataset.bulkAssistRunIds;
+      showPageNotice(error.message || "Embedding / 機械補助レビューを開始できませんでした。", "warning", form);
+      actionButtons.forEach((candidate) => {
+        if (candidate.type === "submit") candidate.disabled = false;
+      });
+      if (button) {
+        button.disabled = false;
+        button.textContent = button.dataset.originalText || "選択した検証RunのEmbedding / 機械補助レビューを開始";
+      }
+    }
+  });
+}
+
+function createBulkAssistStatusPanel(form, message) {
+  const container = form.closest(".actions") || form.parentElement || document.body;
+  let panel = document.querySelector("[data-bulk-assist-status]");
+  if (!panel) {
+    panel = document.createElement("p");
+    panel.className = "notice";
+    panel.setAttribute("data-bulk-assist-status", "1");
+    container.before(panel);
+  }
+  panel.textContent = `${message} 実行中のEmbedding Jobがある場合は、完了後に次の処理へ進みます。この画面で進捗表示を更新します。`;
+}
+
+function openSelectedAssistLogs() {
+  document.querySelectorAll('input[form="epoch-matrix-form"][name="run_ids"]:checked').forEach((checkbox) => {
+    const details = document.querySelector(`[data-assist-log-run="${checkbox.value}"]`);
+    if (details) {
+      details.open = true;
+    }
+  });
+}
+
+async function pollValidationAssistLogs() {
+  const panels = [...document.querySelectorAll("[data-assist-log-run]")];
+  if (!panels.length) {
+    return;
+  }
+  const payloadsByRunId = new Map();
+  await Promise.all(panels.map(async (panel) => {
+    const runId = panel.getAttribute("data-assist-log-run");
+    if (!runId) {
+      return;
+    }
+    try {
+      const response = await fetch(`/validation-runs/${runId}/assist/status`, { headers: { "Accept": "application/json" } });
+      if (!response.ok) {
+        return;
+      }
+      const payload = await response.json();
+      payloadsByRunId.set(runId, payload);
+      const size = panel.querySelector("[data-assist-log-size]");
+      const updated = panel.querySelector("[data-assist-log-updated]");
+      const preview = panel.querySelector("[data-assist-log-preview]");
+      if (size) size.textContent = payload.log_size ?? "0";
+      if (updated) updated.textContent = payload.log_updated_at || "-";
+      if (preview) {
+        preview.classList.toggle("empty", !payload.log_preview);
+        preview.textContent = payload.log_preview || "ログはまだありません。一括計算を開始するとここに進行状況が表示されます。";
+      }
+    } catch (_error) {
+      // Polling is informational only; keep the current page stable.
+    }
+  }));
+  finishBulkAssistIfComplete(payloadsByRunId);
+}
+
+function validationAssistPayloadIsTerminal(payload) {
+  if (!payload) {
+    return false;
+  }
+  const terminalStatuses = ["completed", "failed", "stopped"];
+  if (payload.machine_review && terminalStatuses.includes(payload.machine_review.status)) {
+    return true;
+  }
+  const logPreview = payload.log_preview || "";
+  return /Machine Review Job #\d+: status=(completed|failed|stopped)/.test(logPreview);
+}
+
+function finishBulkAssistIfComplete(payloadsByRunId) {
+  const form = document.querySelector("[data-bulk-assist-form][data-bulk-assist-running='1']");
+  if (!form) {
+    return;
+  }
+  const runIds = (form.dataset.bulkAssistRunIds || "").split(",").filter(Boolean);
+  if (!runIds.length) {
+    return;
+  }
+  const isComplete = runIds.every((runId) => validationAssistPayloadIsTerminal(payloadsByRunId.get(runId)));
+  if (!isComplete) {
+    return;
+  }
+
+  delete form.dataset.bulkAssistRunning;
+  delete form.dataset.bulkAssistRunIds;
+  document.querySelectorAll("#validation-runs button").forEach((candidate) => {
+    if (candidate.type === "submit") {
+      candidate.disabled = false;
+    }
+  });
+  const button = form.querySelector("[data-bulk-assist-button]");
+  if (button) {
+    button.textContent = button.dataset.originalText || "選択した検証RunのEmbedding / 機械補助レビューを開始";
+  }
+  const panel = document.querySelector("[data-bulk-assist-status]");
+  if (panel) {
+    panel.textContent = "Embedding / 機械補助レビューが完了しました。必要ならEpoch横断Matrixを開いて確認できます。";
+  }
+  showPageNotice("Embedding / 機械補助レビューが完了しました。", "success", form);
+  if (typeof syncAllGenerationRunButtons === "function") {
+    syncAllGenerationRunButtons();
+  }
+}
+
+function initValidationAssistLogPolling() {
+  if (!document.querySelector("[data-assist-log-run]")) {
+    return;
+  }
+  pollValidationAssistLogs();
+  window.setInterval(pollValidationAssistLogs, 5000);
+}
+
+function appendSelectedValidationRunInputs(form) {
+  form.querySelectorAll('input[type="hidden"][name="run_ids"]').forEach((input) => input.remove());
+  const checked = [...document.querySelectorAll('input[form="epoch-matrix-form"][name="run_ids"]:checked')];
+  checked.forEach((checkbox) => {
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = "run_ids";
+    input.value = checkbox.value;
+    form.append(input);
+  });
+  return checked;
 }
 
 function initValidationGenerationDetailPolling() {
@@ -1241,7 +1472,22 @@ function initActiveOperationMonitorPolling() {
     }
     const runningStatuses = new Set(["running", "generating_images", "embedding_images", "machine_reviewing", "building_matrix"]);
     const isRunning = runningStatuses.has(payload.status);
+    const wasRunning = panel.getAttribute("data-operation-running") === "1";
     panel.setAttribute("data-operation-running", isRunning ? "1" : "0");
+    if (wasRunning && !isRunning) {
+      const terminalMessage = payload.status === "completed"
+        ? "処理が完了しました。画面を更新します。"
+        : "処理が終了しました。画面を更新します。";
+      showPageNotice(terminalMessage);
+      window.setTimeout(() => {
+        const url = new URL(window.location.href);
+        if (!url.hash && panel.id) {
+          url.hash = panel.id;
+        }
+        window.location.href = url.toString();
+        window.location.reload();
+      }, 900);
+    }
     return isRunning;
   };
 
@@ -1287,6 +1533,10 @@ function initActiveOperationMonitorPolling() {
 
 document.addEventListener("DOMContentLoaded", initValidationGenerationPolling);
 document.addEventListener("DOMContentLoaded", initValidationGenerationDetailPolling);
+document.addEventListener("DOMContentLoaded", initBulkValidationGenerationSubmit);
+document.addEventListener("DOMContentLoaded", initBulkValidationAssistSubmit);
+document.addEventListener("DOMContentLoaded", initValidationAssistLogPolling);
+document.addEventListener("DOMContentLoaded", clearTransientNoticeParams);
 document.addEventListener("DOMContentLoaded", restoreScrollAfterInlineRefresh);
 document.addEventListener("DOMContentLoaded", initEmbeddingJobStatusPolling);
 document.addEventListener("DOMContentLoaded", initMachineReviewJobStatusPolling);

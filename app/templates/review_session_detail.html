@@ -51,6 +51,7 @@
       {% if session.job_id %}<form method="post" action="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/stop"><button type="submit" class="danger">停止</button></form>{% endif %}
       {% elif primary_action == 'open_matrix' and session.job_id %}
       <a class="button" href="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix">{{ primary_label }}</a>
+      <p class="muted">画像比較とレビュー入力はReview Matrixで行います。同じprompt / seed / weightごとに候補epochを横並びで確認できます。</p>
       {% elif primary_action == 'build_matrix' and session.job_id %}
       <form method="post" action="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix/build"><button type="submit">{{ primary_label }}</button></form>
       {% elif primary_action == 'check_log' %}
@@ -61,6 +62,7 @@
     {% if session.status in ['planned', 'prepared'] %}
     <p class="muted">画像生成後にレビューMatrixで比較して採用判断してください。未生成のプランではepoch採用はできません。</p>
     {% elif can_select_epoch %}
+    <p class="muted">画像を見比べる場合は先にReview Matrixを開いてください。採用ボタンはMatrix確認後の確定操作です。</p>
     <p><strong>epochを採用</strong></p>
     <div class="actions compact-actions">
       {% for epoch in candidate_epochs %}

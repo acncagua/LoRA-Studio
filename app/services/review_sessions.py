@@ -19,7 +19,7 @@ from app.services.output_collector import image_size, safe_sha256_file
 from app.services.review_candidates import ensure_epoch_candidates
 from app.services.training_runner import archive_existing_log, decode_log_bytes, elapsed_seconds, process_exists, sd_scripts_subprocess_env
 from app.services.validation_generation import IMAGE_SUFFIXES, common_gen_img_args, count_generated_images, sanitize_filename
-from app.services.validation_generation import matrix_machine_score
+from app.services.validation_generation import matrix_display_controls, matrix_display_script, matrix_display_style, matrix_machine_score
 
 
 PRESET_ID = "candidate_epoch_review_v1"
@@ -777,6 +777,7 @@ def write_review_matrix(session_id: int) -> str:
         f"<h1>候補epochレビューMatrix #{session_id}</h1>",
         f"<p class=\"muted\">Job #{int(session['job_id'])} {html.escape(str(job['name'] if job else ''))}</p>",
         "<p class=\"notice\">採用前の候補epoch比較用Matrixです。機械補助レビューは補助情報であり、最終判断は人間評価を優先してください。</p>",
+        matrix_display_controls(),
         "<div class=\"summary-grid\">",
         summary_card("候補epoch", ", ".join(str(epoch) for epoch in epochs) or "-"),
         summary_card("採用epoch", str(selected_epoch) if selected_epoch is not None else "-"),
@@ -817,12 +818,13 @@ def write_review_matrix(session_id: int) -> str:
                 else:
                     image_path = Path(str(image["image_path"]))
                     src = path_to_review_matrix_relative(matrix_path, image_path)
-                    lines.append(f"<img src=\"{html.escape(src)}\" alt=\"review image\">")
+                    lines.append(f"<img class=\"matrix-image\" src=\"{html.escape(src)}\" alt=\"review image\">")
                     lines.append(review_image_caption(condition, image))
                     lines.append(matrix_machine_score(scores.get(int(image["id"]))))
                 lines.append("</td>")
             lines.append("</tr></tbody></table>")
     lines.append(review_matrix_navigation(session_id, int(session["job_id"]), project_id))
+    lines.append(matrix_display_script())
     lines.append("</body></html>")
     matrix_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return str(matrix_path)
@@ -881,13 +883,14 @@ def review_matrix_style() -> str:
         "body{font-family:'Segoe UI','Yu Gothic UI',sans-serif;background:#f6f7f4;color:#20231f;margin:24px;overflow-x:auto}"
         "table{border-collapse:collapse;width:max-content;min-width:100%;margin:12px 0 28px;background:white}"
         "th,td{border:1px solid #d8ddd4;padding:8px;vertical-align:top}th{background:#eef2eb;min-width:220px}"
-        ".epoch-cell{min-width:520px}.missing{color:#8b4f39;font-weight:700}.notice{background:#eef5ef;border:1px solid #cfd8d1;border-radius:6px;padding:10px}"
-        "img{width:512px;max-width:none;border-radius:6px;display:block;margin-bottom:6px}.muted{color:#657064;font-size:12px}"
+        ".epoch-cell{min-width:300px}.missing{color:#8b4f39;font-weight:700}.notice{background:#eef5ef;border:1px solid #cfd8d1;border-radius:6px;padding:10px}"
+        "img.matrix-image{width:auto;max-width:none;border-radius:6px;display:block;margin-bottom:6px;cursor:zoom-in}.muted{color:#657064;font-size:12px}"
         ".selected-epoch{background:#eef8f1;box-shadow:inset 0 0 0 2px #2f7668}.selected-marker{display:inline-flex;margin-left:6px;padding:2px 6px;border-radius:999px;background:#2f7668;color:white;font-size:11px;font-weight:700}"
         ".matrix-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 18px}.button{display:inline-flex;align-items:center;min-height:34px;padding:7px 12px;border-radius:6px;background:#2f7668;color:white;text-decoration:none;font-weight:700;border:0;cursor:pointer;font:inherit}.button.secondary{background:#dce4df;color:#20231f}"
         ".summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin:10px 0 20px}.summary-card{background:white;border:1px solid #d8ddd4;border-radius:6px;padding:10px}.summary-card strong{font-size:20px}"
         ".machine-score{display:grid;gap:4px;margin:8px 0;padding:8px;border:1px solid #d8ddd4;border-radius:6px;background:#f8faf7;font-size:13px}.machine-score .badges{display:flex;flex-wrap:wrap;gap:6px}.badge{display:inline-flex;align-items:center;justify-content:center;min-width:56px;padding:3px 8px;border-radius:6px;background:#dce4df;font-weight:700}.badge.low,.badge.low_confidence,.badge.unavailable,.badge.unknown{background:#dce4df}.badge.primary_candidate,.badge.secondary_candidate{background:#c6e7d8}.badge.possible_overfit,.badge.high{background:#f0c2c2}"
-        "</style>"
+        + matrix_display_style()
+        + "</style>"
     )
 
 
