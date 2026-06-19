@@ -42,7 +42,7 @@
     <p class="muted">機械補助レビューは参考情報です。最終判断は人間評価と画像比較を優先してください。</p>
   </div>
   <div>
-    <h2>主要操作</h2>
+    <h2>このReview Sessionでの主要操作</h2>
     <div class="actions compact-actions">
       {% if primary_action == 'start' and session.job_id %}
       <form method="post" action="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/run"><button type="submit">{{ primary_label }}</button></form>
