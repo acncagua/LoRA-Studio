@@ -2011,6 +2011,33 @@ class EmbeddingPhase112Tests(IsolatedDbTest):
         self.assertIn("machine_review_job_", row["log_path"])
         popen.assert_called_once()
 
+    def test_stale_machine_review_job_is_reconciled(self) -> None:
+        from app.services.machine_review import create_machine_review_job, reconcile_stale_machine_review_jobs
+
+        dataset_id, version_id, _dataset_dir = self.make_dataset_version()
+        job_id = self.make_sample_job(dataset_id, version_id)
+        machine_review_job_id = create_machine_review_job("training_job_samples", job_id)
+        now = utc_now()
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE machine_review_jobs
+                SET status = 'running', process_id = ?, started_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (424242, now, now, machine_review_job_id),
+            )
+
+        with mock.patch("app.services.machine_review.process_exists", return_value=False):
+            fixed = reconcile_stale_machine_review_jobs()
+
+        row = fetch_one("SELECT status, process_id, return_code, error_message FROM machine_review_jobs WHERE id = ?", (machine_review_job_id,))
+        self.assertEqual(fixed, 1)
+        self.assertEqual(row["status"], "stopped")
+        self.assertIsNone(row["process_id"])
+        self.assertEqual(row["return_code"], -1)
+        self.assertIn("Machine Review process was not found", row["error_message"])
+
 
 class StartHelperTests(unittest.TestCase):
     def test_start_lora_studio_does_not_release_7865_by_default(self) -> None:

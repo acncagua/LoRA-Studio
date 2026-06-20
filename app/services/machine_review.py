@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -25,9 +26,23 @@ from app.services.embedding_service import (
     sample_image_sources,
     validation_image_sources,
 )
+from app.services.training_runner import process_exists
 
 
 DEFAULT_REASON = "機械補助判定は参考情報です。最終判断は人間評価を優先してください。"
+STALE_RUNNING_GRACE_SECONDS = 60
+
+
+def _iso_age_seconds(value: str | None) -> float:
+    if not value:
+        return STALE_RUNNING_GRACE_SECONDS + 1
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError:
+        return STALE_RUNNING_GRACE_SECONDS + 1
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return max(0.0, (datetime.now(timezone.utc) - parsed).total_seconds())
 
 
 def load_machine_review_settings() -> dict[str, Any]:
@@ -625,6 +640,7 @@ def run_machine_review(target_type: str, target_id: int, reference_set_version_i
 
 
 def start_machine_review_job(job_id: int) -> None:
+    reconcile_stale_machine_review_jobs()
     running = fetch_one("SELECT id FROM machine_review_jobs WHERE status = 'running' AND id != ? LIMIT 1", (job_id,))
     if running:
         raise RuntimeError(f"Machine Review Job #{running['id']} が実行中です。")
@@ -653,6 +669,37 @@ def start_machine_review_job(job_id: int) -> None:
             "UPDATE machine_review_jobs SET status = 'running', process_id = ?, started_at = ?, updated_at = ? WHERE id = ?",
             (proc.pid, now, now, job_id),
         )
+
+
+def reconcile_stale_machine_review_jobs() -> int:
+    rows = fetch_all("SELECT * FROM machine_review_jobs WHERE status = 'running' ORDER BY id")
+    fixed = 0
+    now = utc_now()
+    for row in rows:
+        pid = row["process_id"]
+        if pid:
+            try:
+                if process_exists(int(pid)):
+                    continue
+            except (TypeError, ValueError):
+                pass
+        elif _iso_age_seconds(row["started_at"] or row["updated_at"] or row["created_at"]) <= STALE_RUNNING_GRACE_SECONDS:
+            continue
+        message = "Machine Review process was not found. Marked stopped by stale reconciliation."
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE machine_review_jobs
+                SET status = 'stopped', process_id = NULL,
+                    ended_at = COALESCE(ended_at, ?), updated_at = ?,
+                    return_code = COALESCE(return_code, -1),
+                    error_message = COALESCE(NULLIF(error_message, ''), ?)
+                WHERE id = ? AND status = 'running'
+                """,
+                (now, now, message, row["id"]),
+            )
+        fixed += 1
+    return fixed
 
 
 def stop_machine_review_job(job_id: int) -> None:

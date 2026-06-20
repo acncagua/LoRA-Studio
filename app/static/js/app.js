@@ -328,14 +328,34 @@ function pollEmbeddingJobStatus(panel, jobId, statusText) {
 
 function reloadAfterEmbeddingJob(panel) {
   const target = panel.getAttribute("data-embedding-reload-url") || window.location.href;
+  schedulePageRefresh({
+    target,
+    paramsToDelete: ["embedding_message", "embedding_job_id", "embedding_error"],
+    delayMs: 0,
+    restoreScroll: true,
+  });
+}
+
+function schedulePageRefresh({ target = window.location.href, paramsToDelete = [], hash = "", delayMs = 900, restoreScroll = false } = {}) {
+  if (document.body.hasAttribute("data-page-refresh-scheduled")) {
+    return;
+  }
+  document.body.setAttribute("data-page-refresh-scheduled", "1");
   const url = new URL(target, window.location.href);
-  url.searchParams.delete("embedding_message");
-  url.searchParams.delete("embedding_job_id");
-  url.searchParams.delete("embedding_error");
+  paramsToDelete.forEach((key) => url.searchParams.delete(key));
+  if (hash) {
+    url.hash = hash;
+  }
   if (!url.hash) {
+    url.hash = window.location.hash || "";
+  }
+  if (restoreScroll && !url.hash) {
     sessionStorage.setItem("loraStudioRestoreScrollY", String(window.scrollY || 0));
   }
-  window.location.href = url.toString();
+  window.setTimeout(() => {
+    window.location.href = url.toString();
+    window.location.reload();
+  }, delayMs);
 }
 
 function restoreScrollAfterInlineRefresh() {
@@ -626,7 +646,18 @@ function clearQueryNoticeParams(keys) {
 }
 
 function clearTransientNoticeParams() {
-  clearQueryNoticeParams(["embedding_error", "embedding_message", "embedding_job_id", "generation_error", "generation_message", "review_prepare", "review_prepare_error"]);
+  clearQueryNoticeParams([
+    "embedding_error",
+    "embedding_message",
+    "embedding_job_id",
+    "machine_review_error",
+    "machine_review_message",
+    "machine_review_job_id",
+    "generation_error",
+    "generation_message",
+    "review_prepare",
+    "review_prepare_error",
+  ]);
 }
 
 function initMachineReviewJobStatusPolling() {
@@ -657,23 +688,21 @@ function initMachineReviewJobStatusPolling() {
       if (payload.status === "completed") {
         statusText.textContent = `完了: スコア ${scored} / ${total} 件`;
         panel.classList.remove("warning");
-        window.setTimeout(() => {
-          const url = new URL(window.location.href);
-          url.searchParams.delete("machine_review_message");
-          url.searchParams.delete("machine_review_job_id");
-          url.searchParams.delete("machine_review_error");
-          window.location.href = url.toString();
-        }, 900);
+        schedulePageRefresh({
+          paramsToDelete: ["machine_review_message", "machine_review_job_id", "machine_review_error"],
+        });
         return true;
       }
       if (payload.status === "failed") {
         statusText.textContent = `失敗: ${payload.error_message || ""}`;
         panel.classList.add("warning");
+        clearQueryNoticeParams(["machine_review_message", "machine_review_job_id"]);
         return true;
       }
       if (payload.status === "stopped") {
         statusText.textContent = `停止: ${processed} / ${total} 件`;
         panel.classList.add("warning");
+        clearQueryNoticeParams(["machine_review_message", "machine_review_job_id"]);
         return true;
       }
       statusText.textContent = `処理中: ${processed} / ${total} 件（スコア ${scored}, スキップ ${skipped}, 失敗 ${failed}）`;
@@ -1235,12 +1264,11 @@ function applyValidationGenerationStatus(row, payload) {
   if (wasRunning && ["completed", "failed", "stopped"].includes(payload.status || "") && !document.body.hasAttribute("data-validation-generation-refreshing")) {
     document.body.setAttribute("data-validation-generation-refreshing", "1");
     showPageNotice("検証画像生成の状態が変わりました。次のRunを確認するため画面を更新します。");
-    window.setTimeout(() => {
-      const url = new URL(window.location.href);
-      url.hash = "validation-runs";
-      window.location.href = url.toString();
-      window.location.reload();
-    }, 1200);
+    schedulePageRefresh({
+      paramsToDelete: ["generation_error", "generation_message"],
+      hash: "#validation-runs",
+      delayMs: 1200,
+    });
   }
 }
 
@@ -1308,6 +1336,13 @@ function initBulkValidationAssistSubmit() {
         delete form.dataset.bulkAssistRunning;
         delete form.dataset.bulkAssistRunIds;
         if (payload.running_job_id) {
+          actionButtons.forEach((candidate) => {
+            if (candidate.type === "submit") candidate.disabled = false;
+          });
+          if (button) {
+            button.disabled = false;
+            button.textContent = button.dataset.originalText || "選択した検証RunのEmbedding / 機械補助レビューを開始";
+          }
           startEmbeddingJobPolling(
             payload.running_job_id,
             payload.message || `Embedding Job #${payload.running_job_id} が実行中です。`,
@@ -1398,6 +1433,9 @@ function validationAssistPayloadIsTerminal(payload) {
   }
   const terminalStatuses = ["completed", "failed", "stopped"];
   if (payload.machine_review && terminalStatuses.includes(payload.machine_review.status)) {
+    return true;
+  }
+  if (!payload.machine_review && payload.embedding && ["failed", "stopped"].includes(payload.embedding.status)) {
     return true;
   }
   const logPreview = payload.log_preview || "";
@@ -1492,6 +1530,7 @@ function initValidationGenerationDetailPolling() {
 }
 
 function applyValidationGenerationDetailStatus(panel, payload) {
+  const wasRunning = panel.getAttribute("data-generation-status") === "running";
   panel.setAttribute("data-generation-status", payload.status || "");
   const statusLabel = panel.querySelector("[data-detail-generation-status-label]");
   if (statusLabel) {
@@ -1528,6 +1567,13 @@ function applyValidationGenerationDetailStatus(panel, payload) {
     preview.textContent = payload.log_preview || "生成ログはまだありません。生成済みファイル数が増えていれば処理は進行中です。";
   }
   syncGenerationButtons(panel, payload.status || "");
+  if (wasRunning && ["completed", "failed", "stopped"].includes(payload.status || "")) {
+    const message = payload.status === "completed"
+      ? "検証画像生成が完了しました。画像とカバレッジを更新します。"
+      : "検証画像生成が終了しました。状態を更新します。";
+    showPageNotice(message, payload.status === "completed" ? "info" : "warning");
+    schedulePageRefresh({ paramsToDelete: ["generation_error"], delayMs: 900 });
+  }
 }
 
 function initTrainLogPolling() {
@@ -1639,14 +1685,7 @@ function initActiveOperationMonitorPolling() {
         ? "処理が完了しました。画面を更新します。"
         : "処理が終了しました。画面を更新します。";
       showPageNotice(terminalMessage);
-      window.setTimeout(() => {
-        const url = new URL(window.location.href);
-        if (!url.hash && panel.id) {
-          url.hash = panel.id;
-        }
-        window.location.href = url.toString();
-        window.location.reload();
-      }, 900);
+      schedulePageRefresh({ hash: panel.id ? `#${panel.id}` : "", delayMs: 900 });
     }
     return isRunning;
   };

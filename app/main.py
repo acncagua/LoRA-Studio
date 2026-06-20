@@ -52,6 +52,7 @@ from app.services.machine_review import (
     load_machine_review_settings,
     machine_review_readiness,
     reference_set_readiness,
+    reconcile_stale_machine_review_jobs,
     run_machine_review,
     score_map_for_samples,
     score_map_for_validation,
@@ -237,6 +238,7 @@ def on_startup() -> None:
     reconcile_stale_running_jobs()
     reconcile_stale_validation_generations()
     reconcile_stale_embedding_jobs()
+    reconcile_stale_machine_review_jobs()
     reconcile_stale_review_sessions()
 
 
@@ -1446,6 +1448,9 @@ def review_sessions_list(request: Request) -> HTMLResponse:
 
 @app.get("/review-sessions/{session_id}", response_class=HTMLResponse)
 def review_session_detail(request: Request, session_id: int) -> HTMLResponse:
+    reconcile_stale_review_sessions()
+    reconcile_stale_embedding_jobs()
+    reconcile_stale_machine_review_jobs()
     session = fetch_one(
         """
         SELECT rs.*, p.name AS project_name, tj.name AS job_name, tj.adopted_epoch,
@@ -1889,6 +1894,8 @@ def environment_refresh() -> RedirectResponse:
 
 @app.get("/settings/embeddings", response_class=HTMLResponse)
 def embedding_settings_page(request: Request, preflight_model_id: str | None = None) -> HTMLResponse:
+    reconcile_stale_embedding_jobs()
+    reconcile_stale_machine_review_jobs()
     models = fetch_all("SELECT * FROM embedding_models ORDER BY provider, name")
     settings_row = load_embedding_settings()
     preflight = None
@@ -2009,6 +2016,7 @@ def embedding_job_create(request: Request, job_type: str = Form(...), target_id:
 
 @app.get("/embeddings/jobs/{embedding_job_id}/status")
 def embedding_job_status(embedding_job_id: int) -> JSONResponse:
+    reconcile_stale_embedding_jobs()
     row = fetch_one("SELECT * FROM embedding_jobs WHERE id = ?", (embedding_job_id,))
     if row is None:
         raise HTTPException(status_code=404, detail="Embedding Job not found")
@@ -2060,6 +2068,7 @@ def embedding_job_stop(embedding_job_id: int, return_to: str = Form("")) -> Redi
 @app.post("/machine-review/jobs")
 def machine_review_run(target_type: str = Form(...), target_id: int = Form(...), reference_set_version_id: int | None = Form(None), return_to: str = Form("")) -> RedirectResponse:
     destination = return_to or "/settings/embeddings"
+    reconcile_stale_machine_review_jobs()
     running = fetch_one("SELECT id FROM machine_review_jobs WHERE status = 'running' LIMIT 1")
     if running:
         return RedirectResponse(
@@ -2083,6 +2092,7 @@ def machine_review_run(target_type: str = Form(...), target_id: int = Form(...),
 
 @app.get("/machine-review/jobs/{machine_review_job_id}/status")
 def machine_review_job_status(machine_review_job_id: int) -> JSONResponse:
+    reconcile_stale_machine_review_jobs()
     row = fetch_one("SELECT * FROM machine_review_jobs WHERE id = ?", (machine_review_job_id,))
     if row is None:
         raise HTTPException(status_code=404, detail="Machine Review Job not found")
@@ -2888,6 +2898,7 @@ def job_detail(
     reconcile_stale_validation_generations()
     reconcile_stale_review_sessions()
     reconcile_stale_embedding_jobs()
+    reconcile_stale_machine_review_jobs()
     job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -3158,6 +3169,7 @@ def job_review_session_matrix_build(job_id: int, session_id: int) -> RedirectRes
 
 @app.get("/jobs/{job_id}/review-sessions/{session_id}/status")
 def job_review_session_status(job_id: int, session_id: int) -> JSONResponse:
+    reconcile_stale_review_sessions()
     session = fetch_one("SELECT * FROM review_sessions WHERE id = ? AND job_id = ?", (session_id, job_id))
     if session is None:
         raise HTTPException(status_code=404, detail="Review Session not found")
@@ -4097,6 +4109,8 @@ def job_create_validation_runs_for_outputs(
 @app.get("/validation-runs/{run_id}", response_class=HTMLResponse)
 def validation_run_detail(request: Request, run_id: int, generation_error: str | None = None) -> HTMLResponse:
     reconcile_stale_validation_generations()
+    reconcile_stale_embedding_jobs()
+    reconcile_stale_machine_review_jobs()
     try:
         bundle = load_validation_run_bundle(run_id)
     except ValueError as exc:
@@ -4309,6 +4323,7 @@ def job_validation_generation_stop(job_id: int, run_id: int) -> RedirectResponse
 
 @app.get("/validation-runs/{run_id}/generation/status")
 def validation_generation_status(run_id: int) -> JSONResponse:
+    reconcile_stale_validation_generations()
     run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (run_id,))
     if run is None:
         raise HTTPException(status_code=404, detail="Validation Run not found")
