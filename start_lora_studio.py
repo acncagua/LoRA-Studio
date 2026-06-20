@@ -5,6 +5,10 @@ import os
 import re
 import subprocess
 import sys
+import threading
+import time
+import urllib.error
+import urllib.request
 import webbrowser
 
 from app import settings
@@ -91,6 +95,19 @@ def release_port(port: int) -> None:
         subprocess.run(["taskkill", "/PID", str(pid), "/F"], check=False, capture_output=True)
 
 
+def open_browser_when_ready(url: str, timeout_seconds: float = 45.0) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=1.5) as response:
+                if 200 <= response.status < 500:
+                    webbrowser.open(url)
+                    return
+        except (OSError, urllib.error.URLError):
+            time.sleep(0.5)
+    webbrowser.open(url)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Start LoRA-Studio local web app.")
     parser.add_argument("--host", default=settings.DEFAULT_HOST)
@@ -107,7 +124,7 @@ def main() -> None:
     if args.force_release_port:
         release_port(args.port)
     if not args.no_browser:
-        webbrowser.open(url)
+        threading.Thread(target=open_browser_when_ready, args=(url,), daemon=True).start()
     import uvicorn
 
     uvicorn.run("app.main:app", host=args.host, port=args.port, reload=False)

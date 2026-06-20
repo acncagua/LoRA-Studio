@@ -881,13 +881,13 @@ def seed_validation_presets(conn: sqlite3.Connection) -> None:
             "version": "1.0",
             "description": "採用LoRAが使えそうかを短時間で確認する推奨weight帯の初期確認用。",
             "validation_level": "quick",
-            "seeds": [111111],
-            "weights": [0.4, 0.6, 0.8],
+            "seeds": [111111, 222222],
+            "weights": [0.6, 0.8, 1.0],
             "hires_modes": [False],
             "hires_scale": None,
             "hires_denoising_strength": None,
             "hires_upscaler": "",
-            "memo": "3 prompts x 1 seed x 3 weights x no hires = 9 images.",
+            "memo": "3 prompts x 2 seeds x 3 weights x no hires = 18 images.",
         },
         {
             "id": "standard_validation_v1",
@@ -907,15 +907,15 @@ def seed_validation_presets(conn: sqlite3.Connection) -> None:
             "id": "extended_validation_v1",
             "name": "Extended Validation v1",
             "version": "1.0",
-            "description": "採用候補LoRAの最終確認。Hiresあり/なしの見え方の差を確認する。",
+            "description": "標準ValidationにHiresあり条件を加えた最終見栄え確認。",
             "validation_level": "extended",
-            "seeds": [111111, 222222],
-            "weights": [0.6, 0.8],
+            "seeds": [111111, 222222, 333333],
+            "weights": [0, 0.4, 0.6, 0.8, 1.0],
             "hires_modes": [False, True],
             "hires_scale": 2.0,
             "hires_denoising_strength": 0.4,
             "hires_upscaler": "Latent",
-            "memo": "HiresはLoRAの素の比較ではなく、最終見栄え確認として扱います。",
+            "memo": "Standard ValidationにHiresありを加えた90枚の確認です。HiresはWebUI完全一致ではなく最終見栄えの目安です。",
         },
     ]
     prompts = validation_prompt_rows()
@@ -1240,12 +1240,38 @@ def create_job(data: dict[str, Any]) -> int:
     analysis = fetch_one("SELECT * FROM dataset_analysis WHERE dataset_id = ?", (int(data["dataset_id"]),))
     params = normalize_job_params_for_preset(preset, data.get("params"))
     output_name = data.get("output_name") or data["name"].replace(" ", "_")
-    trigger_word = dataset["trigger_word"] if dataset else None
-    trigger_count = analysis["trigger_word_count"] if analysis else None
-    trigger_rate = analysis["trigger_word_rate"] if analysis else None
-    trigger_label = analysis["trigger_consistency_label"] if analysis and "trigger_consistency_label" in analysis.keys() else None
-    version = fetch_one("SELECT id FROM dataset_versions WHERE dataset_id = ? ORDER BY version_no DESC LIMIT 1", (int(data["dataset_id"]),))
+    requested_version_id = data.get("dataset_version_id")
+    version = None
+    if requested_version_id:
+        version = fetch_one("SELECT * FROM dataset_versions WHERE id = ? AND dataset_id = ?", (int(requested_version_id), int(data["dataset_id"])))
+    if version is None:
+        version = fetch_one("SELECT * FROM dataset_versions WHERE dataset_id = ? ORDER BY version_no DESC LIMIT 1", (int(data["dataset_id"]),))
     dataset_version_id = version["id"] if version else None
+    trigger_word = (data.get("trigger_word") or "").strip()
+    if not trigger_word:
+        trigger_word = (version["trigger_word"] if version and "trigger_word" in version.keys() else None) or (dataset["trigger_word"] if dataset else None)
+    if version and trigger_word == (version["trigger_word"] or ""):
+        trigger_count = version["trigger_occurrence_count"] if "trigger_occurrence_count" in version.keys() else None
+        trigger_rate = version["trigger_occurrence_rate"] if "trigger_occurrence_rate" in version.keys() else None
+        trigger_label = version["trigger_consistency_label"] if "trigger_consistency_label" in version.keys() else None
+    elif analysis and trigger_word == (dataset["trigger_word"] if dataset else None):
+        trigger_count = analysis["trigger_word_count"]
+        trigger_rate = analysis["trigger_word_rate"]
+        trigger_label = analysis["trigger_consistency_label"] if "trigger_consistency_label" in analysis.keys() else None
+    else:
+        trigger_count = None
+        trigger_rate = None
+        trigger_label = "UNKNOWN"
+        if dataset and trigger_word:
+            try:
+                from app.services.dataset_scanner import scan_dataset
+
+                scan = scan_dataset(Path(dataset["path"]), trigger_word)
+                trigger_count = scan["trigger_word_count"]
+                trigger_rate = scan["trigger_word_rate"]
+                trigger_label = scan["trigger_consistency"]["label"]
+            except Exception:
+                pass
     with connect() as conn:
         cur = conn.execute(
             """

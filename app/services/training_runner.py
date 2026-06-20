@@ -332,6 +332,13 @@ def sd_scripts_subprocess_env() -> dict[str, str]:
     env.pop("PYTHONHOME", None)
     env.setdefault("PYTHONUTF8", "1")
     env.setdefault("PYTHONIOENCODING", "utf-8:replace")
+    # sd-scripts calls git while building model metadata. On Japanese Windows,
+    # those child subprocesses can otherwise emit CP932 text into Python code
+    # that expects UTF-8, producing noisy UnicodeDecodeError tracebacks even
+    # though training continues.
+    env.setdefault("LANG", "C.UTF-8")
+    env.setdefault("LC_ALL", "C.UTF-8")
+    env.setdefault("LANGUAGE", "C")
     return env
 
 

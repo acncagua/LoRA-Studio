@@ -37,6 +37,19 @@
             <a class="button small-button" href="/projects/{{ project.id }}">Projectを開く</a>
             {% if project.selected_job_id %}<a class="button small-button" href="/jobs/{{ project.selected_job_id }}">採用ジョブ</a>{% endif %}
             {% if project.selected_lora_profile_id %}<a class="button small-button" href="/lora-library/{{ project.selected_lora_profile_id }}/edit">プロファイル</a>{% endif %}
+            {% if not project.archived_at and not project.deleted_at
+              and not project.selected_job_id and not project.selected_output_id and not project.selected_lora_profile_id
+              and project.profile_count == 0 and project.validation_run_count == 0 and project.completed_job_count == 0
+              and project.job_count == project.draft_job_count %}
+            <form method="post" action="/projects/{{ project.id }}/delete-draft">
+              <input type="hidden" name="delete_reason" value="Project一覧からの下書き整理">
+              <button
+                class="small-button danger"
+                type="submit"
+                onclick="return confirm('この下書きProjectと配下の未実行学習ジョブを削除済みに移動します。よろしいですか？')"
+              >削除</button>
+            </form>
+            {% endif %}
             {% if project.archived_at and not project.deleted_at %}<form method="post" action="/projects/{{ project.id }}/restore"><button class="small-button" type="submit">復元</button></form>{% endif %}
           </div>
         </td>

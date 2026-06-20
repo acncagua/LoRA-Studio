@@ -52,6 +52,83 @@ document.addEventListener("change", (event) => {
   }
 });
 
+function updateProjectModeForm(form) {
+  if (!form) {
+    return;
+  }
+  const mode = form.querySelector("input[name='project_mode']:checked")?.value || "new";
+  const fields = form.querySelector("[data-new-project-fields]");
+  const existingFields = form.querySelector("[data-existing-project-fields]");
+  const note = form.querySelector("[data-existing-project-note]");
+  const summary = form.querySelector("[data-existing-project-summary]");
+  const projectSelect = form.querySelector("select[name='project_id']");
+  const isExisting = mode === "existing";
+
+  if (fields) {
+    fields.hidden = isExisting;
+  }
+  if (existingFields) {
+    existingFields.hidden = !isExisting;
+  }
+  form.querySelectorAll("[data-new-project-field]").forEach((input) => {
+    input.disabled = isExisting;
+  });
+  if (note) {
+    note.hidden = !isExisting;
+  }
+  if (summary && projectSelect) {
+    const selected = projectSelect.options[projectSelect.selectedIndex];
+    const name = selected?.getAttribute("data-project-name") || "";
+    const trigger = selected?.getAttribute("data-project-trigger") || "";
+    summary.textContent = name
+      ? ` 現在の選択: ${name} / trigger ${trigger || "-"}`
+      : " 既存Projectを選択してください。";
+  }
+}
+
+function initProjectModeForms() {
+  document.querySelectorAll("[data-project-mode-form]").forEach((form) => {
+    updateProjectModeForm(form);
+    form.addEventListener("change", (event) => {
+      if (event.target.matches("input[name='project_mode'], select[name='project_id']")) {
+        updateProjectModeForm(form);
+      }
+    });
+  });
+}
+
+function updateDatasetVersionSelect(datasetSelect) {
+  if (!datasetSelect) {
+    return;
+  }
+  const form = datasetSelect.closest("form") || document;
+  const versionSelect = form.querySelector("[data-dataset-version-select]");
+  if (!versionSelect) {
+    return;
+  }
+  const datasetId = String(datasetSelect.value || "");
+  let selectedStillVisible = false;
+  Array.from(versionSelect.options).forEach((option) => {
+    const optionDatasetId = option.getAttribute("data-dataset-id");
+    const visible = !option.value || optionDatasetId === datasetId;
+    option.hidden = !visible;
+    option.disabled = !visible;
+    if (visible && option.selected) {
+      selectedStillVisible = true;
+    }
+  });
+  if (!selectedStillVisible) {
+    versionSelect.value = "";
+  }
+}
+
+function initDatasetVersionFilters() {
+  document.querySelectorAll("[data-dataset-select]").forEach((datasetSelect) => {
+    updateDatasetVersionSelect(datasetSelect);
+    datasetSelect.addEventListener("change", () => updateDatasetVersionSelect(datasetSelect));
+  });
+}
+
 document.addEventListener("submit", async (event) => {
   const form = event.target.closest("[data-review-form]");
   if (!form) {
@@ -123,6 +200,7 @@ document.addEventListener("submit", async (event) => {
   if (button) {
     button.disabled = true;
     button.dataset.originalText = button.textContent;
+    button.dataset.reviewPreparationBusy = "1";
     button.textContent = "開始中...";
   }
   updateReviewPreparationInline({
@@ -148,6 +226,7 @@ document.addEventListener("submit", async (event) => {
     showPageNotice(error.message || "レビュー準備を開始できませんでした。", "warning", form);
     if (button) {
       button.disabled = false;
+      delete button.dataset.reviewPreparationBusy;
       if (button.dataset.originalText) {
         button.textContent = button.dataset.originalText;
       }
@@ -198,6 +277,7 @@ function pollEmbeddingJobStatus(panel, jobId, statusText) {
       const payload = await response.json();
       const total = payload.total_count ?? 0;
       const processed = payload.processed_count ?? 0;
+      const coverageUpdated = updateEmbeddingCoverage(payload.coverage);
       if (payload.status === "completed") {
         statusText.textContent = `完了: ${payload.ready_count ?? processed} / ${total} 件`;
         panel.classList.remove("warning");
@@ -205,7 +285,7 @@ function pollEmbeddingJobStatus(panel, jobId, statusText) {
         enableEmbeddingButtons();
         window.setTimeout(async () => {
           const updated = await refreshMachineReviewReadiness();
-          if (!updated) {
+          if (!updated && !coverageUpdated) {
             reloadAfterEmbeddingJob(panel);
           }
         }, 300);
@@ -306,6 +386,20 @@ function enableEmbeddingButtons() {
       button.textContent = button.dataset.originalText;
     }
   });
+}
+
+function updateEmbeddingCoverage(coverage) {
+  if (!coverage) {
+    return false;
+  }
+  let updated = false;
+  Object.entries(coverage).forEach(([key, value]) => {
+    document.querySelectorAll(`[data-embedding-coverage-field="${key}"], [data-reference-embedding-field="${key}"]`).forEach((target) => {
+      target.textContent = value ?? 0;
+      updated = true;
+    });
+  });
+  return updated;
 }
 
 function coverageText(coverage) {
@@ -457,10 +551,40 @@ function updateReviewPreparationInline(payload, anchorForm = null) {
     log.classList.remove("empty");
     log.textContent = payload.log_tail || payload.message || "処理開始待ちです。sd-scripts起動後にログが更新されます。";
   }
+  const terminalStatuses = ["completed", "failed", "stopped"];
   const runButton = section.querySelector("[data-review-preparation-run-button]");
   if (runButton && ["completed", "failed", "stopped"].includes(payload.status)) {
-    runButton.disabled = false;
-    runButton.textContent = runButton.dataset.originalText || "候補レビューを開始";
+    if (payload.status === "completed") {
+      runButton.disabled = true;
+      runButton.textContent = payload.matrix_ready ? "Matrix作成済み" : "完了";
+    } else {
+      runButton.disabled = false;
+      runButton.textContent = runButton.dataset.originalText || "候補レビューを開始";
+    }
+  }
+  if (terminalStatuses.includes(payload.status)) {
+    document.querySelectorAll("[data-review-preparation-run-button][data-review-preparation-busy='1']").forEach((button) => {
+      delete button.dataset.reviewPreparationBusy;
+      if (payload.status === "completed" && payload.matrix_ready && payload.matrix_url) {
+        const link = document.createElement("a");
+        link.className = "button";
+        link.href = payload.matrix_url;
+        link.textContent = "レビューMatrixを開く";
+        const form = button.closest("form");
+        if (form) {
+          form.replaceWith(link);
+        } else {
+          button.replaceWith(link);
+        }
+        return;
+      }
+      button.disabled = false;
+      button.textContent = button.dataset.originalText || (payload.status === "completed" ? "レビュー準備完了" : "候補レビューを開始");
+    });
+    const message = payload.status === "completed"
+      ? (payload.matrix_ready ? "レビュー準備は完了しています。レビューMatrixを開けます。" : "レビュー準備は完了しています。レビューMatrixを作成できます。")
+      : "レビュー準備は終了しています。ログを確認してください。";
+    showPageNotice(message, payload.status === "completed" ? "info" : "warning", anchorForm);
   }
   if (payload.matrix_ready && payload.matrix_url && !section.querySelector(`[href="${payload.matrix_url}"]`)) {
     const actions = section.querySelector(".actions");
@@ -481,7 +605,8 @@ function initReviewPreparationPolling() {
   }
   const status = section.getAttribute("data-review-preparation-session-status");
   const sessionId = section.getAttribute("data-review-preparation-session-id");
-  if (sessionId && ["running", "starting"].includes(status)) {
+  const runningStatuses = ["starting", "running", "generating_images", "embedding_images", "machine_reviewing", "building_matrix"];
+  if (sessionId && runningStatuses.includes(status)) {
     startReviewPreparationPolling(sessionId, section);
   }
 }
@@ -501,7 +626,7 @@ function clearQueryNoticeParams(keys) {
 }
 
 function clearTransientNoticeParams() {
-  clearQueryNoticeParams(["embedding_error", "embedding_message", "embedding_job_id", "generation_error", "generation_message"]);
+  clearQueryNoticeParams(["embedding_error", "embedding_message", "embedding_job_id", "generation_error", "generation_message", "review_prepare", "review_prepare_error"]);
 }
 
 function initMachineReviewJobStatusPolling() {
@@ -594,6 +719,7 @@ async function addReferenceCandidate(form) {
     row?.classList.add("reference-candidate-added");
     appendReferenceImageCard(payload, form);
     updateReferenceCompleteness(payload.completeness);
+    updateReferenceEmbeddingStatus(payload.embedding);
     const select = form.querySelector("select");
     if (select) {
       select.disabled = true;
@@ -683,6 +809,7 @@ async function deleteReferenceImage(form) {
     }
     figure?.remove();
     updateReferenceCompleteness(payload.completeness);
+    updateReferenceEmbeddingStatus(payload.embedding);
   } catch (error) {
     if (button) {
       button.disabled = false;
@@ -731,6 +858,39 @@ function updateReferenceCompleteness(completeness) {
     row.append(name, count);
     tbody.append(row);
   });
+}
+
+function updateReferenceEmbeddingStatus(embedding) {
+  if (!embedding) {
+    return;
+  }
+  const coverage = embedding.coverage || {};
+  ["total", "ready", "stale", "failed", "missing", "not_computed"].forEach((key) => {
+    const target = document.querySelector(`[data-reference-embedding-field="${key}"]`);
+    if (target) {
+      target.textContent = coverage[key] ?? 0;
+    }
+  });
+
+  const readiness = embedding.readiness || {};
+  const label = document.querySelector("[data-reference-readiness-label]");
+  if (label) {
+    const text = readiness.label || "UNKNOWN";
+    label.textContent = text;
+    label.className = `label ${text.toLowerCase()}`;
+  }
+  const completeness = document.querySelector('[data-reference-readiness-field="completeness_label"]');
+  if (completeness) {
+    completeness.textContent = readiness.completeness_label || "UNKNOWN";
+  }
+  const imageCount = document.querySelector('[data-reference-readiness-field="image_count"]');
+  if (imageCount) {
+    imageCount.textContent = readiness.image_count ?? 0;
+  }
+  const embeddingCount = document.querySelector('[data-reference-readiness-field="embedding"]');
+  if (embeddingCount) {
+    embeddingCount.textContent = `${readiness.ready ?? 0} / ${readiness.total ?? 0}`;
+  }
 }
 
 async function submitAdoptionForm(form) {
@@ -1538,6 +1698,8 @@ document.addEventListener("DOMContentLoaded", initBulkValidationAssistSubmit);
 document.addEventListener("DOMContentLoaded", initValidationAssistLogPolling);
 document.addEventListener("DOMContentLoaded", clearTransientNoticeParams);
 document.addEventListener("DOMContentLoaded", restoreScrollAfterInlineRefresh);
+document.addEventListener("DOMContentLoaded", initProjectModeForms);
+document.addEventListener("DOMContentLoaded", initDatasetVersionFilters);
 document.addEventListener("DOMContentLoaded", initEmbeddingJobStatusPolling);
 document.addEventListener("DOMContentLoaded", initMachineReviewJobStatusPolling);
 document.addEventListener("DOMContentLoaded", initReviewPreparationPolling);

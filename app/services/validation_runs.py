@@ -25,7 +25,21 @@ def json_loads(value: str | None, default: Any) -> Any:
 
 
 def validation_presets() -> list[Any]:
-    return fetch_all("SELECT * FROM validation_presets WHERE is_active = 1 ORDER BY validation_level, name")
+    return fetch_all(
+        """
+        SELECT *
+        FROM validation_presets
+        WHERE is_active = 1
+        ORDER BY
+            CASE validation_level
+                WHEN 'quick' THEN 1
+                WHEN 'standard' THEN 2
+                WHEN 'extended' THEN 3
+                ELSE 99
+            END,
+            name
+        """
+    )
 
 
 def preset_expected_count(preset: Any) -> int:

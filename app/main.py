@@ -665,6 +665,7 @@ def job_action_state(job: Any, selected_output: Any | None = None) -> dict[str, 
     dirty = bool(job["config_dirty"] if "config_dirty" in job.keys() else 0)
     archived = bool(row_value(job, "archived_at"))
     deleted = bool(row_value(job, "deleted_at"))
+    deletable_draft = status in DELETABLE_JOB_STATUSES and not deleted
     return {
         "edit": status in EDITABLE_JOB_STATUSES and not archived and not deleted,
         "prepare": status in {"draft", "prepared", "prepared_dirty", "failed", "stopped"} and not archived and not deleted,
@@ -678,9 +679,9 @@ def job_action_state(job: Any, selected_output: Any | None = None) -> dict[str, 
         "compare": status == "completed",
         "export": status == "completed" and selected_output is not None,
         "contact_sheet": status == "completed",
-        "archive": status != "running" and not archived and not deleted,
+        "archive": status != "running" and not archived and not deleted and not deletable_draft,
         "restore": archived and not deleted,
-        "delete": status in DELETABLE_JOB_STATUSES and not deleted,
+        "delete": deletable_draft,
         "dirty": dirty,
     }
 
@@ -798,7 +799,31 @@ def recent_projects(limit: int = 8, view: str = "active") -> list[dict[str, Any]
     rows = fetch_all(
         f"""
         SELECT p.*, d.name AS dataset_name, sj.name AS selected_job_name,
-               so.epoch AS selected_epoch, vr.status AS latest_validation_status
+               so.epoch AS selected_epoch, vr.status AS latest_validation_status,
+               (
+                   SELECT COUNT(*) FROM training_jobs j
+                   WHERE j.project_id = p.id AND j.deleted_at IS NULL
+               ) AS job_count,
+               (
+                   SELECT COUNT(*) FROM training_jobs j
+                   WHERE j.project_id = p.id
+                     AND j.status IN ('draft', 'prepared', 'prepared_dirty')
+                     AND j.deleted_at IS NULL
+               ) AS draft_job_count,
+               (
+                   SELECT COUNT(*) FROM training_jobs j
+                   WHERE j.project_id = p.id
+                     AND j.status = 'completed'
+                     AND j.deleted_at IS NULL
+               ) AS completed_job_count,
+               (
+                   SELECT COUNT(*) FROM validation_runs vrc
+                   WHERE vrc.project_id = p.id
+               ) AS validation_run_count,
+               (
+                   SELECT COUNT(*) FROM selected_lora_profiles slp
+                   WHERE slp.project_id = p.id
+               ) AS profile_count
         FROM lora_projects p
         LEFT JOIN datasets d ON d.id = p.dataset_id
         LEFT JOIN training_jobs sj ON sj.id = p.selected_job_id
@@ -1237,6 +1262,20 @@ def project_delete_preview(project_id: int) -> dict[str, Any]:
     }
 
 
+def draft_project_delete_state(preview: dict[str, Any]) -> dict[str, str | bool]:
+    """Return whether a project can be directly soft-deleted as an unused draft."""
+    counts = preview["counts"]
+    if preview["selected_links"]:
+        return {"can_delete": False, "reason": "採用LoRAまたはLoRAプロファイルに紐づいているため、削除ではなくアーカイブしてください。"}
+    if counts["validation_runs"] > 0:
+        return {"can_delete": False, "reason": "検証Runがあるため、削除ではなくアーカイブしてください。"}
+    if counts["completed_jobs"] > 0:
+        return {"can_delete": False, "reason": "完了済み学習ジョブがあるため、削除ではなくアーカイブしてください。"}
+    if counts["jobs"] != counts["draft_jobs"]:
+        return {"can_delete": False, "reason": "下書き・準備済み以外の学習ジョブがあるため、削除ではなくアーカイブしてください。"}
+    return {"can_delete": True, "reason": "未実行のProjectとして削除できます。関連する下書き/準備済み学習ジョブも一覧から非表示にします。"}
+
+
 def cleanup_job_candidates(limit: int = 30) -> list[dict[str, Any]]:
     rows = fetch_all(
         """
@@ -1578,6 +1617,7 @@ def project_detail(request: Request, project_id: int) -> HTMLResponse:
     )
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    delete_preview = project_delete_preview(project_id)
     jobs = project_training_jobs(project_id)
     validation_runs = fetch_all(
         """
@@ -1655,6 +1695,8 @@ def project_detail(request: Request, project_id: int) -> HTMLResponse:
         workflow_status=project_workflow_status(project, jobs, validation_runs, recommendations),
         project_next_action=project_next_action(project, jobs, review_sessions, validation_runs, recommendations),
         pilot_guidance=pilot_recommendation(project),
+        draft_delete=draft_project_delete_state(delete_preview),
+        delete_preview=delete_preview,
         storage_summary=project_storage_summary(project_id),
         project_status_labels=PROJECT_STATUS_LABELS,
         status_labels=STATUS_LABELS,
@@ -1740,6 +1782,36 @@ def project_delete(project_id: int, delete_reason: str = Form("")) -> RedirectRe
             (now, delete_reason.strip(), now, project_id),
         )
     return RedirectResponse("/projects?view=deleted", status_code=303)
+
+
+@app.post("/projects/{project_id}/delete-draft")
+def project_delete_draft(project_id: int, delete_reason: str = Form("")) -> RedirectResponse:
+    preview = project_delete_preview(project_id)
+    delete_state = draft_project_delete_state(preview)
+    if not delete_state["can_delete"]:
+        raise HTTPException(status_code=400, detail=delete_state["reason"])
+    now = settings_now()
+    reason = delete_reason.strip() or "下書きProjectの整理"
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE lora_projects
+            SET deleted_at = COALESCE(deleted_at, ?), delete_reason = ?, updated_at = ?
+            WHERE id = ? AND deleted_at IS NULL
+            """,
+            (now, reason, now, project_id),
+        )
+        conn.execute(
+            """
+            UPDATE training_jobs
+            SET deleted_at = COALESCE(deleted_at, ?), delete_reason = ?, updated_at = ?
+            WHERE project_id = ?
+              AND deleted_at IS NULL
+              AND status IN ('draft', 'prepared', 'prepared_dirty')
+            """,
+            (now, f"Project #{project_id} の下書き削除に伴う整理", now, project_id),
+        )
+    return RedirectResponse("/projects", status_code=303)
 
 
 @app.post("/jobs/{job_id}/sync-project-selection")
@@ -1943,9 +2015,16 @@ def embedding_job_status(embedding_job_id: int) -> JSONResponse:
     log_path = Path(row["log_path"]) if row["log_path"] else None
     log_size = log_path.stat().st_size if log_path and log_path.exists() else 0
     log_updated_at = datetime.fromtimestamp(log_path.stat().st_mtime).isoformat(timespec="seconds") if log_path and log_path.exists() else ""
+    coverage = None
+    try:
+        coverage = embedding_coverage(row["job_type"], int(row["target_id"]), row["embedding_model_id"])
+    except Exception:
+        coverage = None
     return JSONResponse(
         {
             "id": row["id"],
+            "job_type": row["job_type"],
+            "target_id": row["target_id"],
             "status": row["status"],
             "total_count": row["total_count"],
             "processed_count": row["processed_count"],
@@ -1959,6 +2038,7 @@ def embedding_job_status(embedding_job_id: int) -> JSONResponse:
             "log_tail": _tail_file(row["log_path"], 20),
             "log_size": log_size,
             "log_updated_at": log_updated_at,
+            "coverage": coverage,
         }
     )
 
@@ -2580,6 +2660,27 @@ def job_delete_preview_page(request: Request, job_id: int) -> HTMLResponse:
     return render(request, "job_delete_preview.html", preview=job_delete_preview(job_id), status_labels=STATUS_LABELS)
 
 
+@app.post("/jobs/{job_id}/delete-draft")
+def job_delete_draft(job_id: int, delete_reason: str = Form("")) -> RedirectResponse:
+    preview = job_delete_preview(job_id)
+    job = preview["job"]
+    if job["status"] not in DELETABLE_JOB_STATUSES:
+        raise HTTPException(status_code=400, detail="下書き・準備済みの未実行学習ジョブだけ直接削除できます。")
+    if not preview["can_delete_db"]:
+        raise HTTPException(status_code=400, detail="この学習ジョブは削除できません。アーカイブを使ってください。")
+    reason = delete_reason.strip() or "未実行の下書き整理"
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE training_jobs
+            SET deleted_at = COALESCE(deleted_at, ?), delete_reason = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (settings_now(), reason, settings_now(), job_id),
+        )
+    return RedirectResponse("/jobs?view=deleted", status_code=303)
+
+
 @app.post("/jobs/{job_id}/delete")
 def job_delete(job_id: int, delete_reason: str = Form(""), delete_mode: str = Form("db_only")) -> RedirectResponse:
     preview = job_delete_preview(job_id)
@@ -2643,7 +2744,22 @@ def job_create(
     project_trigger_word: str = Form(""),
     dataset_version_id: str = Form(""),
 ) -> RedirectResponse:
+    def resolve_dataset_version_id(selected_dataset_id: int, raw_version_id: str) -> int | None:
+        if raw_version_id.strip():
+            version = fetch_one(
+                "SELECT id FROM dataset_versions WHERE id = ? AND dataset_id = ?",
+                (int(raw_version_id), int(selected_dataset_id)),
+            )
+            if version:
+                return int(version["id"])
+        latest_version = fetch_one(
+            "SELECT id FROM dataset_versions WHERE dataset_id = ? ORDER BY version_no DESC LIMIT 1",
+            (int(selected_dataset_id),),
+        )
+        return int(latest_version["id"]) if latest_version else None
+
     selected_project_id: int | None = None
+    job_trigger_word = ""
     if project_mode == "existing" and project_id.strip():
         project = fetch_one("SELECT * FROM lora_projects WHERE id = ?", (int(project_id),))
         if project is None:
@@ -2652,21 +2768,25 @@ def job_create(
         dataset_id = int(project["dataset_id"] or dataset_id)
         base_model_path = project["base_model_path"] or base_model_path
         dataset_version_id = str(project["current_dataset_version_id"] or dataset_version_id or "")
+        job_trigger_word = project["trigger_word"] or ""
     else:
         dataset = fetch_one("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
-        latest_version = fetch_one("SELECT id FROM dataset_versions WHERE dataset_id = ? ORDER BY version_no DESC LIMIT 1", (dataset_id,))
+        resolved_version_id = resolve_dataset_version_id(dataset_id, dataset_version_id)
+        job_trigger_word = project_trigger_word.strip() or (dataset["trigger_word"] if dataset else "")
         selected_project_id = create_lora_project(
             {
                 "name": project_name.strip() or name,
                 "description": project_description.strip(),
                 "dataset_id": dataset_id,
-                "dataset_version_id": int(dataset_version_id) if dataset_version_id.strip() else (latest_version["id"] if latest_version else None),
-                "trigger_word": project_trigger_word.strip() or (dataset["trigger_word"] if dataset else ""),
+                "dataset_version_id": resolved_version_id,
+                "trigger_word": job_trigger_word,
                 "base_model_path": base_model_path,
                 "status": "draft",
                 "memo": memo,
             }
         )
+        dataset_version_id = str(resolved_version_id or "")
+    resolved_job_version_id = resolve_dataset_version_id(dataset_id, dataset_version_id)
     job_id = create_job({
         "project_id": selected_project_id,
         "name": name,
@@ -2677,10 +2797,9 @@ def job_create(
         "output_name": output_name,
         "memo": memo,
         "sample_prompt_template_id": sample_prompt_template_id,
+        "dataset_version_id": resolved_job_version_id,
+        "trigger_word": job_trigger_word,
     })
-    if dataset_version_id.strip():
-        with connect() as conn:
-            conn.execute("UPDATE training_jobs SET dataset_version_id = ?, updated_at = ? WHERE id = ?", (int(dataset_version_id), settings_now(), job_id))
     return RedirectResponse(f"/jobs/{job_id}?created=1", status_code=303)
 
 
@@ -2693,6 +2812,62 @@ def list_available_models() -> list[dict[str, str]]:
     for path in sorted(p for p in models_dir.rglob("*") if p.is_file() and p.suffix.lower() in extensions):
         rows.append({"name": path.name, "path": str(path)})
     return rows
+
+
+REVIEW_PREPARATION_RUNNING_STATUSES = {
+    "starting",
+    "running",
+    "generating_images",
+    "embedding_images",
+    "machine_reviewing",
+    "building_matrix",
+}
+
+REVIEW_PREPARATION_START_MESSAGE_MARKERS = (
+    "Review Preparationを開始",
+    "レビュー準備を開始",
+)
+
+
+def _review_preparation_current_value(review_preparation: dict | None, key: str, default=None):
+    if not review_preparation:
+        return default
+    current = review_preparation.get("current")
+    if not current:
+        return default
+    if hasattr(current, "get"):
+        return current.get(key, default)
+    try:
+        return current[key]
+    except Exception:
+        return getattr(current, key, default)
+
+
+def normalize_review_prepare_message(
+    review_prepare: str | None,
+    review_preparation: dict | None,
+) -> str | None:
+    if not review_prepare or review_prepare == "1":
+        return review_prepare
+    if not any(marker in review_prepare for marker in REVIEW_PREPARATION_START_MESSAGE_MARKERS):
+        return review_prepare
+
+    status = str(_review_preparation_current_value(review_preparation, "status", "") or "")
+    primary_action = str(_review_preparation_current_value(review_preparation, "primary_action", "") or "")
+    can_open_matrix = bool(_review_preparation_current_value(review_preparation, "can_open_matrix", False))
+    has_matrix = bool(_review_preparation_current_value(review_preparation, "has_matrix", False))
+
+    if status in REVIEW_PREPARATION_RUNNING_STATUSES:
+        return review_prepare
+    if status == "completed":
+        if can_open_matrix or primary_action == "open_matrix":
+            return "レビュー準備は完了しています。レビューMatrixを開けます。"
+        if has_matrix:
+            return "レビュー準備は完了しています。Matrixファイルの状態を確認してください。"
+        return "レビュー準備は完了しています。レビューMatrixを作成できます。"
+    if status in {"failed", "stopped"}:
+        return "レビュー準備は終了しています。ログを確認してください。"
+    return None
 
 
 @app.get("/jobs/{job_id}", response_class=HTMLResponse)
@@ -2757,6 +2932,7 @@ def job_detail(
     selected_lora_profile = selected_lora_profile_for_display(job_id, selected_output)
     recommendations = list_recommendations(job_id)
     review_preparation = review_session_summary(job_id, current_session_id=review_session_id)
+    review_prepare = normalize_review_prepare_message(review_prepare, review_preparation)
     operation_monitor = job_operation_monitor(job, review_preparation)
     machine_score_map = score_map_for_samples(job_id)
     machine_epoch_summary = epoch_machine_summary(job_id)
@@ -3155,7 +3331,8 @@ def job_edit_save(
     if selected_version_id is None:
         version = fetch_one("SELECT id FROM dataset_versions WHERE dataset_id = ? ORDER BY version_no DESC LIMIT 1", (dataset_id,))
         selected_version_id = version["id"] if version else None
-    analysis = fetch_one("SELECT * FROM dataset_analysis WHERE dataset_id = ?", (dataset_id,))
+    trigger_word_for_job = project_or_job_trigger_word(job, dataset)
+    trigger_snapshot = trigger_snapshot_for_dataset(dataset, trigger_word_for_job)
     next_status = "prepared_dirty" if job["status"] in {"prepared", "prepared_dirty"} else "draft"
     dirty = 1 if job["status"] != "draft" else 0
     now = settings_now()
@@ -3187,10 +3364,10 @@ def job_edit_save(
                 json.dumps(params, ensure_ascii=False, indent=2),
                 next_status,
                 dirty,
-                dataset["trigger_word"] or "",
-                analysis["trigger_word_count"] if analysis else None,
-                analysis["trigger_word_rate"] if analysis else None,
-                analysis["trigger_consistency_label"] if analysis else None,
+                trigger_word_for_job,
+                trigger_snapshot["count"],
+                trigger_snapshot["rate"],
+                trigger_snapshot["label"],
                 now,
                 job_id,
             ),
@@ -4788,6 +4965,7 @@ def reference_dataset_image_add(
                 "file_size": image["file_size"] if image else None,
                 "caption": (image["caption_snapshot"] or image["caption"] or "") if image else "",
                 "completeness": reference_completeness_payload(set_id),
+                "embedding": reference_embedding_payload(set_id),
                 "message": "追加済み",
             }
         )
@@ -4861,6 +5039,7 @@ def reference_image_delete(
                 "ok": True,
                 "image_id": image_id,
                 "completeness": reference_completeness_payload(int(target_set_id)),
+                "embedding": reference_embedding_payload(int(target_set_id)),
                 "message": "取り消しました",
             }
         )
@@ -4893,6 +5072,33 @@ def reference_completeness_payload(set_id: int) -> dict[str, Any]:
             {"role": role, "label": ROLE_LABELS.get(role, role), "count": count}
             for role, count in roles.items()
         ],
+    }
+
+
+def reference_embedding_payload(set_id: int) -> dict[str, Any] | None:
+    detail = reference_detail(set_id)
+    reference_set = detail["reference_set"]
+    version_id = reference_set["current_version_id"]
+    if not version_id:
+        return None
+    coverage = embedding_coverage("reference_set_version", int(version_id))
+    readiness = reference_set_readiness(reference_set, coverage)
+    return {
+        "coverage": {
+            "total": int(coverage.get("total", 0)),
+            "ready": int(coverage.get("ready", 0)),
+            "stale": int(coverage.get("stale", 0)),
+            "failed": int(coverage.get("failed", 0)),
+            "missing": int(coverage.get("missing", 0)),
+            "not_computed": int(coverage.get("not_computed", 0)),
+        },
+        "readiness": {
+            "label": readiness.get("label", "UNKNOWN"),
+            "completeness_label": readiness.get("completeness_label", "UNKNOWN"),
+            "image_count": int(readiness.get("image_count", 0)),
+            "ready": int(readiness.get("ready", 0)),
+            "total": int(readiness.get("total", 0)),
+        },
     }
 
 
@@ -5055,6 +5261,65 @@ def update_params_from_form(params: dict[str, Any], values: dict[str, str]) -> N
             params[key] = value
 
 
+def job_trigger_word(job: Any, dataset: Any | None = None) -> str:
+    snapshot_word = job["trigger_word_at_creation"] if "trigger_word_at_creation" in job.keys() else ""
+    if snapshot_word:
+        return str(snapshot_word).strip()
+    if dataset is not None:
+        return str(dataset["trigger_word"] or "").strip()
+    return ""
+
+
+def project_or_job_trigger_word(job: Any, dataset: Any | None = None) -> str:
+    project_id = job["project_id"] if "project_id" in job.keys() else None
+    if project_id:
+        project = fetch_one("SELECT trigger_word FROM lora_projects WHERE id = ?", (project_id,))
+        if project and project["trigger_word"]:
+            return str(project["trigger_word"]).strip()
+    return job_trigger_word(job, dataset)
+
+
+def trigger_snapshot_for_dataset(dataset: Any, trigger_word: str) -> dict[str, Any]:
+    from app.services.dataset_scanner import scan_dataset, trigger_consistency
+
+    trigger = (trigger_word or "").strip()
+    dataset_trigger = str(dataset["trigger_word"] or "").strip()
+    if not trigger:
+        consistency = trigger_consistency("", 0, 0)
+        return {
+            "trigger_word": "",
+            "count": None,
+            "rate": None,
+            "label": consistency["label"],
+            "message": consistency["message"],
+        }
+
+    try:
+        scan = scan_dataset(Path(dataset["path"]), trigger)
+        count = scan["trigger_word_count"]
+        rate = scan["trigger_word_rate"]
+        consistency = scan["trigger_consistency"]
+        message = consistency["message"]
+        if dataset_trigger and trigger != dataset_trigger:
+            message += f" Dataset default trigger is '{dataset_trigger}'."
+        return {
+            "trigger_word": trigger,
+            "count": count,
+            "rate": rate,
+            "label": consistency["label"],
+            "message": message,
+        }
+    except Exception as exc:
+        consistency = trigger_consistency(trigger, 0, 0)
+        return {
+            "trigger_word": trigger,
+            "count": None,
+            "rate": None,
+            "label": "UNKNOWN",
+            "message": f"{consistency['message']} ({exc})",
+        }
+
+
 def job_trigger_status(job: Any, dataset: Any, sample_prompts: list[Any]) -> dict[str, Any]:
     if dataset is None:
         return {
@@ -5064,12 +5329,13 @@ def job_trigger_status(job: Any, dataset: Any, sample_prompts: list[Any]) -> dic
             "sample_prompt_uses_trigger": None,
             "sample_prompt_message": "Sample prompts are unavailable.",
         }
-    analysis = fetch_one("SELECT * FROM dataset_analysis WHERE dataset_id = ?", (dataset["id"],))
-    trigger_word = dataset["trigger_word"] or ""
-    current_label = analysis["trigger_consistency_label"] if analysis else "UNKNOWN"
-    current_count = analysis["trigger_word_count"] if analysis else None
-    current_rate = analysis["trigger_word_rate"] if analysis else None
-    current_message = analysis["trigger_consistency_message"] if analysis else "No current dataset analysis."
+    trigger_word = job_trigger_word(job, dataset)
+    dataset_trigger_word = dataset["trigger_word"] or ""
+    current_snapshot = trigger_snapshot_for_dataset(dataset, trigger_word)
+    current_label = current_snapshot["label"]
+    current_count = current_snapshot["count"]
+    current_rate = current_snapshot["rate"]
+    current_message = current_snapshot["message"]
     snapshot_label = job["trigger_consistency_label_at_creation"] if "trigger_consistency_label_at_creation" in job.keys() else None
     snapshot_word = job["trigger_word_at_creation"] if "trigger_word_at_creation" in job.keys() else None
     snapshot_count = job["trigger_occurrence_count_at_creation"] if "trigger_occurrence_count_at_creation" in job.keys() else None
@@ -5091,11 +5357,12 @@ def job_trigger_status(job: Any, dataset: Any, sample_prompts: list[Any]) -> dic
         if sample_prompt_uses_trigger and current_label == "ERROR":
             sample_prompt_message += "; sample prompt uses trigger_word, but captions do not contain it. Evaluation may be invalid."
         elif not sample_prompt_uses_trigger and trigger_word:
-            sample_prompt_message += "; sample prompts do not use the current dataset trigger_word."
+            sample_prompt_message += "; sample prompts do not use this job trigger_word."
     return {
-        "label": snapshot_label or current_label,
+        "label": current_label,
         "message": current_message,
         "trigger_word": trigger_word,
+        "dataset_trigger_word": dataset_trigger_word,
         "current_count": current_count,
         "current_rate": current_rate,
         "current_label": current_label,

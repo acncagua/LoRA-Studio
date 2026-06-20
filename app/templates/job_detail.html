@@ -1,4 +1,8 @@
 {% extends "base.html" %}{% block content %}
+{% set review_current = review_preparation.current if review_preparation and review_preparation.current else none %}
+{% set review_current_status = review_current.status if review_current else '' %}
+{% set review_running_statuses = ['starting', 'running', 'generating_images', 'embedding_images', 'machine_reviewing', 'building_matrix'] %}
+{% set review_prepare_stale_start = review_prepare and ('レビュー準備を開始' in review_prepare or 'Review Preparationを開始' in review_prepare) and review_current_status not in review_running_statuses %}
 <nav class="breadcrumbs"><a href="/">ダッシュボード</a><a href="/jobs">学習ジョブ一覧</a><span>学習ジョブ #{{ job.id }}</span></nav>
 <header class="page-head">
   <h1>#{{ job.id }} {{ job.name }}</h1>
@@ -19,7 +23,7 @@
 {% if created %}<p class="notice">学習ジョブを作成しました。次はファイル準備を実行してください。</p>{% endif %}
 {% if exported %}<p class="notice">出力しました: {{ exported }}</p>{% endif %}
 {% if preflight == 'edited' %}<p class="notice warning">編集内容を保存しました。実行前にファイル準備を再実行してください。</p>{% elif preflight %}<p class="notice {{ 'warning' if preflight.startswith('NG:') else '' }}">{{ preflight }}</p>{% endif %}
-{% if review_prepare %}<p class="notice">{{ review_prepare if review_prepare != '1' else '候補epochレビュー計画を作成しました。' }}</p>{% endif %}
+{% if review_prepare and not review_prepare_stale_start %}<p class="notice">{{ review_prepare if review_prepare != '1' else '候補epochレビュー計画を作成しました。' }}</p>{% endif %}
 {% if review_prepare_error %}<p class="notice warning">候補epochレビュー計画を作成できませんでした: {{ review_prepare_error }}</p>{% endif %}
 {% if action_state.dirty %}<p class="notice warning">設定が変更されています。実行前にファイル準備を再実行してください。</p>{% endif %}
 <section class="action-panel">
@@ -90,6 +94,12 @@
     {% if action_state.export %}<form method="post" action="/jobs/{{ job.id }}/export-selected-lora"><button type="submit">採用LoRA出力</button></form>{% else %}<span class="button disabled">採用LoRA出力</span>{% endif %}
     {% if action_state.contact_sheet %}<form method="post" action="/jobs/{{ job.id }}/export-contact-sheet"><button type="submit">コンタクトシート出力</button></form>{% else %}<span class="button disabled">コンタクトシート出力</span>{% endif %}
     {% if action_state.archive %}<form method="post" action="/jobs/{{ job.id }}/archive"><button type="submit">アーカイブ</button></form>{% endif %}
+    {% if action_state.delete %}
+    <form method="post" action="/jobs/{{ job.id }}/delete-draft" onsubmit="return confirm('この未実行の下書き学習ジョブを削除します。runsファイルは削除されません。よろしいですか？');">
+      <input type="hidden" name="delete_reason" value="未実行の下書き整理">
+      <button type="submit" class="danger">削除</button>
+    </form>
+    {% endif %}
     {% if action_state.restore %}<form method="post" action="/jobs/{{ job.id }}/restore"><button type="submit">アーカイブから復元</button></form>{% endif %}
       </div>
     </details>
@@ -111,7 +121,7 @@
     </div>
   </details>
 </nav>
-<section id="review-preparation" class="notice" {% if review_preparation.session %}data-review-preparation-session-id="{{ review_preparation.session.id }}" data-review-preparation-session-status="{{ review_preparation.session.status }}"{% endif %}>
+<section id="review-preparation" class="notice" {% if review_current %}data-review-preparation-session-id="{{ review_current.session_id }}" data-review-preparation-session-status="{{ review_current_status }}"{% endif %}>
   <h2>レビュー準備</h2>
   <p>採用前に候補epochを比較するための準備です。loss候補epochの前後を少数prompt / weightで生成し、横断Matrixで見比べます。採用後の45枚標準検証はweight検証Runとして別に実行します。</p>
   {% if review_preparation.current %}
@@ -167,19 +177,19 @@
       <summary>詳細操作</summary>
       <div class="inline-actions">
         <form method="post" action="/jobs/{{ job.id }}/review-preparation/run" data-review-preparation-run-form>
-          <button type="submit" class="danger" data-review-preparation-run-button {% if outputs|length == 0 or (review_preparation.session and review_preparation.session.status == 'running') %}disabled{% endif %}>候補レビューを再実行</button>
+          <button type="submit" class="danger" data-review-preparation-run-button {% if outputs|length == 0 or (review_current and review_current_status in review_running_statuses) %}disabled{% endif %}>候補レビューを再実行</button>
         </form>
         <span class="button small-button disabled" title="レビューセッションのアーカイブ / 削除は未実装です">セッションをアーカイブ / 削除</span>
       </div>
     </details>
-    {% if review_preparation.session and review_preparation.session.status == 'running' %}
-    <form method="post" action="/jobs/{{ job.id }}/review-sessions/{{ review_preparation.session.id }}/stop">
+    {% if review_current and review_current_status in review_running_statuses %}
+    <form method="post" action="/jobs/{{ job.id }}/review-sessions/{{ review_current.session_id }}/stop">
       <button type="submit" class="danger">レビュー準備を停止</button>
     </form>
     {% endif %}
   </div>
-  {% if review_preparation.session %}
-  <details id="review-preparation-log" class="log-tail-details" {% if review_preparation.session.status in ['running', 'failed', 'stopped'] %}open{% endif %}>
+  {% if review_current %}
+  <details id="review-preparation-log" class="log-tail-details" {% if review_current_status in review_running_statuses or review_current_status in ['failed', 'stopped'] %}open{% endif %}>
     <summary>レビュー準備ログ末尾（最大20行 / <span data-review-preparation-log-size>{{ review_preparation.log_size }}</span> bytes）</summary>
     <pre class="mini-log" data-review-preparation-log>{{ review_preparation.log_tail or 'ログはまだありません。' }}</pre>
   </details>
@@ -320,9 +330,18 @@
   <h2>整理 / 削除</h2>
   <p class="muted">実行済み学習ジョブは再現性維持のため、通常は削除ではなくアーカイブ推奨です。下書き・準備済みの未実行ジョブだけ安全に論理削除できます。</p>
   <div class="actions cleanup-actions">
-    {% if action_state.archive %}<form method="post" action="/jobs/{{ job.id }}/archive" class="cleanup-inline-form"><input name="archived_reason" placeholder="理由（任意）"><button type="submit">アーカイブ</button></form>{% endif %}
+    {% if action_state.delete %}
+    <form method="post" action="/jobs/{{ job.id }}/delete-draft" class="cleanup-inline-form" onsubmit="return confirm('この未実行の下書き学習ジョブを削除します。runsファイルは削除されません。よろしいですか？');">
+      <input name="delete_reason" placeholder="理由（任意）">
+      <button type="submit" class="danger">下書きJobを削除</button>
+    </form>
+    {% elif action_state.archive %}
+    <form method="post" action="/jobs/{{ job.id }}/archive" class="cleanup-inline-form"><input name="archived_reason" placeholder="理由（任意）"><button type="submit">アーカイブ</button></form>
+    {% endif %}
     {% if action_state.restore %}<form method="post" action="/jobs/{{ job.id }}/restore"><button type="submit">復元</button></form>{% endif %}
+    {% if not action_state.delete %}
     <a class="button danger" href="/jobs/{{ job.id }}/delete-preview">削除プレビューを開く</a>
+    {% endif %}
   </div>
 </section>
 <section id="runs-cleanup">
@@ -748,13 +767,13 @@
   <div class="notice embedding-coverage">
     <h2>サンプル画像Embedding状況</h2>
     <p>モデル: {{ sample_embedding_coverage.model_name }}</p>
-    <div class="summary-grid">
-      <div><span>サンプル</span><strong>{{ sample_embedding_coverage.total }}</strong></div>
-      <div><span>計算済み</span><strong>{{ sample_embedding_coverage.ready }}</strong></div>
-      <div><span>再計算必要</span><strong>{{ sample_embedding_coverage.stale }}</strong></div>
-      <div><span>失敗</span><strong>{{ sample_embedding_coverage.failed }}</strong></div>
-      <div><span>元画像なし</span><strong>{{ sample_embedding_coverage.missing }}</strong></div>
-      <div><span>未計算</span><strong>{{ sample_embedding_coverage.not_computed }}</strong></div>
+    <div class="summary-grid" data-embedding-coverage-panel>
+      <div><span>サンプル</span><strong data-embedding-coverage-field="total">{{ sample_embedding_coverage.total }}</strong></div>
+      <div><span>計算済み</span><strong data-embedding-coverage-field="ready">{{ sample_embedding_coverage.ready }}</strong></div>
+      <div><span>再計算必要</span><strong data-embedding-coverage-field="stale">{{ sample_embedding_coverage.stale }}</strong></div>
+      <div><span>失敗</span><strong data-embedding-coverage-field="failed">{{ sample_embedding_coverage.failed }}</strong></div>
+      <div><span>元画像なし</span><strong data-embedding-coverage-field="missing">{{ sample_embedding_coverage.missing }}</strong></div>
+      <div><span>未計算</span><strong data-embedding-coverage-field="not_computed">{{ sample_embedding_coverage.not_computed }}</strong></div>
     </div>
     <div class="actions compact-actions">
       <form method="post" action="/embeddings/jobs" data-embedding-job-form>
@@ -1132,6 +1151,25 @@
 
   window.addEventListener("hashchange", () => showTab(tabFromHash(), true));
   showTab(tabFromHash(), Boolean(location.hash && !location.hash.startsWith("#tab-")));
+
+  const moreMenu = document.querySelector(".page-tabs .tab-more");
+  if (moreMenu) {
+    moreMenu.addEventListener("click", (event) => {
+      const link = event.target.closest("[data-job-tab]");
+      if (link) {
+        moreMenu.open = false;
+      }
+    });
+    document.addEventListener("click", (event) => {
+      if (!moreMenu.open || moreMenu.contains(event.target)) return;
+      moreMenu.open = false;
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        moreMenu.open = false;
+      }
+    });
+  }
 })();
 </script>
 {% endblock %}

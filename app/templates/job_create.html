@@ -21,31 +21,40 @@
 </section>
 
 <form method="post" action="/jobs" class="form-grid wide">
-  <fieldset class="form-fieldset wide-field">
+  <fieldset class="form-fieldset wide-field" data-project-mode-form>
     <legend>Project（LoRA作成単位）</legend>
     <p class="muted">Projectは1つのLoRA作成作業です。学習ジョブはProject内の1回の学習実行として保存されます。</p>
     <label class="radio-line"><input type="radio" name="project_mode" value="new" {{ 'checked' if not selected_project else '' }}> 新しいProjectを作成</label>
     <label class="radio-line"><input type="radio" name="project_mode" value="existing" {{ 'checked' if selected_project else '' }}> 既存Projectに追加</label>
-    <label>既存Project
-      <select name="project_id">
-        <option value="">選択なし</option>
-        {% for project in projects %}
-        <option value="{{ project.id }}" {{ 'selected' if selected_project_id == project.id else '' }}>#{{ project.id }} {{ project.name }} / {{ project.trigger_word or '-' }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>Project名<input name="project_name" placeholder="例: fantasy_knight_v1"></label>
-    <label>Project説明<input name="project_description"></label>
-    <label>Projectトリガー<input name="project_trigger_word" placeholder="例: knight"></label>
+    <div data-existing-project-fields>
+      <label>既存Project
+        <select name="project_id">
+          <option value="">選択なし</option>
+          {% for project in projects %}
+          <option value="{{ project.id }}" data-project-name="{{ project.name }}" data-project-trigger="{{ project.trigger_word or '' }}" data-project-dataset="{{ project.dataset_id or '' }}" {{ 'selected' if selected_project_id == project.id else '' }}>#{{ project.id }} {{ project.name }} / {{ project.trigger_word or '-' }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <div data-existing-project-note class="notice compact" hidden>
+      既存Projectに追加する場合は、選択したProjectの設定を使います。
+      <span data-existing-project-summary></span>
+      Project名やProjectトリガーを変える場合は、新しいProjectとして作成してください。
+    </div>
+    <div data-new-project-fields>
+      <label>Project名<input name="project_name" placeholder="例: fantasy_knight_v1" data-new-project-field></label>
+      <label>Project説明<input name="project_description" data-new-project-field></label>
+      <label>Projectトリガー<input name="project_trigger_word" placeholder="例: knight" data-new-project-field></label>
+    </div>
   </fieldset>
 
   <label>学習ジョブ名<input name="name" required value="{{ (selected_project.name ~ ' 学習ジョブ') if selected_project else '' }}"></label>
-  <label>データセット<select name="dataset_id" required>{% for dataset in datasets %}<option value="{{ dataset.id }}">#{{ dataset.id }} {{ dataset.name }}</option>{% endfor %}</select></label>
+  <label>データセット<select name="dataset_id" required data-dataset-select>{% for dataset in datasets %}<option value="{{ dataset.id }}">#{{ dataset.id }} {{ dataset.name }}</option>{% endfor %}</select></label>
   <label>データセットバージョン
-    <select name="dataset_version_id">
+    <select name="dataset_version_id" data-dataset-version-select>
       <option value="">選択データセットの最新</option>
       {% for version in dataset_versions %}
-      <option value="{{ version.id }}">dataset #{{ version.dataset_id }} / v{{ version.version_no }} (#{{ version.id }})</option>
+      <option value="{{ version.id }}" data-dataset-id="{{ version.dataset_id }}">dataset #{{ version.dataset_id }} / v{{ version.version_no }} (#{{ version.id }})</option>
       {% endfor %}
     </select>
   </label>

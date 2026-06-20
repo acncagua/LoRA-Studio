@@ -7,13 +7,13 @@
 <section class="notice embedding-coverage">
   <h2>データセット画像Embedding状況</h2>
   <p>対象データセットVersion: #{{ embedding_target_id }} / モデル: {{ embedding_coverage.model_name }}</p>
-  <div class="summary-grid">
-    <div><span>画像</span><strong>{{ embedding_coverage.total }}</strong></div>
-    <div><span>計算済み</span><strong>{{ embedding_coverage.ready }}</strong></div>
-    <div><span>再計算必要</span><strong>{{ embedding_coverage.stale }}</strong></div>
-    <div><span>失敗</span><strong>{{ embedding_coverage.failed }}</strong></div>
-    <div><span>元画像なし</span><strong>{{ embedding_coverage.missing }}</strong></div>
-    <div><span>未計算</span><strong>{{ embedding_coverage.not_computed }}</strong></div>
+  <div class="summary-grid" data-embedding-coverage-panel>
+    <div><span>画像</span><strong data-embedding-coverage-field="total">{{ embedding_coverage.total }}</strong></div>
+    <div><span>計算済み</span><strong data-embedding-coverage-field="ready">{{ embedding_coverage.ready }}</strong></div>
+    <div><span>再計算必要</span><strong data-embedding-coverage-field="stale">{{ embedding_coverage.stale }}</strong></div>
+    <div><span>失敗</span><strong data-embedding-coverage-field="failed">{{ embedding_coverage.failed }}</strong></div>
+    <div><span>元画像なし</span><strong data-embedding-coverage-field="missing">{{ embedding_coverage.missing }}</strong></div>
+    <div><span>未計算</span><strong data-embedding-coverage-field="not_computed">{{ embedding_coverage.not_computed }}</strong></div>
   </div>
   <div class="actions compact-actions">
     <form method="post" action="/embeddings/jobs" data-embedding-job-form>

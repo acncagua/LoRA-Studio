@@ -102,7 +102,8 @@ def prepare_job_files(job: dict[str, Any], dataset: dict[str, Any]) -> dict[str,
     template = None
     if job.get("sample_prompt_template_id"):
         template = fetch_one("SELECT * FROM sample_prompt_templates WHERE id = ?", (job["sample_prompt_template_id"],))
-    prompts = build_sample_prompts_from_template(template, dataset.get("trigger_word") or "trigger_word", int(resolution[0]), int(resolution[1]))
+    trigger_word = job.get("trigger_word_at_creation") or dataset.get("trigger_word") or "trigger_word"
+    prompts = build_sample_prompts_from_template(template, trigger_word, int(resolution[0]), int(resolution[1]))
     write_sample_prompts(sample_prompts, prompts)
     replace_sample_prompts(int(job["id"]), prompts)
 

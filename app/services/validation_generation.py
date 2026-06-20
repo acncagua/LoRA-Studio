@@ -105,10 +105,6 @@ def prepare_validation_generation(run_id: int) -> dict[str, Any]:
         raise RuntimeError(f"ベースモデルが存在しません: {base_model_path}")
 
     conditions = [dict(row) for row in ensure_expected_conditions(run_id)]
-    supported = [row for row in conditions if not bool(row["hires_enabled"])]
-    skipped_hires = [row for row in conditions if bool(row["hires_enabled"])]
-    baseline = [row for row in supported if float(row["lora_weight"] or 0) == 0]
-    lora_rows = [row for row in supported if float(row["lora_weight"] or 0) != 0]
 
     gen_dir = generation_dir(run_id)
     out_dir = generation_output_dir(run_id)
@@ -116,56 +112,75 @@ def prepare_validation_generation(run_id: int) -> dict[str, Any]:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     all_prompt_path = gen_dir / "validation_prompts_for_sd_scripts.txt"
-    baseline_prompt_path = gen_dir / "validation_prompts_baseline_for_sd_scripts.txt"
-    lora_prompt_path = gen_dir / "validation_prompts_lora_for_sd_scripts.txt"
-    all_prompt_path.write_text("\n".join(prompt_line(run_id, row, include_am=float(row["lora_weight"] or 0) != 0) for row in supported) + ("\n" if supported else ""), encoding="utf-8")
-    baseline_prompt_path.write_text("\n".join(prompt_line(run_id, row, include_am=False) for row in baseline) + ("\n" if baseline else ""), encoding="utf-8")
-    lora_prompt_path.write_text("\n".join(prompt_line(run_id, row, include_am=True) for row in lora_rows) + ("\n" if lora_rows else ""), encoding="utf-8")
+    all_prompt_path.write_text(
+        "\n".join(prompt_line(run_id, row, include_am=float(row["lora_weight"] or 0) != 0) for row in conditions)
+        + ("\n" if conditions else ""),
+        encoding="utf-8",
+    )
 
     commands = []
-    base_args = common_gen_img_args(
-        venv_python=venv_python,
-        gen_img=gen_img,
-        base_model_path=base_model_path,
-        out_dir=out_dir,
-        model_family=str(job["model_family"] or ""),
-        mixed_precision=str(environment["mixed_precision"] or ""),
-        condition=supported[0] if supported else None,
-    )
-    if baseline:
-        commands.append(
-            {
-                "name": "baseline_weight_0_no_lora",
-                "baseline_mode": "no_network_weights",
-                "prompt_file": str(baseline_prompt_path),
-                "condition_count": len(baseline),
-                "argv": [*base_args, "--from_file", str(baseline_prompt_path)],
-            }
+    for hires_enabled in (False, True):
+        group_rows = [row for row in conditions if bool(row["hires_enabled"]) == hires_enabled]
+        if not group_rows:
+            continue
+        baseline = [row for row in group_rows if float(row["lora_weight"] or 0) == 0]
+        lora_rows = [row for row in group_rows if float(row["lora_weight"] or 0) != 0]
+        suffix = "hires" if hires_enabled else "nohires"
+        baseline_name = "baseline_weight_0_hires" if hires_enabled else "baseline_weight_0_no_lora"
+        lora_name = "lora_weights_hires" if hires_enabled else "lora_weights"
+        base_args = common_gen_img_args(
+            venv_python=venv_python,
+            gen_img=gen_img,
+            base_model_path=base_model_path,
+            out_dir=out_dir,
+            model_family=str(job["model_family"] or ""),
+            mixed_precision=str(environment["mixed_precision"] or ""),
+            condition=group_rows[0],
         )
-    if lora_rows:
-        commands.append(
-            {
-                "name": "lora_weights",
-                "baseline_mode": "",
-                "prompt_file": str(lora_prompt_path),
-                "condition_count": len(lora_rows),
-                "argv": [
-                    *base_args,
-                    "--from_file",
-                    str(lora_prompt_path),
-                    "--network_module",
-                    "networks.lora",
-                    "--network_weights",
-                    str(selected_lora_path),
-                ],
-            }
-        )
+        if baseline:
+            prompt_path = gen_dir / f"validation_prompts_baseline_{suffix}_for_sd_scripts.txt"
+            prompt_path.write_text(
+                "\n".join(prompt_line(run_id, row, include_am=False) for row in baseline) + "\n",
+                encoding="utf-8",
+            )
+            commands.append(
+                {
+                    "name": baseline_name,
+                    "baseline_mode": "no_network_weights",
+                    "prompt_file": str(prompt_path),
+                    "condition_count": len(baseline),
+                    "argv": [*base_args, "--from_file", str(prompt_path)],
+                }
+            )
+        if lora_rows:
+            prompt_path = gen_dir / f"validation_prompts_lora_{suffix}_for_sd_scripts.txt"
+            prompt_path.write_text(
+                "\n".join(prompt_line(run_id, row, include_am=True) for row in lora_rows) + "\n",
+                encoding="utf-8",
+            )
+            commands.append(
+                {
+                    "name": lora_name,
+                    "baseline_mode": "",
+                    "prompt_file": str(prompt_path),
+                    "condition_count": len(lora_rows),
+                    "argv": [
+                        *base_args,
+                        "--from_file",
+                        str(prompt_path),
+                        "--network_module",
+                        "networks.lora",
+                        "--network_weights",
+                        str(selected_lora_path),
+                    ],
+                }
+            )
 
     command_payload = {
         "commands": commands,
         "baseline_mode": "no_network_weights",
-        "skipped_hires_count": len(skipped_hires),
-        "skipped_hires_message": "Hires generation not implemented yet" if skipped_hires else "",
+        "skipped_hires_count": 0,
+        "skipped_hires_message": "",
         "all_prompt_file": str(all_prompt_path),
         "output_dir": str(out_dir),
     }
@@ -204,7 +219,7 @@ def prepare_validation_generation(run_id: int) -> dict[str, Any]:
         "command_txt": str(command_txt_path),
         "output_dir": str(out_dir),
         "commands": commands,
-        "skipped_hires_count": len(skipped_hires),
+        "skipped_hires_count": 0,
     }
 
 
@@ -251,6 +266,19 @@ def common_gen_img_args(
         args.append("--bf16")
     else:
         args.append("--fp16")
+    if condition.get("hires_enabled"):
+        hires_scale = float(condition.get("hires_scale") or 2.0)
+        first_stage_scale = 1.0 / hires_scale if hires_scale > 0 else 0.5
+        args.extend(["--highres_fix_scale", f"{first_stage_scale:g}"])
+        args.extend(["--highres_fix_steps", str(int(condition.get("steps") or 28))])
+        strength = condition.get("hires_denoising_strength")
+        if strength not in (None, ""):
+            args.extend(["--highres_fix_strength", f"{float(strength):g}"])
+        upscaler = str(condition.get("hires_upscaler") or "").strip()
+        if upscaler.lower() == "latent":
+            args.append("--highres_fix_latents_upscaling")
+        elif upscaler:
+            args.extend(["--highres_fix_upscaler", upscaler])
     return args
 
 
@@ -302,7 +330,7 @@ def command_text(payload: dict[str, Any]) -> str:
     lines = [
         "# Generated by LoRA-Studio",
         "# weight 0 baseline uses no network weights.",
-        "# Hires generation is skipped in this version.",
+        "# Hires conditions use sd-scripts highres fix. WebUI output is not expected to match exactly.",
         "",
     ]
     for command in payload["commands"]:
@@ -325,7 +353,7 @@ def start_validation_generation(run_id: int) -> int:
     payload = json.loads(generation["command_argv_json"] or "{}")
     commands = payload.get("commands") or []
     if not commands:
-        raise RuntimeError("生成対象の条件がありません。Hiresありのみの場合は初期版では生成できません。")
+        raise RuntimeError("生成対象の条件がありません。")
     environment = latest_environment()
     if environment is None:
         raise RuntimeError("sd-scripts環境が登録されていません。")
@@ -811,6 +839,7 @@ def write_validation_matrix(run_id: int) -> str:
     sections: dict[tuple[str, int], list[dict[str, Any]]] = {}
     for condition in conditions:
         sections.setdefault((condition["prompt_key"] or "prompt", int(condition["hires_enabled"] or 0)), []).append(condition)
+    has_hires_sections = any(key[1] for key in sections)
     lines = [
         "<!doctype html>",
         "<meta charset=\"utf-8\">",
@@ -819,11 +848,13 @@ def write_validation_matrix(run_id: int) -> str:
         f"<h1>検証Matrix #{run_id}</h1>",
         matrix_navigation(run_id),
         matrix_display_controls(),
-        "<p class=\"muted\">画像は25%表示を初期値にしています。必要に応じて25% / 50% / 75% / 100%を切り替えてください。画像クリックで100%表示を開けます。</p>",
+        matrix_hires_controls(has_hires_sections),
+        "<p class=\"muted\">画像は50%表示を初期値にしています。必要に応じて25% / 50% / 75% / 100%を切り替えてください。画像クリックで100%表示を開けます。</p>",
     ]
     for (prompt_key, hires), rows in sections.items():
         seeds = sorted({int(row["seed"]) for row in rows})
         weights = sorted({float(row["lora_weight"]) for row in rows})
+        lines.append(f"<section class=\"matrix-hires-section\" data-matrix-hires=\"{'hires' if hires else 'nohires'}\">")
         lines.append(f"<h2>{html.escape(prompt_key)} / {'Hiresあり' if hires else 'Hiresなし'}</h2>")
         lines.append("<table><thead><tr><th>seed \\ weight</th>")
         lines.extend(f"<th>{weight:g}</th>" for weight in weights)
@@ -849,6 +880,7 @@ def write_validation_matrix(run_id: int) -> str:
                 lines.append("</td>")
             lines.append("</tr>")
         lines.append("</tbody></table>")
+        lines.append("</section>")
     if grid_images:
         lines.append("<h2>Grid画像</h2><div>")
         for image in grid_images:
@@ -927,6 +959,7 @@ def build_epoch_cross_matrix_html(job_id: int, run_ids: list[int]) -> str:
             images_by_condition[int(image["expected_condition_id"])] = image
 
     title = f"Epoch横断Matrix Job #{job_id}"
+    has_hires_sections = any(key[1] for key in sections)
     lines = [
         "<!doctype html>",
         "<meta charset=\"utf-8\">",
@@ -935,7 +968,8 @@ def build_epoch_cross_matrix_html(job_id: int, run_ids: list[int]) -> str:
         f"<h1>{html.escape(title)}</h1>",
         cross_matrix_navigation(job_id),
         matrix_display_controls(),
-        "<p class=\"muted\">prompt単位でまとめ、同じprompt / seed / weight / Hires条件をEpoch横断で横並び比較します。画像は25%表示を初期値にしています。画像クリックで100%表示を開けます。</p>",
+        matrix_hires_controls(has_hires_sections),
+        "<p class=\"muted\">prompt単位でまとめ、同じprompt / seed / weight / Hires条件をEpoch横断で横並び比較します。画像は50%表示を初期値にしています。画像クリックで100%表示を開けます。</p>",
         "<section class=\"run-summary\"><h2>比較対象</h2><div class=\"summary-grid\">",
     ]
     for run in runs:
@@ -952,6 +986,7 @@ def build_epoch_cross_matrix_html(job_id: int, run_ids: list[int]) -> str:
     for (prompt_key, hires), section in sorted(sections.items(), key=lambda item: (item[0][0], item[0][1])):
         seeds = sorted(int(seed) for seed in section["seeds"])
         weights = sorted(float(weight) for weight in section["weights"])
+        lines.append(f"<section class=\"matrix-hires-section\" data-matrix-hires=\"{'hires' if hires else 'nohires'}\">")
         lines.append(f"<h2>{html.escape(prompt_key)} / {'Hiresあり' if hires else 'Hiresなし'}</h2>")
         for seed in seeds:
             for weight in weights:
@@ -979,6 +1014,7 @@ def build_epoch_cross_matrix_html(job_id: int, run_ids: list[int]) -> str:
                         lines.append(f"<div class=\"muted\">hash: {html.escape(str(condition['condition_hash'])[:12])}</div>")
                     lines.append("</td>")
                 lines.append("</tr></tbody></table>")
+        lines.append("</section>")
     if not sections:
         lines.append("<p class=\"notice\">比較できる検証条件がありません。検証Runの生成ファイル作成または条件再生成を確認してください。</p>")
     lines.append(cross_matrix_navigation(job_id))
@@ -1099,20 +1135,34 @@ def matrix_display_style() -> str:
     return (
         ".matrix-scale-panel{position:sticky;top:0;z-index:20;display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:10px 0 14px;padding:10px;border:1px solid #d8ddd4;border-radius:8px;background:#f6f7f4cc;backdrop-filter:blur(4px)}"
         ".matrix-scale-panel strong{margin-right:2px}.matrix-scale-button{border:0;border-radius:6px;background:#dce4df;color:#20231f;font:inherit;font-weight:700;padding:7px 10px;cursor:pointer}.matrix-scale-button.active{background:#2f7668;color:white}.matrix-scale-note{color:#657064;font-size:12px}"
+        ".matrix-hires-section.hidden{display:none}.matrix-hires-button{border:0;border-radius:6px;background:#dce4df;color:#20231f;font:inherit;font-weight:700;padding:7px 10px;cursor:pointer}.matrix-hires-button.active{background:#2f7668;color:white}"
         ".matrix-lightbox{position:fixed;inset:0;z-index:9999;display:none;background:rgba(20,24,21,.86);overflow:auto;padding:24px}.matrix-lightbox.open{display:block}.matrix-lightbox-inner{min-width:max-content}.matrix-lightbox img{display:block;width:auto;max-width:none;height:auto;border-radius:8px;background:white}.matrix-lightbox-close{position:sticky;top:0;left:0;margin-bottom:12px;border:0;border-radius:6px;background:#f6f7f4;color:#20231f;font:inherit;font-weight:700;padding:8px 12px;cursor:pointer}.matrix-lightbox-caption{color:white;font-weight:700;margin:0 0 8px}"
     )
 
 
 def matrix_display_controls() -> str:
     buttons = "".join(
-        f"<button class=\"matrix-scale-button{' active' if scale == 25 else ''}\" type=\"button\" data-matrix-scale=\"{scale}\">{scale}%</button>"
+        f"<button class=\"matrix-scale-button{' active' if scale == 50 else ''}\" type=\"button\" data-matrix-scale=\"{scale}\">{scale}%</button>"
         for scale in (25, 50, 75, 100)
     )
     return (
         "<div class=\"matrix-scale-panel\" data-matrix-scale-panel>"
         "<strong>画像表示倍率</strong>"
         f"{buttons}"
-        "<span class=\"matrix-scale-note\">初期値は25%。画像クリックで100%表示を開きます。</span>"
+        "<span class=\"matrix-scale-note\">初期値は50%。画像クリックで100%表示を開きます。</span>"
+        "</div>"
+    )
+
+
+def matrix_hires_controls(has_hires_sections: bool) -> str:
+    if not has_hires_sections:
+        return ""
+    return (
+        "<div class=\"matrix-scale-panel\" data-matrix-hires-panel>"
+        "<strong>Hires表示</strong>"
+        "<button class=\"matrix-hires-button active\" type=\"button\" data-matrix-hires-mode=\"nohires\">Hiresなし</button>"
+        "<button class=\"matrix-hires-button\" type=\"button\" data-matrix-hires-mode=\"hires\">Hiresあり</button>"
+        "<span class=\"matrix-scale-note\">画像サイズ差による崩れを避けるため、初期表示はHiresなしです。</span>"
         "</div>"
     )
 
@@ -1203,8 +1253,9 @@ def matrix_display_script() -> str:
     return """
 <script>
 (() => {
-  const DEFAULT_SCALE = 25;
+  const DEFAULT_SCALE = 50;
   let currentScale = DEFAULT_SCALE;
+  let currentHiresMode = "nohires";
 
   function scaledWidth(img) {
     const naturalWidth = img.naturalWidth || Number(img.dataset.naturalWidth) || 0;
@@ -1219,6 +1270,19 @@ def matrix_display_script() -> str:
     });
     document.querySelectorAll("[data-matrix-scale]").forEach((button) => {
       button.classList.toggle("active", Number(button.dataset.matrixScale) === currentScale);
+    });
+  }
+
+  function applyHiresMode() {
+    const sections = Array.from(document.querySelectorAll(".matrix-hires-section"));
+    if (!sections.length) return;
+    const modes = new Set(sections.map((section) => section.dataset.matrixHires || "nohires"));
+    if (!modes.has(currentHiresMode)) currentHiresMode = modes.has("nohires") ? "nohires" : Array.from(modes)[0];
+    sections.forEach((section) => {
+      section.classList.toggle("hidden", (section.dataset.matrixHires || "nohires") !== currentHiresMode);
+    });
+    document.querySelectorAll("[data-matrix-hires-mode]").forEach((button) => {
+      button.classList.toggle("active", button.dataset.matrixHiresMode === currentHiresMode);
     });
   }
 
@@ -1261,7 +1325,16 @@ def matrix_display_script() -> str:
     applyScale();
   });
 
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-matrix-hires-mode]");
+    if (!button) return;
+    currentHiresMode = button.dataset.matrixHiresMode || "nohires";
+    applyHiresMode();
+    applyScale();
+  });
+
   applyScale();
+  applyHiresMode();
 })();
 </script>
 """

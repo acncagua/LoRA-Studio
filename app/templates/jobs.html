@@ -50,7 +50,12 @@
             {% if job.actions.clone %}<form method="post" action="/jobs/{{ job.id }}/clone"><button class="small-button" type="submit">複製</button></form>{% else %}<span class="button small-button disabled">複製</span>{% endif %}
             {% if job.actions.archive %}<form method="post" action="/jobs/{{ job.id }}/archive"><button class="small-button" type="submit">アーカイブ</button></form>{% endif %}
             {% if job.actions.restore %}<form method="post" action="/jobs/{{ job.id }}/restore"><button class="small-button" type="submit">復元</button></form>{% endif %}
-            {% if job.actions.delete %}<a class="button small-button danger" href="/jobs/{{ job.id }}/delete-preview">削除</a>{% endif %}
+            {% if job.actions.delete %}
+            <form method="post" action="/jobs/{{ job.id }}/delete-draft" onsubmit="return confirm('この未実行の下書き学習ジョブを削除します。runsファイルは削除されません。よろしいですか？');">
+              <input type="hidden" name="delete_reason" value="未実行の下書き整理">
+              <button class="small-button danger" type="submit">削除</button>
+            </form>
+            {% endif %}
           </div>
         </td>
       </tr>
@@ -76,8 +81,14 @@
         <td>{{ job.cleanup_reason }}</td>
         <td>
           <div class="actions compact-actions">
+            {% if job.actions.delete %}
+            <form method="post" action="/jobs/{{ job.id }}/delete-draft" onsubmit="return confirm('この未実行の下書き学習ジョブを削除します。runsファイルは削除されません。よろしいですか？');">
+              <input type="hidden" name="delete_reason" value="整理候補から削除">
+              <button class="small-button danger" type="submit">削除</button>
+            </form>
+            {% elif job.actions.archive %}
             <form method="post" action="/jobs/{{ job.id }}/archive"><button class="small-button" type="submit">アーカイブ</button></form>
-            {% if job.actions.delete %}<a class="button small-button danger" href="/jobs/{{ job.id }}/delete-preview">削除確認</a>{% endif %}
+            {% endif %}
             <span class="button small-button disabled">残す</span>
           </div>
         </td>

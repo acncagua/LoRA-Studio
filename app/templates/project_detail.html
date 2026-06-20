@@ -266,6 +266,25 @@
   <summary>Project整理</summary>
   <div class="detail-panel">
   <p class="muted">Projectは作業単位なので、標準操作はアーカイブ推奨です。Dataset画像、caption、base model、sd-scripts環境はProject整理では削除しません。</p>
+  {% if not project.archived_at and not project.deleted_at %}
+  <section class="subtle-panel">
+    <h3>下書きProjectの削除</h3>
+    <p class="muted">
+      {{ draft_delete.reason }}
+      下書きProjectを削除すると、このProjectと未実行の学習ジョブを通常一覧から非表示にします。Dataset画像やモデル、sd-scripts環境は削除しません。
+    </p>
+    {% if draft_delete.can_delete %}
+    <form method="post" action="/projects/{{ project.id }}/delete-draft" class="form-grid">
+      <label>削除理由（任意）<input name="delete_reason" placeholder="例: 入力確認用Projectの整理"></label>
+      <button
+        type="submit"
+        class="danger"
+        onclick="return confirm('この下書きProjectと配下の未実行学習ジョブを削除済みに移動します。Datasetやモデル本体は削除しません。よろしいですか？')"
+      >下書きProjectを削除</button>
+    </form>
+    {% endif %}
+  </section>
+  {% endif %}
   <div class="actions">
     {% if not project.archived_at and not project.deleted_at %}
     <form method="post" action="/projects/{{ project.id }}/archive" class="form-grid">

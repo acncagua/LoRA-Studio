@@ -57,13 +57,13 @@
 <section class="notice embedding-coverage">
   <h2>リファレンス画像Embedding状況</h2>
   <p>対象リファレンスVersion: #{{ reference_set.current_version_id }} / モデル: {{ reference_embedding_coverage.model_name }}</p>
-  <div class="summary-grid">
-    <div><span>画像</span><strong>{{ reference_embedding_coverage.total }}</strong></div>
-    <div><span>計算済み</span><strong>{{ reference_embedding_coverage.ready }}</strong></div>
-    <div><span>再計算必要</span><strong>{{ reference_embedding_coverage.stale }}</strong></div>
-    <div><span>失敗</span><strong>{{ reference_embedding_coverage.failed }}</strong></div>
-    <div><span>元画像なし</span><strong>{{ reference_embedding_coverage.missing }}</strong></div>
-    <div><span>未計算</span><strong>{{ reference_embedding_coverage.not_computed }}</strong></div>
+  <div class="summary-grid" data-embedding-coverage-panel>
+    <div><span>画像</span><strong data-reference-embedding-field="total" data-embedding-coverage-field="total">{{ reference_embedding_coverage.total }}</strong></div>
+    <div><span>計算済み</span><strong data-reference-embedding-field="ready" data-embedding-coverage-field="ready">{{ reference_embedding_coverage.ready }}</strong></div>
+    <div><span>再計算必要</span><strong data-reference-embedding-field="stale" data-embedding-coverage-field="stale">{{ reference_embedding_coverage.stale }}</strong></div>
+    <div><span>失敗</span><strong data-reference-embedding-field="failed" data-embedding-coverage-field="failed">{{ reference_embedding_coverage.failed }}</strong></div>
+    <div><span>元画像なし</span><strong data-reference-embedding-field="missing" data-embedding-coverage-field="missing">{{ reference_embedding_coverage.missing }}</strong></div>
+    <div><span>未計算</span><strong data-reference-embedding-field="not_computed" data-embedding-coverage-field="not_computed">{{ reference_embedding_coverage.not_computed }}</strong></div>
   </div>
   {% if reference_set.completeness_label == 'ERROR' %}
   <p class="warning">リファレンスセットが未完成です。Embedding計算はできますが、機械補助レビューの信頼度は低くなります。</p>
@@ -92,10 +92,10 @@
   <h2>機械補助レビュー準備状況</h2>
   <p>リファレンスセットの枚数・構成チェック・Embedding状況から、機械補助レビューに使える状態かを確認します。</p>
   <div class="summary-grid">
-    <div><span>準備</span><strong><span class="label {{ machine_review_readiness.label|lower }}">{{ machine_review_readiness.label }}</span></strong></div>
-    <div><span>構成チェック</span><strong>{{ machine_review_readiness.completeness_label }}</strong></div>
-    <div><span>リファレンス画像</span><strong>{{ machine_review_readiness.image_count }}</strong></div>
-    <div><span>Embedding</span><strong>{{ machine_review_readiness.ready }} / {{ machine_review_readiness.total }}</strong></div>
+    <div><span>準備</span><strong><span class="label {{ machine_review_readiness.label|lower }}" data-reference-readiness-label>{{ machine_review_readiness.label }}</span></strong></div>
+    <div><span>構成チェック</span><strong data-reference-readiness-field="completeness_label">{{ machine_review_readiness.completeness_label }}</strong></div>
+    <div><span>リファレンス画像</span><strong data-reference-readiness-field="image_count">{{ machine_review_readiness.image_count }}</strong></div>
+    <div><span>Embedding</span><strong data-reference-readiness-field="embedding">{{ machine_review_readiness.ready }} / {{ machine_review_readiness.total }}</strong></div>
   </div>
   <p class="muted">リファレンスセットが1枚だけの場合、判定が偏る可能性があります。キャラLoRAは3〜5枚、画風LoRAは6〜12枚程度を推奨します。</p>
 </section>
