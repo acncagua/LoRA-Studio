@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>LoRAプロファイル反映の確認</h1>
+
+<section class="actions">
+  <a class="button secondary" href="/validation-runs/{{ run.id }}">検証Runへ戻る</a>
+  {% if profile %}<a class="button secondary" href="/lora-library/{{ profile.id }}/edit">LoRAプロファイルを開く</a>{% endif %}
+</section>
+
+<section>
+  <h2>反映対象</h2>
+  <dl>
+    <dt>検証Run</dt><dd>#{{ run.id }} {{ run.name }}</dd>
+    <dt>Pipeline</dt><dd>{{ display_validation_status(run.pipeline_status or '-') }}</dd>
+    <dt>Matrix</dt><dd>{% if run.matrix_path %}<a href="/validation-runs/{{ run.id }}/matrix" target="_blank" rel="noopener">Matrixを開く</a>{% else %}-{% endif %}</dd>
+    <dt>LoRAプロファイル</dt><dd>{% if profile %}#{{ profile.id }} {{ profile.name }}{% else %}-{% endif %}</dd>
+  </dl>
+</section>
+
+<section class="panel-grid">
+  <div>
+    <h2>現在のProfile値</h2>
+    <dl>
+      <dt>推奨weight</dt><dd>{% if profile %}{{ profile.recommended_weight_min if profile.recommended_weight_min is not none else '-' }} - {{ profile.recommended_weight_max if profile.recommended_weight_max is not none else '-' }}{% else %}-{% endif %}</dd>
+      <dt>弱め / 強め</dt><dd>{% if profile %}{{ profile.light_weight if profile.light_weight is not none else '-' }} / {{ profile.strong_weight if profile.strong_weight is not none else '-' }}{% else %}-{% endif %}</dd>
+      <dt>方針メモ</dt><dd>{% if profile %}{{ profile.validation_policy_memo or '-' }}{% else %}-{% endif %}</dd>
+    </dl>
+  </div>
+  <div>
+    <h2>反映後の値</h2>
+    <dl>
+      <dt>推奨weight</dt><dd>{{ suggestion.suggested_weight_min if suggestion.suggested_weight_min is not none else '-' }} - {{ suggestion.suggested_weight_max if suggestion.suggested_weight_max is not none else '-' }}</dd>
+      <dt>弱め / 強め</dt><dd>{{ suggestion.suggested_light_weight if suggestion.suggested_light_weight is not none else '-' }} / {{ suggestion.suggested_strong_weight if suggestion.suggested_strong_weight is not none else '-' }}</dd>
+      <dt>根拠</dt><dd>{{ suggestion.suggested_weight_reason }}</dd>
+    </dl>
+  </div>
+</section>
+
+<section>
+  <h2>反映</h2>
+  <p class="muted">この操作でLoRAプロファイルの推奨weightと検証方針メモを更新し、この検証Runをcompletedにします。</p>
+  <form method="post" action="/validation-runs/{{ run.id }}/apply" class="actions">
+    <button type="submit">この内容で反映する</button>
+    <a class="button secondary" href="/validation-runs/{{ run.id }}">キャンセル</a>
+  </form>
+</section>
+{% endblock %}

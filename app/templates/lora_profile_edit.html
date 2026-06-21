@@ -60,12 +60,24 @@
     <div>
       <h3>検証Run一覧</h3>
       <table>
-        <thead><tr><th>ID</th><th>プリセット</th><th>状態</th><th>画像数</th><th></th></tr></thead>
+        <thead><tr><th>ID</th><th>プリセット</th><th>状態</th><th>Pipeline</th><th>画像数</th><th>Suggested</th><th>反映</th><th></th></tr></thead>
         <tbody>
           {% for run in validation_runs %}
-          <tr><td>#{{ run.id }}</td><td>{{ run.name }}</td><td>{{ display_validation_status(run.status) }}</td><td>{{ run.actual_image_count }} / {{ run.expected_image_count }}</td><td><a class="button" href="/validation-runs/{{ run.id }}">詳細</a></td></tr>
+          <tr>
+            <td>#{{ run.id }}</td>
+            <td>{{ run.name }}</td>
+            <td>{{ display_validation_status(run.status) }}</td>
+            <td>{{ display_validation_status(run.pipeline_status) if run.pipeline_status else '-' }}</td>
+            <td>{{ run.actual_image_count }} / {{ run.expected_image_count }}</td>
+            <td>{{ run.suggested_weight_min if run.suggested_weight_min is not none else '-' }} - {{ run.suggested_weight_max if run.suggested_weight_max is not none else '-' }}</td>
+            <td>{{ run.profile_applied_at or '-' }}</td>
+            <td>
+              <a class="button" href="/validation-runs/{{ run.id }}">詳細</a>
+              {% if run.matrix_path %}<a class="button" href="/validation-runs/{{ run.id }}/matrix" target="_blank" rel="noopener">Matrix</a>{% endif %}
+            </td>
+          </tr>
           {% else %}
-          <tr><td colspan="5" class="muted">検証Runはまだありません。</td></tr>
+          <tr><td colspan="8" class="muted">検証Runはまだありません。</td></tr>
           {% endfor %}
         </tbody>
       </table>

@@ -26,7 +26,10 @@
         <td>{{ '%.1f%%'|format(profile.validation_coverage_rate * 100) if profile.validation_coverage_rate is not none else '-' }}</td>
         <td class="wrap-text">{{ profile.validation_warning }}</td>
         <td class="wrap-text">{{ profile.base_model or '-' }}</td>
-        <td class="nowrap"><a class="button small-button" href="/lora-library/{{ profile.id }}/edit">編集</a></td>
+        <td class="nowrap">
+          <a class="button small-button" href="/lora-library/{{ profile.id }}/edit">編集</a>
+          {% if profile.last_validation_matrix_path %}<a class="button small-button" href="/validation-runs/{{ profile.last_validation_run_id }}/matrix" target="_blank" rel="noopener">Matrix</a>{% endif %}
+        </td>
       </tr>
       {% else %}
       <tr><td colspan="14" class="muted">LoRAプロファイルはまだありません。ジョブ詳細で採用LoRAを選択すると作成されます。</td></tr>

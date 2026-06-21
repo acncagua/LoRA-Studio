@@ -72,6 +72,7 @@ from app.services.operation_monitor import (
     running_training_monitor,
     training_progress_from_log,
     validation_generation_monitor,
+    validation_pipeline_monitor,
 )
 from app.services.recommendations import create_draft_job_from_recommendation, list_recommendations, regenerate_recommendations, set_recommendation_status, write_recommendation_report
 from app.services.review_candidates import ensure_epoch_candidates, regenerate_epoch_candidates
@@ -126,10 +127,13 @@ from app.services.validation_generation import (
     start_validation_assist_sequence,
     start_validation_generation,
     start_validation_generation_sequence,
+    start_weight_calibration_pipeline,
     stop_validation_generation,
+    stop_weight_calibration_pipeline,
     validation_assist_log_state,
     validation_run_dir as generation_validation_run_dir,
     validation_generation_log_tail,
+    weight_calibration_preflight,
     write_validation_matrix,
 )
 from app.services.validation_runs import (
@@ -211,10 +215,18 @@ STATUS_TEXT_REPLACEMENTS = {
 
 VALIDATION_RUN_STATUS_LABELS = {
     "planned": "予定",
+    "generating_images": "画像生成中",
+    "importing_images": "画像取り込み中",
+    "embedding_images": "Embedding計算中",
+    "machine_reviewing": "機械補助レビュー中",
+    "building_matrix": "Matrix作成中",
+    "ready_for_review": "レビュー準備完了",
     "images_registered": "画像登録済み",
     "partially_reviewed": "一部レビュー済み",
     "reviewed": "レビュー済み",
     "completed": "完了",
+    "failed": "失敗",
+    "stopped": "停止",
     "archived": "アーカイブ",
 }
 
@@ -419,6 +431,11 @@ def review_session_operation_monitor(session: Any) -> dict[str, Any] | None:
 
 
 def validation_run_operation_monitor(run_id: int, generation: Any | None) -> dict[str, Any] | None:
+    run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (run_id,))
+    if run:
+        pipeline = validation_pipeline_monitor(dict(run))
+        if pipeline:
+            return pipeline
     generation_dict = dict(generation) if generation else None
     monitor = validation_generation_monitor(generation_dict, run_id)
     if monitor:
@@ -893,6 +910,29 @@ def project_next_action(project: Any, jobs: list[Any], review_sessions: list[Any
             "description": f"Review Matrix #{ready_session['id']} は準備済みです。画像を比較して採用epochを選択してください。",
             "href": f"/review-sessions/{ready_session['id']}",
             "button": "Review Sessionを開く",
+        }
+    ready_validation = next((run for run in validation_runs if (run["pipeline_status"] if "pipeline_status" in run.keys() else run["status"]) == "ready_for_review"), None)
+    if ready_validation:
+        return {
+            "label": "Weight Review Matrixを確認してください",
+            "description": f"Weight Calibration Run #{ready_validation['id']} はレビュー準備済みです。Matrixで推奨weightを確認してください。",
+            "href": f"/validation-runs/{ready_validation['id']}",
+            "button": "Weight検証Runを開く",
+        }
+    if project["selected_lora_profile_id"] and not validation_runs:
+        return {
+            "label": "Weight Calibrationを作成してください",
+            "description": "採用LoRAは選択済みです。採用後weight検証としてStandard Validation 45枚を作成できます。",
+            "href": f"/lora-library/{project['selected_lora_profile_id']}/edit",
+            "button": "Weight検証へ進む",
+        }
+    unapplied_validation = next((run for run in validation_runs if run["suggested_weight_min"] is not None and not run["profile_applied_at"]), None)
+    if unapplied_validation:
+        return {
+            "label": "推奨weightをProfileへ反映できます",
+            "description": f"Weight Calibration Run #{unapplied_validation['id']} のsuggestionが未反映です。",
+            "href": f"/validation-runs/{unapplied_validation['id']}",
+            "button": "Profile反映を確認",
         }
     incomplete_run = next(
         (
@@ -4193,6 +4233,7 @@ def validation_run_detail(request: Request, run_id: int, generation_error: str |
         apply_result=None,
         report_path=None,
         generation_error=generation_error,
+        validation_preflight=weight_calibration_preflight(run_id),
         running_generation=current_running_validation_generation(),
         validation_embedding_coverage=embedding_coverage("validation_run", run_id),
         machine_review_readiness=machine_review_readiness("validation_run_images", run_id),
@@ -4229,6 +4270,7 @@ def validation_run_export_report(request: Request, run_id: int) -> HTMLResponse:
         rubric_options=rubric_options(),
         apply_result=None,
         report_path=report_path,
+        validation_preflight=weight_calibration_preflight(run_id),
         validation_embedding_coverage=embedding_coverage("validation_run", run_id),
         machine_review_readiness=machine_review_readiness("validation_run_images", run_id),
         machine_review_scores=scores_for_validation_run(run_id),
@@ -4244,6 +4286,22 @@ def validation_run_suggest(run_id: int) -> RedirectResponse:
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
+
+
+@app.get("/validation-runs/{run_id}/apply", response_class=HTMLResponse)
+def validation_run_apply_confirm(request: Request, run_id: int) -> HTMLResponse:
+    try:
+        bundle = load_validation_run_bundle(run_id)
+        persist_suggestion(run_id)
+        bundle = load_validation_run_bundle(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return render(
+        request,
+        "validation_run_apply_confirm.html",
+        **bundle,
+        default_project_path=str(settings.ROOT_DIR),
+    )
 
 
 @app.post("/validation-runs/{run_id}/apply", response_class=HTMLResponse)
@@ -4264,6 +4322,7 @@ def validation_run_apply_to_profile(request: Request, run_id: int) -> HTMLRespon
         rubric_options=rubric_options(),
         apply_result=apply_result,
         report_path=None,
+        validation_preflight=weight_calibration_preflight(run_id),
         validation_embedding_coverage=embedding_coverage("validation_run", run_id),
         machine_review_readiness=machine_review_readiness("validation_run_images", run_id),
         machine_review_scores=scores_for_validation_run(run_id),
@@ -4287,6 +4346,42 @@ def validation_generation_prepare(run_id: int) -> RedirectResponse:
         prepare_validation_generation(run_id)
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
+
+
+@app.post("/validation-runs/{run_id}/pipeline/prepare")
+def validation_pipeline_prepare(run_id: int) -> RedirectResponse:
+    try:
+        prepare_validation_generation(run_id)
+        write_validation_prompt_pack(run_id)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
+
+
+@app.post("/validation-runs/{run_id}/pipeline/run")
+def validation_pipeline_run(run_id: int, force_warnings: str = Form("")) -> RedirectResponse:
+    try:
+        start_weight_calibration_pipeline(run_id, force_warnings=bool(force_warnings))
+    except RuntimeError as exc:
+        quoted = quote(str(exc), safe="")
+        return RedirectResponse(f"/validation-runs/{run_id}?generation_error={quoted}", status_code=303)
+    return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
+
+
+@app.post("/validation-runs/{run_id}/pipeline/retry")
+def validation_pipeline_retry(run_id: int) -> RedirectResponse:
+    try:
+        start_weight_calibration_pipeline(run_id, force_warnings=True)
+    except RuntimeError as exc:
+        quoted = quote(str(exc), safe="")
+        return RedirectResponse(f"/validation-runs/{run_id}?generation_error={quoted}", status_code=303)
+    return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
+
+
+@app.post("/validation-runs/{run_id}/pipeline/stop")
+def validation_pipeline_stop(run_id: int) -> RedirectResponse:
+    stop_weight_calibration_pipeline(run_id)
     return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
 
 
@@ -4868,6 +4963,11 @@ def lora_library_profiles(limit: int | None = None) -> list[dict[str, Any]]:
         last_run = fetch_one("SELECT * FROM validation_runs WHERE selected_lora_profile_id = ? OR job_id = ? ORDER BY id DESC LIMIT 1", (profile["id"], profile["job_id"]))
         profile["last_validation_run_id"] = last_run["id"] if last_run else None
         profile["last_validation_status"] = last_run["status"] if last_run else None
+        profile["last_validation_pipeline_status"] = last_run["pipeline_status"] if last_run and "pipeline_status" in last_run.keys() else None
+        profile["last_validation_matrix_path"] = last_run["matrix_path"] if last_run and "matrix_path" in last_run.keys() else None
+        profile["last_validation_suggested_weight_min"] = last_run["suggested_weight_min"] if last_run else None
+        profile["last_validation_suggested_weight_max"] = last_run["suggested_weight_max"] if last_run else None
+        profile["last_validation_profile_applied_at"] = last_run["profile_applied_at"] if last_run else None
         if last_run:
             try:
                 coverage = load_validation_run_bundle(int(last_run["id"]))["coverage"]

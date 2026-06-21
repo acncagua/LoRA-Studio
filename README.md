@@ -21,8 +21,8 @@ than training itself.
 
 ## Status
 
-Current release: v0.4.1
-Development phase: Phase 11.6.16.2
+Current release: v0.4.3
+Development phase: Phase 11.7
 
 The core workflow is operational and
 actively used for local LoRA production,
@@ -47,11 +47,33 @@ for the entire LoRA lifecycle.
 - Dataset Version Tracking
 - Training Job Management
 - Validation Runs
+- Weight Calibration Pipeline
 - Reference Sets
 - Experiment Comparison
 - LoRA Selection Workflow
 - Machine Review Assist
 - Storage Cleanup Support
+
+## Phase 11.7: Weight Calibration Pipeline
+
+Candidate Review and Weight Calibration are separate workflows.
+Candidate Review decides which epoch should be adopted.
+Weight Calibration runs after a LoRA / selected output has been adopted,
+and decides which LoRA weight range should be used.
+
+Standard Validation uses 45 images:
+3 prompts x 3 seeds x 5 weights.
+Weight `0` is the baseline and is generated without LoRA network weights.
+Standard comparison is based on non-Hires images.
+Extended Validation can include Hires on/off comparisons,
+but Hires results are treated as final appearance checks rather than the main weight recommendation basis.
+
+The pipeline can be started from Project, Job, Review Session, LoRA Profile,
+or Validation Run context. It prepares expected conditions, runs sd-scripts image generation,
+imports images, computes Embeddings, runs Machine Review Assist, and writes a Weight Review Matrix.
+Machine Assist is supporting information; human review fields take priority.
+Suggested weights are never applied automatically. Use the explicit Apply to Profile action
+to update the selected LoRA profile.
 
 ## Screenshots
 

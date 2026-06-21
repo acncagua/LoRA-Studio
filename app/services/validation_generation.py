@@ -558,6 +558,264 @@ def start_missing_validation_review_sequences(run_ids: list[int]) -> dict[str, A
     return {"run_ids": unique_run_ids, "status": "started"}
 
 
+def set_validation_pipeline_status(run_id: int, status: str, message: str = "") -> None:
+    now = utc_now()
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE validation_runs
+            SET pipeline_status = ?,
+                status = CASE
+                    WHEN ? IN ('ready_for_review') THEN 'reviewed'
+                    WHEN ? IN ('completed') THEN 'completed'
+                    WHEN ? IN ('failed') THEN 'failed'
+                    WHEN ? IN ('stopped') THEN 'stopped'
+                    ELSE status
+                END,
+                memo = CASE
+                    WHEN ? = '' THEN memo
+                    WHEN memo IS NULL OR memo = '' THEN ?
+                    ELSE memo || char(10) || ?
+                END,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (status, status, status, status, status, message, message, message, now, run_id),
+        )
+
+
+def weight_calibration_preflight(run_id: int) -> dict[str, Any]:
+    run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (run_id,))
+    if run is None:
+        raise ValueError(f"Validation Run not found: {run_id}")
+    job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (run["job_id"],))
+    profile = fetch_one("SELECT * FROM selected_lora_profiles WHERE id = ?", (run["selected_lora_profile_id"],)) if run["selected_lora_profile_id"] else None
+    output = fetch_one("SELECT * FROM training_outputs WHERE id = ?", (run["selected_output_id"],)) if run["selected_output_id"] else None
+    preset = validation_preset_for_run(run) if run["validation_preset_id"] else None
+    conditions = ensure_expected_conditions(run_id)
+    checks: list[dict[str, str]] = []
+
+    def add(level: str, key: str, message: str) -> None:
+        checks.append({"level": level, "key": key, "message": message})
+
+    def exists_file(value: Any) -> bool:
+        return bool(value) and Path(str(value)).exists()
+
+    if output is None and profile is None:
+        add("ERROR", "selected_output", "採用LoRA / selected outputが見つかりません。")
+    elif output is not None and not exists_file(output["file_path"]):
+        exported = profile["exported_model_path"] if profile and "exported_model_path" in profile.keys() else ""
+        if not exists_file(exported):
+            add("ERROR", "selected_output_file", f"selected outputのfile_pathが存在しません: {output['file_path']}")
+    lora_path = (output["file_path"] if output else "") or (profile["selected_model_path"] if profile else "")
+    if not exists_file(lora_path):
+        add("ERROR", "selected_lora_path", f"採用LoRAファイルが存在しません: {lora_path or '-'}")
+    try:
+        base_model_path = resolve_base_model_path(run, job, profile)
+        if not base_model_path.exists():
+            add("ERROR", "base_model", f"base modelが存在しません: {base_model_path}")
+    except Exception as exc:
+        add("ERROR", "base_model", str(exc))
+    if job is None or not job["dataset_version_id"]:
+        add("WARNING", "dataset_version", "dataset_version_idがありません。Dataset近傍比較が弱くなります。")
+    if not (run["trigger_word"] or "").strip():
+        add("ERROR", "trigger_word", "trigger_wordが未設定です。")
+    if preset is None:
+        add("ERROR", "validation_preset", "validation_preset_idが見つかりません。")
+    if not conditions:
+        add("ERROR", "expected_conditions", "Expected Conditionsが生成されていません。")
+    environment = latest_environment()
+    if environment is None:
+        add("ERROR", "sd_scripts", "sd-scripts環境が登録されていません。")
+    else:
+        sd_scripts_path = Path(environment["sd_scripts_path"])
+        venv_python = Path(environment["venv_python_path"])
+        if not sd_scripts_path.exists() or not (sd_scripts_path / "gen_img.py").exists() or not venv_python.exists():
+            add("ERROR", "sd_scripts", "sd-scripts path / gen_img.py / venv pythonのいずれかが存在しません。")
+    try:
+        from app.services.embedding_service import active_embedding_model, embedding_coverage, provider_preflight
+        from app.services.machine_review import context_for_validation_run
+
+        provider = active_embedding_model()
+        provider_state = provider_preflight(provider.get("id"))
+        if provider_state.get("status") not in {"OK"}:
+            messages = "; ".join(str(check.get("message") or check.get("name") or "") for check in provider_state.get("checks", []) if check.get("status") in {"WARNING", "ERROR"})
+            add("WARNING", "embedding_provider", messages or "Active embedding providerの準備状態を確認してください。")
+        context = context_for_validation_run(run_id)
+        if not context.get("reference_set_version_id"):
+            add("WARNING", "reference_set", "Reference Setが未設定です。機械補助レビューの根拠が弱くなります。")
+        else:
+            ref_cov = embedding_coverage("reference_set_version", int(context["reference_set_version_id"]))
+            if ref_cov and int(ref_cov.get("ready") or 0) < int(ref_cov.get("total") or 0):
+                add("WARNING", "reference_embedding", f"Reference Embeddingが未完了です: {ref_cov.get('ready')} / {ref_cov.get('total')}")
+        if context.get("dataset_version_id"):
+            dataset_cov = embedding_coverage("dataset_version", int(context["dataset_version_id"]))
+            if dataset_cov and int(dataset_cov.get("ready") or 0) < int(dataset_cov.get("total") or 0):
+                add("WARNING", "dataset_embedding", f"Dataset Embeddingが未完了です: {dataset_cov.get('ready')} / {dataset_cov.get('total')}")
+    except Exception as exc:
+        add("WARNING", "embedding_provider", f"Embedding provider確認を完了できませんでした: {exc}")
+    if fetch_one("SELECT id FROM training_jobs WHERE status = 'running' LIMIT 1"):
+        add("ERROR", "gpu_busy", "学習ジョブが実行中です。")
+    if fetch_one("SELECT id FROM review_sessions WHERE status IN ('running', 'generating_images', 'embedding_images', 'machine_reviewing', 'building_matrix') LIMIT 1"):
+        add("ERROR", "review_busy", "Review Session処理が実行中です。")
+    if fetch_one("SELECT id FROM validation_generation_runs WHERE status = 'running' LIMIT 1"):
+        add("ERROR", "validation_generation_busy", "検証画像生成が実行中です。")
+    if fetch_one("SELECT id FROM embedding_jobs WHERE status = 'running' LIMIT 1"):
+        add("ERROR", "embedding_busy", "Embedding Jobが実行中です。")
+    if fetch_one("SELECT id FROM machine_review_jobs WHERE status = 'running' LIMIT 1"):
+        add("ERROR", "machine_review_busy", "機械補助レビューJobが実行中です。")
+    has_errors = any(row["level"] == "ERROR" for row in checks)
+    return {"run_id": run_id, "checks": checks, "has_errors": has_errors, "error_count": sum(row["level"] == "ERROR" for row in checks), "warning_count": sum(row["level"] == "WARNING" for row in checks)}
+
+
+def start_weight_calibration_pipeline(run_id: int, force_warnings: bool = False) -> dict[str, Any]:
+    preflight = weight_calibration_preflight(run_id)
+    if preflight["has_errors"]:
+        raise RuntimeError("Weight Calibration PreflightでERRORがあります。内容を確認してください。")
+    if preflight["warning_count"] and not force_warnings:
+        raise RuntimeError("Weight Calibration PreflightにWARNINGがあります。確認してから再実行してください。")
+    if fetch_one("SELECT id FROM validation_runs WHERE pipeline_status IN ('generating_images', 'importing_images', 'embedding_images', 'machine_reviewing', 'building_matrix') LIMIT 1"):
+        raise RuntimeError("別のWeight Calibration Pipelineが実行中です。")
+    set_validation_pipeline_status(run_id, "generating_images")
+    thread = threading.Thread(target=_weight_calibration_pipeline_worker, args=(run_id,), daemon=True)
+    thread.start()
+    return {"run_id": run_id, "status": "started"}
+
+
+def stop_weight_calibration_pipeline(run_id: int) -> None:
+    stop_validation_generation(run_id)
+    set_validation_pipeline_status(run_id, "stopped", "Weight Calibration Pipeline was stopped by user.")
+
+
+def _weight_calibration_pipeline_worker(run_id: int) -> None:
+    log_path = validation_run_dir(run_id) / "generation" / "weight_calibration_pipeline.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    started = utc_now()
+    append_generation_note(log_path, f"Weight Calibration Pipeline started at {started}")
+    try:
+        set_validation_pipeline_status(run_id, "generating_images")
+        append_generation_note(log_path, "Stage: generating_images")
+        try:
+            start_validation_generation(run_id)
+            generation_status = _wait_for_latest_validation_generation(run_id)
+            append_generation_note(log_path, f"Generation status: {generation_status}")
+            if generation_status not in {"completed"}:
+                set_validation_pipeline_status(run_id, "failed", f"画像生成が {generation_status} で終了しました。")
+                return
+        except RuntimeError as exc:
+            if "生成対象の不足画像がありません" not in str(exc):
+                raise
+            append_generation_note(log_path, str(exc))
+
+        set_validation_pipeline_status(run_id, "importing_images")
+        append_generation_note(log_path, "Stage: importing_images")
+        generation = latest_generation_run(run_id)
+        imported = import_generated_images(run_id, int(generation["id"])) if generation else import_generated_images(run_id)
+        append_generation_note(log_path, f"Imported images: {imported}")
+
+        set_validation_pipeline_status(run_id, "embedding_images")
+        append_generation_note(log_path, "Stage: embedding_images")
+        _run_weight_calibration_embeddings(run_id, log_path)
+
+        set_validation_pipeline_status(run_id, "machine_reviewing")
+        append_generation_note(log_path, "Stage: machine_reviewing")
+        _run_weight_calibration_machine_review(run_id, log_path)
+
+        set_validation_pipeline_status(run_id, "building_matrix")
+        append_generation_note(log_path, "Stage: building_matrix")
+        matrix_path = write_validation_matrix(run_id)
+        suggestion = _persist_weight_calibration_suggestion(run_id)
+        now = utc_now()
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE validation_runs
+                SET matrix_path = ?, pipeline_status = 'ready_for_review',
+                    status = 'reviewed',
+                    suggested_weight_min = ?, suggested_weight_max = ?,
+                    suggested_light_weight = ?, suggested_strong_weight = ?,
+                    suggested_weight_reason = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    matrix_path,
+                    suggestion["suggested_weight_min"],
+                    suggestion["suggested_weight_max"],
+                    suggestion["suggested_light_weight"],
+                    suggestion["suggested_strong_weight"],
+                    suggestion["suggested_weight_reason"],
+                    now,
+                    run_id,
+                ),
+            )
+        append_generation_note(log_path, f"Matrix: {matrix_path}")
+        append_generation_note(log_path, "Weight Calibration Pipeline completed: ready_for_review")
+    except Exception as exc:
+        append_generation_note(log_path, f"Weight Calibration Pipeline failed: {exc}")
+        set_validation_pipeline_status(run_id, "failed", f"Weight Calibration Pipeline failed: {exc}")
+
+
+def _wait_for_latest_validation_generation(run_id: int, timeout_seconds: int = 60 * 60 * 6) -> str:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        generation = latest_generation_run(run_id)
+        if generation is None:
+            return "missing"
+        if generation["status"] in {"completed", "failed", "stopped", "superseded"}:
+            return str(generation["status"])
+        time.sleep(3)
+    return "timeout"
+
+
+def _run_weight_calibration_embeddings(run_id: int, log_path: Path) -> None:
+    from app.services.embedding_service import create_embedding_job, start_embedding_job
+    from app.services.machine_review import context_for_validation_run
+
+    context = context_for_validation_run(run_id)
+    targets: list[tuple[str, int]] = []
+    if context.get("reference_set_version_id"):
+        targets.append(("reference_set_version", int(context["reference_set_version_id"])))
+    if context.get("dataset_version_id"):
+        targets.append(("dataset_version", int(context["dataset_version_id"])))
+    targets.append(("validation_run", run_id))
+    for job_type, target_id in targets:
+        embedding_job_id = create_embedding_job(job_type, target_id, recompute="missing")
+        job = fetch_one("SELECT total_count FROM embedding_jobs WHERE id = ?", (embedding_job_id,))
+        total = int(job["total_count"] or 0) if job else 0
+        append_generation_note(log_path, f"Embedding Job #{embedding_job_id}: {job_type} #{target_id}, total={total}")
+        if total:
+            start_embedding_job(embedding_job_id)
+            status_text = _wait_for_background_job("embedding_jobs", embedding_job_id)
+        else:
+            complete_empty_background_job("embedding_jobs", embedding_job_id)
+            status_text = "completed"
+        if status_text != "completed":
+            raise RuntimeError(f"Embedding Job #{embedding_job_id} ended with {status_text}")
+
+
+def _run_weight_calibration_machine_review(run_id: int, log_path: Path) -> None:
+    from app.services.machine_review import create_machine_review_job, start_machine_review_job
+
+    review_job_id = create_machine_review_job("validation_run_images", run_id)
+    job = fetch_one("SELECT total_count FROM machine_review_jobs WHERE id = ?", (review_job_id,))
+    total = int(job["total_count"] or 0) if job else 0
+    append_generation_note(log_path, f"Machine Review Job #{review_job_id}: total={total}")
+    if total:
+        start_machine_review_job(review_job_id)
+        status_text = _wait_for_background_job("machine_review_jobs", review_job_id)
+    else:
+        complete_empty_background_job("machine_review_jobs", review_job_id)
+        status_text = "completed"
+    if status_text != "completed":
+        raise RuntimeError(f"Machine Review Job #{review_job_id} ended with {status_text}")
+
+
+def _persist_weight_calibration_suggestion(run_id: int) -> dict[str, Any]:
+    from app.services.validation_runs import persist_suggestion
+
+    return persist_suggestion(run_id)
+
+
 def _missing_validation_review_worker(run_id: int) -> None:
     log_path = validation_run_dir(run_id) / "generation" / "missing_review_sequence.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1069,7 +1327,7 @@ def write_validation_matrix(run_id: int) -> str:
         lines.append(f"<section class=\"matrix-hires-section\" data-matrix-hires=\"{'hires' if hires else 'nohires'}\">")
         lines.append(f"<h2>{html.escape(prompt_key)} / {'Hiresあり' if hires else 'Hiresなし'}</h2>")
         lines.append("<table><thead><tr><th>seed \\ weight</th>")
-        lines.extend(f"<th>{weight:g}</th>" for weight in weights)
+        lines.extend(f"<th>{weight:g}{' (baseline)' if float(weight) == 0 else ''}</th>" for weight in weights)
         lines.append("</tr></thead><tbody>")
         for seed in seeds:
             lines.append(f"<tr><th>{seed}</th>")
@@ -1102,6 +1360,8 @@ def write_validation_matrix(run_id: int) -> str:
     lines.append(matrix_display_script())
     lines.append(matrix_review_script())
     matrix_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    with connect() as conn:
+        conn.execute("UPDATE validation_runs SET matrix_path = ?, updated_at = ? WHERE id = ?", (str(matrix_path), utc_now(), run_id))
     return str(matrix_path)
 
 
@@ -1531,9 +1791,16 @@ def cross_matrix_missing_review_controls(job_id: int, run_ids: list[int]) -> str
 
 
 def matrix_navigation(run_id: int) -> str:
+    run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (run_id,))
+    job_link = f"<a class=\"button\" href=\"/jobs/{int(run['job_id'])}\">Jobへ戻る</a>" if run else ""
+    project_link = f"<a class=\"button\" href=\"/projects/{int(run['project_id'])}\">Projectへ戻る</a>" if run and run["project_id"] else ""
+    profile_link = f"<a class=\"button\" href=\"/lora-library/{int(run['selected_lora_profile_id'])}/edit\">LoRAプロファイルへ戻る</a>" if run and run["selected_lora_profile_id"] else ""
     return (
         "<div class=\"matrix-actions\">"
         f"<a class=\"button\" href=\"/validation-runs/{run_id}\">検証Runへ戻る</a>"
+        f"{job_link}"
+        f"{project_link}"
+        f"{profile_link}"
         "<button class=\"button secondary\" type=\"button\" onclick=\"window.close()\">閉じる</button>"
         "</div>"
     )

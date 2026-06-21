@@ -296,19 +296,24 @@ def create_validation_run(
             """
             INSERT INTO validation_runs(
                 project_id, job_id, selected_output_id, selected_lora_profile_id,
-                validation_preset_id, name, validation_level, base_model,
+                validation_run_kind, source_training_job_id, selected_epoch,
+                pipeline_status, validation_preset_id, name, validation_level, base_model,
                 trigger_word, lora_filename, recommended_weight_min,
                 recommended_weight_max, expected_image_count, actual_image_count,
                 status, preset_snapshot_json, reference_set_id, reference_set_version_id,
                 created_at, updated_at, memo
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'planned', ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'planned', ?, ?, ?, ?, ?, ?)
             """,
             (
                 job["project_id"] if "project_id" in job.keys() else None,
                 job_id,
                 selected_output["id"] if selected_output else profile["selected_output_id"] if profile else None,
                 profile["id"] if profile else profile_id,
+                "weight_calibration",
+                job_id,
+                selected_output["epoch"] if selected_output is not None else profile["selected_epoch"] if profile and "selected_epoch" in profile.keys() else None,
+                "planned",
                 preset["id"],
                 name,
                 preset["validation_level"],
@@ -749,7 +754,10 @@ def aggregate_by(rows: list[Any], key: str) -> list[dict[str, Any]]:
 
 
 def calculate_suggested_weights(run: Any, preset: Any, images: list[Any]) -> dict[str, Any]:
-    eligible = []
+    recommended = []
+    fallback = []
+    light_candidates = []
+    strong_candidates = []
     for image in images:
         if image["image_role"] != "individual" or image["lora_weight"] is None or image["ignored"]:
             continue
@@ -769,9 +777,16 @@ def calculate_suggested_weights(run: Any, preset: Any, images: list[Any]) -> dic
             continue
         if adoption == "reject":
             continue
-        if strength in {"recommended", "strong_but_usable"} or adoption in {"adopt", "candidate"} or overall >= 3:
-            eligible.append((weight, strength, adoption, overall))
-    weights = sorted({row[0] for row in eligible})
+        if strength == "weak_but_usable":
+            light_candidates.append(weight)
+        if strength == "strong_but_usable":
+            strong_candidates.append(weight)
+        if strength == "recommended" or adoption == "adopt":
+            recommended.append((weight, strength, adoption, overall))
+        elif adoption == "candidate" or overall >= 3 or strength in {"weak_but_usable", "strong_but_usable"}:
+            fallback.append((weight, strength, adoption, overall))
+    weights = sorted({row[0] for row in recommended})
+    fallback_weights = sorted({row[0] for row in fallback})
     all_weights = sorted({float(image["lora_weight"]) for image in images if image["image_role"] == "individual" and image["lora_weight"] is not None})
     if preset is not None:
         expected_weights = [float(value) for value in json_loads(preset["weights_json"], [])]
@@ -780,15 +795,23 @@ def calculate_suggested_weights(run: Any, preset: Any, images: list[Any]) -> dic
     too_weak = sorted({float(image["lora_weight"]) for image in images if image["strength_label"] == "too_weak" and image["lora_weight"] is not None})
     if weights:
         min_weight, max_weight = min(weights), max(weights)
+    elif fallback_weights:
+        min_weight, max_weight = min(fallback_weights), max(fallback_weights)
     else:
         min_weight = run["recommended_weight_min"]
         max_weight = run["recommended_weight_max"]
     if weights:
-        reason = "HiresなしのQuick/Standard評価で、ratingまたはRubricが採用候補のweightを推奨範囲にしました。"
+        reason = "HiresなしのQuick/Standard評価で、recommended/adoptのweightを推奨範囲にしました。weak/strong候補は補助範囲に分けています。"
+    elif fallback_weights:
+        reason = "recommended/adoptが未入力のため、candidateまたはrating 3以上のweightを暫定推奨範囲にしました。"
     else:
         reason = "評価済み条件が少ないため、既存Profile/Runの推奨weightを維持します。"
     light = min([weight for weight in all_weights if weight > 0], default=min_weight)
     strong = max([weight for weight in all_weights if weight > 0], default=max_weight)
+    if light_candidates:
+        light = min(light_candidates)
+    if strong_candidates:
+        strong = max(strong_candidates)
     if too_weak:
         light = min(too_weak)
     if too_strong:
@@ -902,7 +925,7 @@ def update_validation_run_counts(run_id: int) -> None:
     else:
         status = "partially_reviewed"
     current = fetch_one("SELECT status FROM validation_runs WHERE id = ?", (run_id,))
-    if current and current["status"] in {"completed", "archived"}:
+    if current and current["status"] in {"completed", "archived", "failed", "stopped"}:
         status = current["status"]
     now = utc_now()
     with connect() as conn:
@@ -913,7 +936,7 @@ def update_validation_run_counts(run_id: int) -> None:
 
 
 def update_validation_run_status(run_id: int, status: str) -> None:
-    allowed = {"planned", "images_registered", "partially_reviewed", "reviewed", "completed", "archived"}
+    allowed = {"planned", "images_registered", "partially_reviewed", "reviewed", "completed", "failed", "stopped", "archived"}
     if status not in allowed:
         raise ValueError(f"Invalid status: {status}")
     now = utc_now()

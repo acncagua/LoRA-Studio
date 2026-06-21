@@ -236,6 +236,43 @@ def validation_generation_monitor(generation: dict[str, Any] | None, run_id: int
     )
 
 
+def validation_pipeline_monitor(run: dict[str, Any]) -> dict[str, Any] | None:
+    status = run.get("pipeline_status")
+    if status not in {"generating_images", "importing_images", "embedding_images", "machine_reviewing", "building_matrix"}:
+        return None
+    run_id = int(run["id"])
+    log_path = Path("exports") / "validation_runs" / f"validation_run_{run_id:06d}" / "generation" / "weight_calibration_pipeline.log"
+    progress_current = int(run.get("actual_image_count") or 0)
+    progress_total = int(run.get("expected_image_count") or 0)
+    return operation_monitor(
+        operation_type="weight_calibration",
+        type_label="Weight Calibration",
+        status=status,
+        stage=validation_pipeline_stage_label(status),
+        started_at=run.get("updated_at"),
+        pid=None,
+        return_code=None,
+        progress_current=progress_current,
+        progress_total=progress_total,
+        log_path=str(log_path),
+        stop_action=f"/validation-runs/{run_id}/pipeline/stop",
+        full_log_anchor="#active-operation-monitor",
+        status_url="",
+        message="Weight Calibration Pipelineを実行中です。画像生成、Embedding、機械補助レビュー、Matrix作成を順に進めます。",
+    )
+
+
+def validation_pipeline_stage_label(status: str | None) -> str:
+    labels = {
+        "generating_images": "Generating images",
+        "importing_images": "Importing images",
+        "embedding_images": "Computing embeddings",
+        "machine_reviewing": "機械補助レビュー",
+        "building_matrix": "Building matrix",
+    }
+    return labels.get(status or "", status or "-")
+
+
 def embedding_monitor(job: dict[str, Any]) -> dict[str, Any] | None:
     if not job or job.get("status") != "running":
         return None

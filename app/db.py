@@ -259,6 +259,12 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         conn,
         "validation_runs",
         {
+            "validation_run_kind": "TEXT NOT NULL DEFAULT 'weight_calibration'",
+            "source_training_job_id": "INTEGER",
+            "source_review_session_id": "INTEGER",
+            "selected_epoch": "INTEGER",
+            "pipeline_status": "TEXT NOT NULL DEFAULT 'planned'",
+            "matrix_path": "TEXT",
             "suggested_weight_min": "REAL",
             "suggested_weight_max": "REAL",
             "suggested_light_weight": "REAL",
@@ -271,6 +277,19 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "reference_set_version_id": "INTEGER",
         },
     )
+    conn.execute("UPDATE validation_runs SET validation_run_kind = 'legacy' WHERE validation_run_kind IS NULL OR validation_run_kind = '' OR validation_preset_id IS NULL")
+    conn.execute("UPDATE validation_runs SET source_training_job_id = COALESCE(source_training_job_id, job_id)")
+    conn.execute(
+        """
+        UPDATE validation_runs
+        SET selected_epoch = (
+            SELECT epoch FROM training_outputs
+            WHERE training_outputs.id = validation_runs.selected_output_id
+        )
+        WHERE selected_epoch IS NULL AND selected_output_id IS NOT NULL
+        """
+    )
+    conn.execute("UPDATE validation_runs SET pipeline_status = COALESCE(NULLIF(pipeline_status, ''), status, 'planned')")
     ensure_columns(
         conn,
         "reference_sets",
@@ -1765,6 +1784,10 @@ CREATE TABLE IF NOT EXISTS validation_presets (
 CREATE TABLE IF NOT EXISTS validation_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER, job_id INTEGER NOT NULL,
     selected_output_id INTEGER, selected_lora_profile_id INTEGER,
+    validation_run_kind TEXT NOT NULL DEFAULT 'weight_calibration',
+    source_training_job_id INTEGER, source_review_session_id INTEGER,
+    selected_epoch INTEGER, pipeline_status TEXT NOT NULL DEFAULT 'planned',
+    matrix_path TEXT,
     validation_preset_id TEXT, name TEXT NOT NULL, validation_level TEXT,
     base_model TEXT, trigger_word TEXT, lora_filename TEXT,
     recommended_weight_min REAL, recommended_weight_max REAL,

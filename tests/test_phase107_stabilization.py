@@ -1451,6 +1451,105 @@ class Phase107StabilizationTests(IsolatedDbTest):
         expected = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ?", (run_id,))
         self.assertEqual(len(Path(payload["all_prompt_file"]).read_text(encoding="utf-8").splitlines()), expected["count"])
 
+    def test_weight_calibration_run_metadata_and_preflight(self) -> None:
+        from app.services.validation_generation import weight_calibration_preflight
+
+        run_id, selected_output_id = self.create_validation_generation_fixture()
+        run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (run_id,))
+        conditions = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ?", (run_id,))
+        preflight = weight_calibration_preflight(run_id)
+
+        self.assertEqual(run["validation_run_kind"], "weight_calibration")
+        self.assertEqual(run["source_training_job_id"], run["job_id"])
+        self.assertEqual(run["selected_output_id"], selected_output_id)
+        self.assertEqual(run["pipeline_status"], "planned")
+        self.assertEqual(conditions["count"], 45)
+        self.assertFalse(preflight["has_errors"])
+        self.assertTrue(any(row["key"] == "reference_set" for row in preflight["checks"]))
+
+    def test_weight_calibration_pipeline_start_sets_status(self) -> None:
+        from app.services.validation_generation import start_weight_calibration_pipeline
+
+        run_id, _ = self.create_validation_generation_fixture()
+        with mock.patch("app.services.validation_generation.threading.Thread") as thread_mock:
+            result = start_weight_calibration_pipeline(run_id, force_warnings=True)
+
+        run = fetch_one("SELECT pipeline_status FROM validation_runs WHERE id = ?", (run_id,))
+        self.assertEqual(result["status"], "started")
+        self.assertEqual(run["pipeline_status"], "generating_images")
+        thread_mock.return_value.start.assert_called_once()
+
+    def test_weight_calibration_pipeline_stop_sets_stopped_status(self) -> None:
+        from app.services.validation_generation import stop_weight_calibration_pipeline
+
+        run_id, _ = self.create_validation_generation_fixture()
+        with connect() as conn:
+            conn.execute("UPDATE validation_runs SET pipeline_status = 'generating_images' WHERE id = ?", (run_id,))
+        stop_weight_calibration_pipeline(run_id)
+
+        run = fetch_one("SELECT status, pipeline_status, memo FROM validation_runs WHERE id = ?", (run_id,))
+        self.assertEqual(run["status"], "stopped")
+        self.assertEqual(run["pipeline_status"], "stopped")
+        self.assertIn("stopped by user", run["memo"])
+
+    def test_weight_calibration_suggestion_keeps_strong_usable_outside_recommended_range(self) -> None:
+        from app.main import register_validation_run_image
+        from app.services.validation_runs import load_validation_run_bundle
+
+        run_id, _ = self.create_validation_generation_fixture()
+        labels = {
+            0.4: ("weak_but_usable", "candidate", 3),
+            0.6: ("recommended", "adopt", 4),
+            0.8: ("recommended", "adopt", 4),
+            1.0: ("strong_but_usable", "candidate", 3),
+        }
+        for weight, (strength, adoption, rating) in labels.items():
+            condition = fetch_one(
+                """
+                SELECT * FROM validation_expected_conditions
+                WHERE validation_run_id = ? AND lora_weight = ?
+                ORDER BY expected_order LIMIT 1
+                """,
+                (run_id, weight),
+            )
+            source = self.make_png(self.root / "generated" / f"w{weight}.png")
+            register_validation_run_image(
+                run_id,
+                str(source),
+                "individual",
+                condition["prompt_key"],
+                int(condition["seed"]),
+                weight,
+                bool(condition["hires_enabled"]),
+                "",
+            )
+            with connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE validation_images
+                    SET rating_overall = ?, strength_label = ?, adoption_label = ?
+                    WHERE validation_run_id = ? AND expected_condition_id = ?
+                    """,
+                    (rating, strength, adoption, run_id, condition["id"]),
+                )
+
+        suggestion = load_validation_run_bundle(run_id)["suggestion"]
+
+        self.assertEqual(suggestion["suggested_weight_min"], 0.6)
+        self.assertEqual(suggestion["suggested_weight_max"], 0.8)
+        self.assertEqual(suggestion["suggested_light_weight"], 0.4)
+        self.assertEqual(suggestion["suggested_strong_weight"], 1.0)
+
+    def test_weight_review_matrix_updates_run_matrix_path(self) -> None:
+        from app.services.validation_generation import write_validation_matrix
+
+        run_id, _ = self.create_validation_generation_fixture()
+        matrix_path = write_validation_matrix(run_id)
+        run = fetch_one("SELECT matrix_path FROM validation_runs WHERE id = ?", (run_id,))
+
+        self.assertEqual(run["matrix_path"], matrix_path)
+        self.assertTrue(Path(matrix_path).exists())
+
     def test_bulk_validation_generation_persists_queued_runs(self) -> None:
         from app.main import current_running_validation_generation
         from app.services.validation_generation import start_validation_generation_sequence

@@ -31,10 +31,15 @@
     <h2>ステータス</h2>
     <dl>
       <dt>状態</dt><dd><span class="label {{ run.status }}">{{ display_validation_status(run.status) }}</span></dd>
+      <dt>Pipeline</dt><dd><span class="label {{ run.pipeline_status or 'planned' }}">{{ display_validation_status(run.pipeline_status or 'planned') }}</span></dd>
+      <dt>種別</dt><dd>{{ run.validation_run_kind or 'legacy' }}</dd>
+      <dt>採用epoch</dt><dd>{{ run.selected_epoch if run.selected_epoch is not none else '-' }}</dd>
       <dt>登録 / 予定</dt><dd>{{ coverage.registered_condition_count }} / {{ coverage.expected_image_count }}</dd>
       <dt>レビュー済み</dt><dd>{{ coverage.reviewed_condition_count }}</dd>
       <dt>未登録</dt><dd>{{ coverage.missing_condition_count }}</dd>
       <dt>推奨weight</dt><dd>{{ suggestion.suggested_weight_min if suggestion.suggested_weight_min is not none else '-' }} - {{ suggestion.suggested_weight_max if suggestion.suggested_weight_max is not none else '-' }}</dd>
+      <dt>Profile反映</dt><dd>{{ run.profile_applied_at or '-' }}</dd>
+      <dt>Matrix</dt><dd>{% if run.matrix_path %}{{ run.matrix_path }}{% else %}-{% endif %}</dd>
       <dt>画像生成</dt><dd>{% if generation %}<span class="label {{ generation.status }}" data-detail-generation-status-label>{{ generation.status }}</span>{% else %}<span data-detail-generation-status-label>-</span>{% endif %}</dd>
       {% if generation %}
       <dt>生成PID</dt><dd data-detail-generation-pid>{{ generation.process_id or '-' }}</dd>
@@ -46,7 +51,15 @@
   </div>
   <div>
     <h2>次にやること</h2>
-    {% if generation and generation.status == 'running' %}
+    {% if run.pipeline_status in ['generating_images', 'importing_images', 'embedding_images', 'machine_reviewing', 'building_matrix'] %}
+    <p>Weight Calibration Pipelineが実行中です。進捗とログを確認してください。</p>
+    {% elif run.pipeline_status == 'ready_for_review' %}
+    <p>Weight Review Matrixを開いて、人間評価と推奨weightを確認してください。</p>
+    {% elif run.pipeline_status == 'completed' %}
+    <p>Profile反映まで完了しています。必要ならMatrixやレポートを確認できます。</p>
+    {% elif run.pipeline_status in ['failed', 'stopped'] %}
+    <p>ログを確認し、必要ならRetryしてください。</p>
+    {% elif generation and generation.status == 'running' %}
     <p>sd-scripts画像生成が実行中です。必要ならログ末尾を確認して、完了後に生成画像を取り込んでください。</p>
     {% elif coverage.missing_condition_count > 0 %}
     <p>未登録の検証画像があります。画像生成または手動登録でカバレッジを埋めてください。</p>
@@ -77,15 +90,45 @@
     {% endif %}
     <p class="muted">画像生成の実行時に、sd-scripts用の生成ファイルを最新条件で自動作成します。</p>
     <div class="actions compact-actions">
+      <form method="post" action="/validation-runs/{{ run.id }}/pipeline/prepare"><button type="submit">Prepare Weight Calibration</button></form>
+      <form method="post" action="/validation-runs/{{ run.id }}/pipeline/run">
+        {% if validation_preflight and validation_preflight.warning_count and not validation_preflight.has_errors %}<input type="hidden" name="force_warnings" value="1">{% endif %}
+        <button type="submit" {% if operation_monitor or (validation_preflight and validation_preflight.has_errors) %}disabled{% endif %}>Weight検証を開始</button>
+      </form>
+      <form method="post" action="/validation-runs/{{ run.id }}/pipeline/stop"><button type="submit" class="danger" {% if run.pipeline_status not in ['generating_images', 'importing_images', 'embedding_images', 'machine_reviewing', 'building_matrix'] %}disabled{% endif %}>Stop</button></form>
+      <form method="post" action="/validation-runs/{{ run.id }}/pipeline/retry"><button type="submit" {% if run.pipeline_status not in ['failed', 'stopped'] %}disabled{% endif %}>Retry</button></form>
       <form method="post" action="/validation-runs/{{ run.id }}/generation/run" data-generation-run-form><button type="submit" data-generation-run-button {% if (generation and generation.status == 'running') or (running_generation and (not generation or generation.status != 'running')) %}disabled{% endif %}>画像生成を実行</button></form>
       <form method="post" action="/validation-runs/{{ run.id }}/generation/stop" data-generation-stop-form><button type="submit" class="danger" data-generation-stop-button {% if not generation or generation.status != 'running' %}disabled{% endif %}>画像生成を停止</button></form>
-      <form method="post" action="/validation-runs/{{ run.id }}/generation/import"><button type="submit">生成画像を再取り込み</button></form>
+      <form method="post" action="/validation-runs/{{ run.id }}/generation/import"><button type="submit">Reimport</button></form>
       <form method="post" action="/validation-runs/{{ run.id }}/export-report"><button type="submit">検証レポート出力</button></form>
-      {% if matrix_exists %}<a class="button" href="/validation-runs/{{ run.id }}/matrix" target="_blank" rel="noopener">検証Matrixを開く</a>{% endif %}
+      {% if matrix_exists or run.matrix_path %}<a class="button" href="/validation-runs/{{ run.id }}/matrix" target="_blank" rel="noopener">Weight Review Matrixを開く</a>{% endif %}
     </div>
   </div>
 </section>
 {% include "partials/active_operation_monitor.html" %}
+
+{% if validation_preflight %}
+<section class="notice">
+  <h2>Weight Calibration Preflight</h2>
+  <p>ERRORがある場合はPipeline実行を止めます。WARNINGは内容を確認した上で実行できます。</p>
+  <div class="summary-grid">
+    <div><span>ERROR</span><strong>{{ validation_preflight.error_count }}</strong></div>
+    <div><span>WARNING</span><strong>{{ validation_preflight.warning_count }}</strong></div>
+    <div><span>Expected Conditions</span><strong>{{ coverage.expected_image_count }}</strong></div>
+    <div><span>Output Directory</span><strong>{{ output_dir }}</strong></div>
+  </div>
+  <table>
+    <thead><tr><th>Level</th><th>Key</th><th>Message</th></tr></thead>
+    <tbody>
+      {% for check in validation_preflight.checks %}
+      <tr><td><span class="label {{ check.level|lower }}">{{ check.level }}</span></td><td>{{ check.key }}</td><td>{{ check.message }}</td></tr>
+      {% else %}
+      <tr><td colspan="3" class="muted">Preflight上のERROR/WARNINGはありません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
 
 {% if generation and generation.status in ['failed'] and generation_log_preview %}
 <section class="notice">
@@ -274,7 +317,7 @@
     </dl>
     <div class="actions compact-actions">
       <form method="post" action="/validation-runs/{{ run.id }}/suggest"><button type="submit">推奨weightを保存</button></form>
-      <form method="post" action="/validation-runs/{{ run.id }}/apply"><button type="submit">LoRAプロファイルへ反映</button></form>
+      <a class="button" href="/validation-runs/{{ run.id }}/apply">LoRAプロファイル反映を確認</a>
     </div>
     <p class="muted">自動反映はしません。プロファイルへ反映する場合は、内容を確認してからボタンを押してください。</p>
   </div>
