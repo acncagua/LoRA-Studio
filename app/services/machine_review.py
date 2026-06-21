@@ -506,7 +506,7 @@ def machine_review_context(target_type: str, target_id: int, reference_set_versi
             model = dict(row)
     if target_type == "training_job_samples":
         context = context_for_training_job(target_id)
-    elif target_type == "validation_run_images":
+    elif target_type in {"validation_run_images", "validation_run_images_missing"}:
         context = context_for_validation_run(target_id)
     elif target_type == "review_session_images":
         context = context_for_review_session(target_id)
@@ -524,7 +524,7 @@ def create_machine_review_job(target_type: str, target_id: int, context: dict[st
     if context is None or model_id is None:
         context, model = machine_review_context(target_type, target_id, reference_set_version_id=reference_set_version_id)
         model_id = model.get("id") or "mock_image_512"
-    sources = sources_for_target(target_type, target_id)
+    sources = sources_for_target(target_type, target_id, context=context, model_id=model_id)
     now = utc_now()
     log_dir = app_settings.LOGS_DIR / "machine_review"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -558,14 +558,45 @@ def create_machine_review_job(target_type: str, target_id: int, context: dict[st
         return job_id
 
 
-def sources_for_target(target_type: str, target_id: int) -> list[EmbeddingSource]:
+def sources_for_target(target_type: str, target_id: int, context: dict[str, Any] | None = None, model_id: str | None = None) -> list[EmbeddingSource]:
     if target_type == "training_job_samples":
         return sample_image_sources(target_id)
     if target_type == "validation_run_images":
         return validation_image_sources(target_id)
+    if target_type == "validation_run_images_missing":
+        if context is None or model_id is None:
+            context, model = machine_review_context("validation_run_images", target_id)
+            model_id = model.get("id") or "mock_image_512"
+        return [
+            source
+            for source in validation_image_sources(target_id)
+            if not has_current_machine_review_score(source, context, model_id)
+        ]
     if target_type == "review_session_images":
         return review_session_image_sources(target_id)
     return []
+
+
+def has_current_machine_review_score(source: EmbeddingSource, context: dict[str, Any], model_id: str) -> bool:
+    if source.source_id is None:
+        return False
+    row = fetch_one(
+        """
+        SELECT id FROM machine_review_scores
+        WHERE source_type = ? AND source_id = ? AND embedding_model_id = ?
+          AND COALESCE(reference_set_version_id, 0) = COALESCE(?, 0)
+          AND COALESCE(dataset_version_id, 0) = COALESCE(?, 0)
+        LIMIT 1
+        """,
+        (
+            source.source_type,
+            source.source_id,
+            model_id,
+            context.get("reference_set_version_id"),
+            context.get("dataset_version_id"),
+        ),
+    )
+    return row is not None
 
 
 def run_machine_review_job(job_id: int) -> dict[str, Any]:
@@ -580,7 +611,7 @@ def run_machine_review_job(job_id: int) -> dict[str, Any]:
     if model_row:
         model = dict(model_row)
     settings = load_machine_review_settings()
-    sources = sources_for_target(target_type, target_id)
+    sources = sources_for_target(target_type, target_id, context=context, model_id=model_id)
     vector_cache: VectorCache = {}
     now = utc_now()
     started = time.time()

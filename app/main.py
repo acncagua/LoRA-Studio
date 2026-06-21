@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import json
+import html
 import re
 import shutil
 import subprocess
@@ -117,8 +118,11 @@ from app.services.validation_generation import (
     count_generated_images,
     generation_view_state,
     import_generated_images,
+    missing_validation_generation_count,
     prepare_validation_generation,
     reconcile_stale_validation_generations,
+    start_missing_validation_review_sequence,
+    start_missing_validation_review_sequences,
     start_validation_assist_sequence,
     start_validation_generation,
     start_validation_generation_sequence,
@@ -130,6 +134,7 @@ from app.services.validation_generation import (
 )
 from app.services.validation_runs import (
     apply_suggestion_to_profile,
+    add_validation_run_weights,
     calculate_suggested_weights,
     copy_managed_validation_image,
     create_validation_run,
@@ -977,8 +982,13 @@ def current_running_validation_generation() -> dict[str, Any] | None:
         FROM validation_generation_runs vg
         LEFT JOIN validation_runs vr ON vr.id = vg.validation_run_id
         LEFT JOIN training_outputs o ON o.id = vr.selected_output_id
-        WHERE vg.status = 'running'
-        ORDER BY vg.id DESC
+        WHERE vg.status IN ('running', 'queued')
+          AND vg.id = (
+              SELECT MAX(vg2.id)
+              FROM validation_generation_runs vg2
+              WHERE vg2.validation_run_id = vg.validation_run_id
+          )
+        ORDER BY CASE WHEN vg.status = 'running' THEN 0 ELSE 1 END, vg.id
         LIMIT 1
         """
     )
@@ -4455,24 +4465,118 @@ def validation_generation_import(run_id: int) -> RedirectResponse:
     return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
 
 
-@app.get("/validation-runs/{run_id}/matrix")
-def validation_generation_matrix(run_id: int) -> FileResponse:
+@app.get("/validation-runs/{run_id}/matrix", response_class=HTMLResponse)
+def validation_generation_matrix(run_id: int, weight_message: str = Query("")) -> HTMLResponse:
     path = generation_validation_run_dir(run_id) / "validation_matrix.html"
     try:
         write_validation_matrix(run_id)
     except Exception as exc:
         if not path.exists():
             raise HTTPException(status_code=404, detail="validation_matrix.html not found") from exc
-    return FileResponse(path)
+    body = path.read_text(encoding="utf-8", errors="replace")
+    if weight_message:
+        notice = f"<div class=\"notice\">{html.escape(weight_message)}</div>"
+        body = body.replace("<h1>", notice + "\n<h1>", 1)
+    return HTMLResponse(body)
+
+
+@app.post("/validation-runs/{run_id}/matrix/weights")
+def validation_matrix_add_weights(run_id: int, selected_weights: list[str] = Form(default=[])) -> RedirectResponse:
+    try:
+        summary = add_validation_run_weights(run_id, selected_weights)
+        missing_count = missing_validation_generation_count(run_id)
+        if missing_count <= 0:
+            write_validation_matrix(run_id)
+            message = f"選択weightはすべて生成済みです。既存画像をスキップしました。追加条件: {summary['added_conditions']}件。"
+            return RedirectResponse(f"/validation-runs/{run_id}/matrix?weight_message={quote(message)}", status_code=303)
+        start_validation_generation(run_id)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    message = f"選択weightの不足画像 {missing_count} 件を生成開始しました。既存画像はスキップします。"
+    return RedirectResponse(f"/validation-runs/{run_id}/matrix?weight_message={quote(message)}", status_code=303)
+
+
+@app.post("/validation-runs/{run_id}/matrix/missing-review")
+def validation_matrix_missing_review(run_id: int) -> RedirectResponse:
+    try:
+        start_missing_validation_review_sequence(run_id)
+    except RuntimeError as exc:
+        return RedirectResponse(f"/validation-runs/{run_id}/matrix?weight_message={quote(str(exc))}", status_code=303)
+    message = "不足Embedding / 不足Machine Reviewの再計算を開始しました。完了後にMatrixへ反映されます。"
+    return RedirectResponse(f"/validation-runs/{run_id}/matrix?weight_message={quote(message)}", status_code=303)
 
 
 @app.get("/jobs/{job_id}/validation-runs/epoch-matrix", response_class=HTMLResponse)
-def validation_epoch_cross_matrix(job_id: int, run_ids: list[int] = Query(default=[])) -> HTMLResponse:
+def validation_epoch_cross_matrix(
+    job_id: int,
+    run_ids: list[int] = Query(default=[]),
+    display_weights: list[str] = Query(default=[]),
+    matrix_message: str = Query(""),
+) -> HTMLResponse:
     try:
-        html_text = build_epoch_cross_matrix_html(job_id, run_ids)
+        html_text = build_epoch_cross_matrix_html(job_id, run_ids, display_weights=display_weights)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if matrix_message:
+        notice = f"<div class=\"notice\">{html.escape(matrix_message)}</div>"
+        html_text = html_text.replace("<h1>", notice + "\n<h1>", 1)
     return HTMLResponse(html_text)
+
+
+@app.post("/jobs/{job_id}/validation-runs/epoch-matrix/missing-review")
+def validation_epoch_cross_matrix_missing_review(job_id: int, run_ids: list[int] = Form(default=[])) -> RedirectResponse:
+    unique_run_ids = list(dict.fromkeys(int(run_id) for run_id in run_ids if int(run_id) > 0))
+    base_params = [("run_ids", run_id) for run_id in unique_run_ids]
+    destination = f"/jobs/{job_id}/validation-runs/epoch-matrix"
+    try:
+        start_missing_validation_review_sequences(unique_run_ids)
+    except (ValueError, RuntimeError) as exc:
+        query = urlencode([*base_params, ("matrix_message", str(exc))])
+        return RedirectResponse(f"{destination}?{query}" if query else f"/jobs/{job_id}", status_code=303)
+    message = f"表示中の検証Run {len(unique_run_ids)} 件について、不足Embedding / 不足Machine Reviewの再計算を開始しました。"
+    query = urlencode([*base_params, ("matrix_message", message)])
+    return RedirectResponse(f"{destination}?{query}" if query else f"/jobs/{job_id}", status_code=303)
+
+
+@app.post("/jobs/{job_id}/validation-runs/epoch-matrix/weights")
+def validation_epoch_cross_matrix_add_weights(
+    job_id: int,
+    run_ids: list[int] = Form(default=[]),
+    selected_weights: list[str] = Form(default=[]),
+) -> RedirectResponse:
+    unique_run_ids = list(dict.fromkeys(int(run_id) for run_id in run_ids if int(run_id) > 0))
+    base_params = [("run_ids", run_id) for run_id in unique_run_ids]
+    destination = f"/jobs/{job_id}/validation-runs/epoch-matrix"
+    generation_run_ids: list[int] = []
+    added_conditions = 0
+    try:
+        if not unique_run_ids:
+            raise ValueError("追加生成する検証Runを選択してください。")
+        for run_id in unique_run_ids:
+            run = fetch_one("SELECT id FROM validation_runs WHERE id = ? AND job_id = ?", (run_id, job_id))
+            if run is None:
+                raise ValueError(f"検証Run #{run_id} がこのJobに属していません。")
+            summary = add_validation_run_weights(run_id, selected_weights)
+            added_conditions += int(summary["added_conditions"])
+            if missing_validation_generation_count(run_id) > 0:
+                generation_run_ids.append(run_id)
+        if generation_run_ids:
+            start_validation_generation_sequence(generation_run_ids)
+            message = (
+                f"表示中Run {len(unique_run_ids)} 件にweight条件を反映しました。"
+                f"不足画像がある {len(generation_run_ids)} 件の生成を開始しました。追加条件: {added_conditions}件。"
+            )
+        else:
+            for run_id in unique_run_ids:
+                write_validation_matrix(run_id)
+            message = (
+                f"選択weightはすべて生成済みです。既存画像をスキップしました。追加条件: {added_conditions}件。"
+            )
+    except (ValueError, RuntimeError) as exc:
+        query = urlencode([*base_params, ("matrix_message", str(exc))])
+        return RedirectResponse(f"{destination}?{query}" if query else f"/jobs/{job_id}", status_code=303)
+    query = urlencode([*base_params, ("matrix_message", message)])
+    return RedirectResponse(f"{destination}?{query}", status_code=303)
 
 
 @app.post("/validation-runs/{run_id}/images/individual")

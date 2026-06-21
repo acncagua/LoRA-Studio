@@ -852,7 +852,13 @@
       {% if generation_message %}<p class="notice">{{ generation_message }}</p>{% endif %}
       {% if generation_error %}<p class="notice warning">{{ generation_error }}</p>{% endif %}
       {% if running_generation %}
-      <p class="notice">検証画像生成 #{{ running_generation.id }}（検証Run #{{ running_generation.validation_run_id }} / epoch {{ running_generation.selected_epoch if running_generation.selected_epoch is not none else '-' }}）が実行中です。複数Run一括生成中の場合、このRunの完了後に次のRunへ進みます。</p>
+      <p class="notice">
+        {% if running_generation.status == 'queued' %}
+        検証画像生成キュー #{{ running_generation.id }}（検証Run #{{ running_generation.validation_run_id }} / epoch {{ running_generation.selected_epoch if running_generation.selected_epoch is not none else '-' }}）が待機中です。実行中のRunが完了すると順番に開始します。
+        {% else %}
+        検証画像生成 #{{ running_generation.id }}（検証Run #{{ running_generation.validation_run_id }} / epoch {{ running_generation.selected_epoch if running_generation.selected_epoch is not none else '-' }}）が実行中です。複数Run一括生成中の場合、このRunの完了後に次のRunへ進みます。
+        {% endif %}
+      </p>
       {% endif %}
       <table>
         <thead><tr><th>比較</th><th>ID</th><th>プリセット</th><th>Epoch</th><th>状態</th><th>画像生成</th><th>画像数</th><th>操作</th></tr></thead>
@@ -889,7 +895,7 @@
               <details class="mini-log-panel mini-log-details" {% if run.generation_status == 'running' %}open{% endif %}>
                 <summary>
                   <span class="mini-log-meta">
-                    <strong>{% if run.generation_status == 'running' %}簡易ログ（実行中）{% else %}簡易ログを開く{% endif %}</strong>
+                    <strong>{% if run.generation_status == 'running' %}簡易ログ（実行中）{% elif run.generation_status == 'queued' %}簡易ログ（順番待ち）{% else %}簡易ログを開く{% endif %}</strong>
                     <span>生成ファイル: <span data-generation-file-count>{{ run.generation_file_count }}</span> 件</span>
                     <span>ログ: <span data-generation-log-size>{{ run.generation_log_size }}</span> bytes</span>
                     <span>更新: <span data-generation-log-updated>{{ run.generation_log_updated_at or '-' }}</span></span>
@@ -898,6 +904,8 @@
                 </summary>
                 {% if run.generation_log_preview %}
                 <pre class="mini-log" data-generation-log-preview>{{ run.generation_log_preview }}</pre>
+                {% elif run.generation_status == 'queued' %}
+                <pre class="mini-log empty" data-generation-log-preview>一括画像生成キューで待機中です。前の検証Runが完了すると開始します。</pre>
                 {% else %}
                 <pre class="mini-log empty" data-generation-log-preview>ログはまだありません。生成ファイル数が増えていれば処理は進行中です。</pre>
                 {% endif %}

@@ -17,8 +17,10 @@ from app.services.image_store import verify_image_file
 from app.services.training_runner import process_exists, sd_scripts_subprocess_env
 from app.services.validation_runs import (
     ensure_expected_conditions,
+    json_loads,
     update_validation_run_counts,
     validation_run_dir,
+    validation_preset_for_run,
 )
 
 
@@ -104,7 +106,9 @@ def prepare_validation_generation(run_id: int) -> dict[str, Any]:
     if not base_model_path.exists():
         raise RuntimeError(f"ベースモデルが存在しません: {base_model_path}")
 
-    conditions = [dict(row) for row in ensure_expected_conditions(run_id)]
+    all_conditions = [dict(row) for row in ensure_expected_conditions(run_id)]
+    conditions = missing_validation_generation_conditions(run_id, all_conditions)
+    skipped_existing_count = len(all_conditions) - len(conditions)
 
     gen_dir = generation_dir(run_id)
     out_dir = generation_output_dir(run_id)
@@ -181,6 +185,8 @@ def prepare_validation_generation(run_id: int) -> dict[str, Any]:
         "baseline_mode": "no_network_weights",
         "skipped_hires_count": 0,
         "skipped_hires_message": "",
+        "skipped_existing_count": skipped_existing_count,
+        "skipped_existing_message": f"既存画像登録済みの条件 {skipped_existing_count} 件をスキップしました。" if skipped_existing_count else "",
         "all_prompt_file": str(all_prompt_path),
         "output_dir": str(out_dir),
     }
@@ -206,7 +212,7 @@ def prepare_validation_generation(run_id: int) -> dict[str, Any]:
                 str(all_prompt_path),
                 str(out_dir),
                 str(log_path),
-                command_payload["skipped_hires_message"],
+                "\n".join(part for part in [command_payload["skipped_hires_message"], command_payload["skipped_existing_message"]] if part),
                 now,
                 now,
             ),
@@ -220,7 +226,35 @@ def prepare_validation_generation(run_id: int) -> dict[str, Any]:
         "output_dir": str(out_dir),
         "commands": commands,
         "skipped_hires_count": 0,
+        "skipped_existing_count": skipped_existing_count,
     }
+
+
+def missing_validation_generation_conditions(run_id: int, conditions: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    rows = conditions if conditions is not None else [dict(row) for row in ensure_expected_conditions(run_id)]
+    if not rows:
+        return []
+    registered = fetch_all(
+        """
+        SELECT expected_condition_id, condition_hash
+        FROM validation_images
+        WHERE validation_run_id = ?
+          AND image_role = 'individual'
+          AND COALESCE(ignored, 0) = 0
+        """,
+        (run_id,),
+    )
+    registered_ids = {int(row["expected_condition_id"]) for row in registered if row["expected_condition_id"]}
+    registered_hashes = {row["condition_hash"] for row in registered if row["condition_hash"]}
+    return [
+        row
+        for row in rows
+        if int(row["id"]) not in registered_ids and row["condition_hash"] not in registered_hashes
+    ]
+
+
+def missing_validation_generation_count(run_id: int) -> int:
+    return len(missing_validation_generation_conditions(run_id))
 
 
 def resolve_base_model_path(run: Any, job: Any, profile: Any | None) -> Path:
@@ -339,6 +373,8 @@ def command_text(payload: dict[str, Any]) -> str:
         lines.append("")
     if payload.get("skipped_hires_count"):
         lines.append(f"# skipped hires conditions: {payload['skipped_hires_count']}")
+    if payload.get("skipped_existing_count"):
+        lines.append(f"# skipped existing registered images: {payload['skipped_existing_count']}")
     return "\n".join(lines)
 
 
@@ -353,6 +389,9 @@ def start_validation_generation(run_id: int) -> int:
     payload = json.loads(generation["command_argv_json"] or "{}")
     commands = payload.get("commands") or []
     if not commands:
+        skipped_message = payload.get("skipped_existing_message") or ""
+        if skipped_message:
+            raise RuntimeError(f"生成対象の不足画像がありません。{skipped_message}")
         raise RuntimeError("生成対象の条件がありません。")
     environment = latest_environment()
     if environment is None:
@@ -384,7 +423,7 @@ def start_validation_generation(run_id: int) -> int:
             (
                 first_process.pid,
                 start_time,
-                payload.get("skipped_hires_message") or "",
+                "\n".join(part for part in [payload.get("skipped_hires_message") or "", payload.get("skipped_existing_message") or ""] if part),
                 start_time,
                 generation["id"],
             ),
@@ -411,6 +450,20 @@ def start_validation_generation_sequence(run_ids: list[int]) -> int:
     start_validation_generation(unique_run_ids[0])
     remaining_run_ids = unique_run_ids[1:]
     if remaining_run_ids:
+        now = utc_now()
+        for run_id in remaining_run_ids:
+            generation = prepare_validation_generation(run_id)
+            with connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE validation_generation_runs
+                    SET status = 'queued',
+                        error_message = COALESCE(NULLIF(error_message, ''), '一括画像生成キューで待機中です。'),
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (now, generation["generation_id"]),
+                )
         thread = threading.Thread(
             target=_validation_generation_sequence_worker,
             args=(remaining_run_ids,),
@@ -445,6 +498,124 @@ def start_validation_assist_sequence(run_ids: list[int]) -> int:
     return len(unique_run_ids)
 
 
+def start_missing_validation_review_sequence(run_id: int) -> dict[str, Any]:
+    if fetch_one("SELECT id FROM validation_generation_runs WHERE status = 'running' LIMIT 1"):
+        raise RuntimeError("検証画像生成が実行中です。完了後に不足レビューを開始してください。")
+    if fetch_one("SELECT id FROM embedding_jobs WHERE status = 'running' LIMIT 1"):
+        raise RuntimeError("Embedding Jobが実行中です。完了後に不足レビューを開始してください。")
+    if fetch_one("SELECT id FROM machine_review_jobs WHERE status = 'running' LIMIT 1"):
+        raise RuntimeError("機械補助レビューJobが実行中です。完了後に不足レビューを開始してください。")
+    try:
+        from app.services.embedding_service import active_embedding_model
+    except Exception:
+        active_embedding_model = lambda: {"provider": "mock"}  # type: ignore[assignment]
+    embedding_model = active_embedding_model()
+    if (embedding_model.get("provider") or "mock") != "mock":
+        running_training = fetch_one("SELECT id FROM training_jobs WHERE status = 'running' LIMIT 1")
+        if running_training:
+            raise RuntimeError("学習ジョブが実行中です。GPUを使うEmbedding providerは、実行中の処理が終わってから開始してください。")
+    thread = threading.Thread(
+        target=_missing_validation_review_worker,
+        args=(run_id,),
+        daemon=True,
+    )
+    thread.start()
+    return {"run_id": run_id, "status": "started"}
+
+
+def start_missing_validation_review_sequences(run_ids: list[int]) -> dict[str, Any]:
+    unique_run_ids: list[int] = []
+    seen: set[int] = set()
+    for run_id in run_ids:
+        run_id = int(run_id)
+        if run_id <= 0 or run_id in seen:
+            continue
+        seen.add(run_id)
+        unique_run_ids.append(run_id)
+    if not unique_run_ids:
+        raise ValueError("不足レビューを再計算する検証Runを選択してください。")
+    if fetch_one("SELECT id FROM validation_generation_runs WHERE status = 'running' LIMIT 1"):
+        raise RuntimeError("検証画像生成が実行中です。完了後に不足レビューを開始してください。")
+    if fetch_one("SELECT id FROM embedding_jobs WHERE status = 'running' LIMIT 1"):
+        raise RuntimeError("Embedding Jobが実行中です。完了後に不足レビューを開始してください。")
+    if fetch_one("SELECT id FROM machine_review_jobs WHERE status = 'running' LIMIT 1"):
+        raise RuntimeError("機械補助レビューJobが実行中です。完了後に不足レビューを開始してください。")
+    try:
+        from app.services.embedding_service import active_embedding_model
+    except Exception:
+        active_embedding_model = lambda: {"provider": "mock"}  # type: ignore[assignment]
+    embedding_model = active_embedding_model()
+    if (embedding_model.get("provider") or "mock") != "mock":
+        running_training = fetch_one("SELECT id FROM training_jobs WHERE status = 'running' LIMIT 1")
+        if running_training:
+            raise RuntimeError("学習ジョブが実行中です。GPUを使うEmbedding providerは、実行中の処理が終わってから開始してください。")
+    thread = threading.Thread(
+        target=_missing_validation_review_sequence_worker,
+        args=(unique_run_ids,),
+        daemon=True,
+    )
+    thread.start()
+    return {"run_ids": unique_run_ids, "status": "started"}
+
+
+def _missing_validation_review_worker(run_id: int) -> None:
+    log_path = validation_run_dir(run_id) / "generation" / "missing_review_sequence.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        from app.services.embedding_service import create_embedding_job, start_embedding_job
+        from app.services.machine_review import context_for_validation_run, create_machine_review_job, start_machine_review_job
+
+        context = context_for_validation_run(run_id)
+        targets: list[tuple[str, int]] = []
+        if context.get("reference_set_version_id"):
+            targets.append(("reference_set_version", int(context["reference_set_version_id"])))
+        if context.get("dataset_version_id"):
+            targets.append(("dataset_version", int(context["dataset_version_id"])))
+        targets.append(("validation_run", run_id))
+
+        append_generation_note(log_path, f"検証Run #{run_id}: 不足Embedding計算を開始します。")
+        for job_type, target_id in targets:
+            embedding_job_id = create_embedding_job(job_type, target_id, recompute="missing")
+            embedding_job = fetch_one("SELECT total_count FROM embedding_jobs WHERE id = ?", (embedding_job_id,))
+            total = int(embedding_job["total_count"] or 0) if embedding_job else 0
+            if not total:
+                append_generation_note(log_path, f"Embedding: {job_type} #{target_id} は不足対象がありません。")
+                complete_empty_background_job("embedding_jobs", embedding_job_id)
+                continue
+            append_generation_note(log_path, f"Embedding Job #{embedding_job_id}: {job_type} #{target_id}, {total}件を開始します。")
+            start_embedding_job(embedding_job_id)
+            status = _wait_for_background_job("embedding_jobs", embedding_job_id)
+            append_generation_note(log_path, f"Embedding Job #{embedding_job_id}: status={status}")
+            if status != "completed":
+                return
+
+        machine_review_job_id = create_machine_review_job("validation_run_images_missing", run_id)
+        machine_review_job = fetch_one("SELECT total_count FROM machine_review_jobs WHERE id = ?", (machine_review_job_id,))
+        total = int(machine_review_job["total_count"] or 0) if machine_review_job else 0
+        if not total:
+            append_generation_note(log_path, "Machine Review: 不足レビュー対象はありません。")
+            complete_empty_background_job("machine_review_jobs", machine_review_job_id)
+            write_validation_matrix(run_id)
+            return
+        append_generation_note(log_path, f"Machine Review Job #{machine_review_job_id}: 不足レビュー {total}件を開始します。")
+        start_machine_review_job(machine_review_job_id)
+        status = _wait_for_background_job("machine_review_jobs", machine_review_job_id)
+        append_generation_note(log_path, f"Machine Review Job #{machine_review_job_id}: status={status}")
+        if status == "completed":
+            write_validation_matrix(run_id)
+    except Exception as exc:
+        append_generation_note(log_path, f"不足レビューの開始に失敗しました: {exc}")
+
+
+def _missing_validation_review_sequence_worker(run_ids: list[int]) -> None:
+    for run_id in run_ids:
+        while fetch_one("SELECT id FROM embedding_jobs WHERE status = 'running' LIMIT 1"):
+            time.sleep(5)
+        while fetch_one("SELECT id FROM machine_review_jobs WHERE status = 'running' LIMIT 1"):
+            time.sleep(5)
+        _missing_validation_review_worker(run_id)
+
+
 def _validation_assist_sequence_worker(run_ids: list[int]) -> None:
     for run_id in run_ids:
         log_path = validation_run_dir(run_id) / "generation" / "assist_sequence.log"
@@ -453,6 +624,24 @@ def _validation_assist_sequence_worker(run_ids: list[int]) -> None:
             _run_validation_assist_for_run(run_id, log_path)
         except Exception as exc:
             append_generation_note(log_path, f"検証Run #{run_id} のEmbedding / 機械補助レビューに失敗しました: {exc}")
+
+
+def complete_empty_background_job(table_name: str, job_id: int) -> None:
+    now = utc_now()
+    with connect() as conn:
+        conn.execute(
+            f"""
+            UPDATE {table_name}
+            SET status = 'completed',
+                started_at = COALESCE(started_at, ?),
+                ended_at = COALESCE(ended_at, ?),
+                elapsed_seconds = COALESCE(elapsed_seconds, 0),
+                return_code = COALESCE(return_code, 0),
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (now, now, now, job_id),
+        )
 
 
 def _wait_for_background_job(table_name: str, job_id: int, timeout_seconds: int = 60 * 60 * 6) -> str:
@@ -695,8 +884,30 @@ def import_generated_images(run_id: int, generation_id: int | None = None) -> in
 
 
 def reconcile_stale_validation_generations() -> int:
+    now = utc_now()
+    with connect() as conn:
+        superseded = conn.execute(
+            """
+            UPDATE validation_generation_runs
+            SET status = 'superseded',
+                ended_at = COALESCE(ended_at, ?),
+                updated_at = ?,
+                error_message = COALESCE(
+                    NULLIF(error_message, ''),
+                    'A newer generation run superseded this queued entry.'
+                )
+            WHERE status = 'queued'
+              AND EXISTS (
+                  SELECT 1
+                  FROM validation_generation_runs newer
+                  WHERE newer.validation_run_id = validation_generation_runs.validation_run_id
+                    AND newer.id > validation_generation_runs.id
+              )
+            """,
+            (now, now),
+        ).rowcount
     rows = fetch_all("SELECT * FROM validation_generation_runs WHERE status = 'running' ORDER BY id")
-    fixed = 0
+    fixed = int(superseded or 0)
     for row in rows:
         pid = row["process_id"]
         if pid and process_exists(int(pid)):
@@ -844,11 +1055,12 @@ def write_validation_matrix(run_id: int) -> str:
         "<!doctype html>",
         "<meta charset=\"utf-8\">",
         f"<title>検証Matrix #{run_id}</title>",
-        "<style>body{font-family:'Segoe UI','Yu Gothic UI',sans-serif;background:#f6f7f4;color:#20231f;margin:24px;overflow-x:auto}table{border-collapse:collapse;width:max-content;min-width:100%;margin:16px 0;background:white}th,td{border:1px solid #d8ddd4;padding:8px;vertical-align:top}th{background:#eef2eb}.cell{min-width:300px}.missing{color:#8b4f39;font-weight:700}img.matrix-image{width:auto;max-width:none;border-radius:6px;display:block;margin-bottom:6px;cursor:zoom-in}.muted{color:#657064;font-size:12px}.matrix-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 18px}.button{display:inline-flex;align-items:center;min-height:34px;padding:7px 12px;border-radius:6px;background:#2f7668;color:white;text-decoration:none;font-weight:700;border:0;cursor:pointer;font:inherit}.button.secondary{background:#dce4df;color:#20231f}.machine-score{display:grid;gap:4px;margin:8px 0;padding:8px;border:1px solid #d8ddd4;border-radius:6px;background:#f8faf7;font-size:13px}.machine-score .badges{display:flex;flex-wrap:wrap;gap:6px}.badge{display:inline-flex;align-items:center;justify-content:center;min-width:56px;padding:3px 8px;border-radius:6px;background:#dce4df;font-weight:700}.badge.low,.badge.low_confidence,.badge.unavailable,.badge.unknown{background:#dce4df}.badge.primary_candidate,.badge.secondary_candidate{background:#c6e7d8}.badge.possible_overfit,.badge.high{background:#f0c2c2}.matrix-review{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr)) auto auto;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid #d8ddd4;align-items:end}.matrix-review label{display:grid;gap:3px;font-size:12px;color:#4a554f}.matrix-review input,.matrix-review select,.matrix-review textarea{box-sizing:border-box;width:100%;border:1px solid #cfd8d1;border-radius:5px;padding:5px;font:inherit}.matrix-review textarea{min-height:34px;resize:vertical}.matrix-review button{border:0;border-radius:6px;background:#2f7668;color:white;font-weight:700;padding:7px 9px;cursor:pointer}.matrix-review button:disabled{background:#cfd8d1;cursor:wait}.matrix-review .save-status{font-size:12px;color:#2f7668;font-weight:700;min-height:16px}.matrix-review.saved{outline:2px solid #b8ded0;border-radius:6px}" + matrix_display_style() + "</style>",
+        "<style>body{font-family:'Segoe UI','Yu Gothic UI',sans-serif;background:#f6f7f4;color:#20231f;margin:24px;overflow-x:auto}table{border-collapse:collapse;width:max-content;min-width:100%;margin:16px 0;background:white}th,td{border:1px solid #d8ddd4;padding:8px;vertical-align:top}th{background:#eef2eb}.cell{min-width:300px}.missing{color:#8b4f39;font-weight:700}.notice{background:#f4ece6;border:1px solid #d7b79f;border-radius:6px;padding:10px;margin:0 0 12px}img.matrix-image{width:auto;max-width:none;border-radius:6px;display:block;margin-bottom:6px;cursor:zoom-in}.muted{color:#657064;font-size:12px}.matrix-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 18px}.button{display:inline-flex;align-items:center;min-height:34px;padding:7px 12px;border-radius:6px;background:#2f7668;color:white;text-decoration:none;font-weight:700;border:0;cursor:pointer;font:inherit}.button.secondary{background:#dce4df;color:#20231f}.machine-score{display:grid;gap:4px;margin:8px 0;padding:8px;border:1px solid #d8ddd4;border-radius:6px;background:#f8faf7;font-size:13px}.machine-score .badges{display:flex;flex-wrap:wrap;gap:6px}.badge{display:inline-flex;align-items:center;justify-content:center;min-width:56px;padding:3px 8px;border-radius:6px;background:#dce4df;font-weight:700}.badge.low,.badge.low_confidence,.badge.unavailable,.badge.unknown{background:#dce4df}.badge.primary_candidate,.badge.secondary_candidate{background:#c6e7d8}.badge.possible_overfit,.badge.high{background:#f0c2c2}.matrix-review{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr)) auto auto;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid #d8ddd4;align-items:end}.matrix-review label{display:grid;gap:3px;font-size:12px;color:#4a554f}.matrix-review input,.matrix-review select,.matrix-review textarea{box-sizing:border-box;width:100%;border:1px solid #cfd8d1;border-radius:5px;padding:5px;font:inherit}.matrix-review textarea{min-height:34px;resize:vertical}.matrix-review button{border:0;border-radius:6px;background:#2f7668;color:white;font-weight:700;padding:7px 9px;cursor:pointer}.matrix-review button:disabled{background:#cfd8d1;cursor:wait}.matrix-review .save-status{font-size:12px;color:#2f7668;font-weight:700;min-height:16px}.matrix-review.saved{outline:2px solid #b8ded0;border-radius:6px}" + matrix_display_style() + "</style>",
         f"<h1>検証Matrix #{run_id}</h1>",
         matrix_navigation(run_id),
         matrix_display_controls(),
         matrix_hires_controls(has_hires_sections),
+        matrix_weight_controls(run_id),
         "<p class=\"muted\">画像は50%表示を初期値にしています。必要に応じて25% / 50% / 75% / 100%を切り替えてください。画像クリックで100%表示を開けます。</p>",
     ]
     for (prompt_key, hires), rows in sections.items():
@@ -893,10 +1105,11 @@ def write_validation_matrix(run_id: int) -> str:
     return str(matrix_path)
 
 
-def build_epoch_cross_matrix_html(job_id: int, run_ids: list[int]) -> str:
+def build_epoch_cross_matrix_html(job_id: int, run_ids: list[int], display_weights: list[Any] | None = None) -> str:
     unique_run_ids = list(dict.fromkeys(int(run_id) for run_id in run_ids if int(run_id) > 0))
     if len(unique_run_ids) < 2:
         raise ValueError("Epoch横断Matrixには検証Runを2件以上選択してください。")
+    selected_display_weights = normalize_matrix_weights(display_weights or [])
     placeholders = ",".join("?" for _ in unique_run_ids)
     params: list[Any] = [job_id, *unique_run_ids]
     runs = [
@@ -969,6 +1182,7 @@ def build_epoch_cross_matrix_html(job_id: int, run_ids: list[int]) -> str:
         cross_matrix_navigation(job_id),
         matrix_display_controls(),
         matrix_hires_controls(has_hires_sections),
+        cross_matrix_weight_controls(job_id, runs, selected_display_weights),
         "<p class=\"muted\">prompt単位でまとめ、同じprompt / seed / weight / Hires条件をEpoch横断で横並び比較します。画像は50%表示を初期値にしています。画像クリックで100%表示を開けます。</p>",
         "<section class=\"run-summary\"><h2>比較対象</h2><div class=\"summary-grid\">",
     ]
@@ -986,6 +1200,10 @@ def build_epoch_cross_matrix_html(job_id: int, run_ids: list[int]) -> str:
     for (prompt_key, hires), section in sorted(sections.items(), key=lambda item: (item[0][0], item[0][1])):
         seeds = sorted(int(seed) for seed in section["seeds"])
         weights = sorted(float(weight) for weight in section["weights"])
+        if selected_display_weights:
+            weights = [weight for weight in weights if round(float(weight), 1) in selected_display_weights]
+            if not weights:
+                continue
         lines.append(f"<section class=\"matrix-hires-section\" data-matrix-hires=\"{'hires' if hires else 'nohires'}\">")
         lines.append(f"<h2>{html.escape(prompt_key)} / {'Hiresあり' if hires else 'Hiresなし'}</h2>")
         for seed in seeds:
@@ -1021,6 +1239,18 @@ def build_epoch_cross_matrix_html(job_id: int, run_ids: list[int]) -> str:
     lines.append(matrix_display_script())
     lines.append(matrix_review_script())
     return "\n".join(lines) + "\n"
+
+
+def normalize_matrix_weights(values: list[Any]) -> list[float]:
+    weights: list[float] = []
+    for value in values:
+        try:
+            weight = round(float(value), 1)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= weight <= 2.0:
+            weights.append(weight)
+    return sorted(set(weights))
 
 
 def run_epoch_label(run: dict[str, Any]) -> str:
@@ -1136,6 +1366,8 @@ def matrix_display_style() -> str:
         ".matrix-scale-panel{position:sticky;top:0;z-index:20;display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:10px 0 14px;padding:10px;border:1px solid #d8ddd4;border-radius:8px;background:#f6f7f4cc;backdrop-filter:blur(4px)}"
         ".matrix-scale-panel strong{margin-right:2px}.matrix-scale-button{border:0;border-radius:6px;background:#dce4df;color:#20231f;font:inherit;font-weight:700;padding:7px 10px;cursor:pointer}.matrix-scale-button.active{background:#2f7668;color:white}.matrix-scale-note{color:#657064;font-size:12px}"
         ".matrix-hires-section.hidden{display:none}.matrix-hires-button{border:0;border-radius:6px;background:#dce4df;color:#20231f;font:inherit;font-weight:700;padding:7px 10px;cursor:pointer}.matrix-hires-button.active{background:#2f7668;color:white}"
+        ".matrix-weight-panel{position:sticky;top:58px;z-index:19;display:grid;gap:10px;margin:10px 0 14px;padding:12px;border:1px solid #d8ddd4;border-radius:8px;background:#f6f7f4cc;backdrop-filter:blur(4px)}.matrix-weight-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.matrix-weight-options{display:flex;flex-wrap:wrap;gap:6px}.matrix-weight-option{display:inline-flex;align-items:center;gap:5px;min-height:30px;padding:4px 8px;border:1px solid #cfd8d1;border-radius:6px;background:white;font-weight:700}.matrix-weight-option input{margin:0}.matrix-weight-extra.hidden{display:none}.matrix-weight-submit{justify-self:start;border:0;border-radius:6px;background:#2f7668;color:white;font:inherit;font-weight:700;padding:8px 12px;cursor:pointer}.matrix-weight-toggle{border:0;border-radius:6px;background:#dce4df;color:#20231f;font:inherit;font-weight:700;padding:7px 10px;cursor:pointer}"
+        ".matrix-review-panel{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:10px 0 14px;padding:10px;border:1px solid #d8ddd4;border-radius:8px;background:#eef2eb}.matrix-review-panel form{display:inline-flex}.matrix-review-submit{border:0;border-radius:6px;background:#2f7668;color:white;font:inherit;font-weight:700;padding:8px 12px;cursor:pointer}"
         ".matrix-lightbox{position:fixed;inset:0;z-index:9999;display:none;background:rgba(20,24,21,.86);overflow:auto;padding:24px}.matrix-lightbox.open{display:block}.matrix-lightbox-inner{min-width:max-content}.matrix-lightbox img{display:block;width:auto;max-width:none;height:auto;border-radius:8px;background:white}.matrix-lightbox-close{position:sticky;top:0;left:0;margin-bottom:12px;border:0;border-radius:6px;background:#f6f7f4;color:#20231f;font:inherit;font-weight:700;padding:8px 12px;cursor:pointer}.matrix-lightbox-caption{color:white;font-weight:700;margin:0 0 8px}"
     )
 
@@ -1163,6 +1395,137 @@ def matrix_hires_controls(has_hires_sections: bool) -> str:
         "<button class=\"matrix-hires-button active\" type=\"button\" data-matrix-hires-mode=\"nohires\">Hiresなし</button>"
         "<button class=\"matrix-hires-button\" type=\"button\" data-matrix-hires-mode=\"hires\">Hiresあり</button>"
         "<span class=\"matrix-scale-note\">画像サイズ差による崩れを避けるため、初期表示はHiresなしです。</span>"
+        "</div>"
+    )
+
+
+def matrix_weight_controls(run_id: int) -> str:
+    run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (run_id,))
+    preset = validation_preset_for_run(run) if run else None
+    preset_weights = set()
+    if preset:
+        preset_weights = {round(float(weight), 1) for weight in json_loads(preset["weights_json"], [])}
+    existing_weights = {
+        round(float(row["lora_weight"] or 0), 1)
+        for row in fetch_all("SELECT DISTINCT lora_weight FROM validation_expected_conditions WHERE validation_run_id = ?", (run_id,))
+    }
+    selected_weights = existing_weights or preset_weights or {0, 0.4, 0.6, 0.8, 1.0}
+
+    def option(weight: float) -> str:
+        checked = " checked" if round(weight, 1) in selected_weights else ""
+        exists_label = " data-existing=\"1\"" if round(weight, 1) in existing_weights else ""
+        return (
+            f"<label class=\"matrix-weight-option\"{exists_label}>"
+            f"<input type=\"checkbox\" name=\"selected_weights\" value=\"{weight:g}\"{checked} form=\"matrix-weight-form\">"
+            f"<span>{weight:g}</span>"
+            "</label>"
+        )
+
+    default_options = "".join(option(index / 10) for index in range(0, 11))
+    extra_options = "".join(option(index / 10) for index in range(11, 21))
+    return (
+        f"<form id=\"matrix-weight-form\" method=\"post\" action=\"/validation-runs/{run_id}/matrix/weights\"></form>"
+        f"<form id=\"matrix-missing-review-form\" method=\"post\" action=\"/validation-runs/{run_id}/matrix/missing-review\"></form>"
+        "<div class=\"matrix-weight-panel\">"
+        "<div class=\"matrix-weight-head\">"
+        "<strong>weight選択</strong>"
+        "<span class=\"matrix-scale-note\">チェックしたweightをMatrix操作の対象にします。追加生成は不足画像だけを作成し、既存画像はスキップします。</span>"
+        "</div>"
+        f"<div class=\"matrix-weight-options\">{default_options}</div>"
+        "<div class=\"matrix-weight-extra hidden\" data-matrix-extra-weights>"
+        f"<div class=\"matrix-weight-options\">{extra_options}</div>"
+        "</div>"
+        "<div class=\"matrix-weight-head\">"
+        "<button class=\"matrix-weight-toggle\" type=\"button\" data-matrix-toggle-extra-weights>1.1〜2.0を表示</button>"
+        "<button class=\"matrix-weight-submit\" type=\"submit\" form=\"matrix-weight-form\">選択weightの不足画像を追加生成</button>"
+        "<button class=\"matrix-weight-submit\" type=\"submit\" form=\"matrix-missing-review-form\">不足レビューだけ再計算</button>"
+        "</div>"
+        "</div>"
+    )
+
+
+def matrix_missing_review_controls(run_id: int) -> str:
+    return (
+        "<div class=\"matrix-review-panel\">"
+        "<strong>機械補助レビュー</strong>"
+        "<span class=\"matrix-scale-note\">追加生成後に未計算のEmbedding / Machine Reviewだけを実行します。</span>"
+        f"<form method=\"post\" action=\"/validation-runs/{run_id}/matrix/missing-review\">"
+        "<button class=\"matrix-review-submit\" type=\"submit\">不足レビューだけ再計算</button>"
+        "</form>"
+        "</div>"
+    )
+
+
+def cross_matrix_weight_controls(job_id: int, runs: list[dict[str, Any]], display_weights: list[float] | None = None) -> str:
+    run_ids = [int(run["id"]) for run in runs]
+    hidden_runs = "".join(f"<input type=\"hidden\" name=\"run_ids\" value=\"{run_id}\">" for run_id in run_ids)
+    display_hidden_runs = "".join(f"<input type=\"hidden\" form=\"cross-matrix-display-form\" name=\"run_ids\" value=\"{run_id}\">" for run_id in run_ids)
+    review_hidden_runs = "".join(f"<input type=\"hidden\" form=\"cross-matrix-missing-review-form\" name=\"run_ids\" value=\"{run_id}\">" for run_id in run_ids)
+    selected_weights: set[float] = set()
+    existing_weights: set[float] = set()
+    if run_ids:
+        placeholders = ",".join("?" for _ in run_ids)
+        existing_weights = {
+            round(float(row["lora_weight"] or 0), 1)
+            for row in fetch_all(
+                f"SELECT DISTINCT lora_weight FROM validation_expected_conditions WHERE validation_run_id IN ({placeholders})",
+                tuple(run_ids),
+            )
+        }
+    for run in runs:
+        preset = validation_preset_for_run(run)
+        if preset:
+            selected_weights.update(round(float(weight), 1) for weight in json_loads(preset["weights_json"], []))
+    selected_weights = set(display_weights or []) or existing_weights or selected_weights or {0, 0.4, 0.6, 0.8, 1.0}
+
+    def option(weight: float) -> str:
+        checked = " checked" if round(weight, 1) in selected_weights else ""
+        exists_label = " data-existing=\"1\"" if round(weight, 1) in existing_weights else ""
+        return (
+            f"<label class=\"matrix-weight-option\"{exists_label}>"
+            f"<input type=\"checkbox\" name=\"selected_weights\" value=\"{weight:g}\"{checked} form=\"cross-matrix-weight-form\">"
+            f"<input type=\"checkbox\" name=\"display_weights\" value=\"{weight:g}\"{checked} form=\"cross-matrix-display-form\" hidden>"
+            f"<span>{weight:g}</span>"
+            "</label>"
+        )
+
+    default_options = "".join(option(index / 10) for index in range(0, 11))
+    extra_options = "".join(option(index / 10) for index in range(11, 21))
+    run_label = ", ".join(f"#{run_id}" for run_id in run_ids)
+    return (
+        f"<form id=\"cross-matrix-weight-form\" method=\"post\" action=\"/jobs/{job_id}/validation-runs/epoch-matrix/weights\">{hidden_runs}</form>"
+        f"<form id=\"cross-matrix-display-form\" method=\"get\" action=\"/jobs/{job_id}/validation-runs/epoch-matrix\">{display_hidden_runs}</form>"
+        f"<form id=\"cross-matrix-missing-review-form\" method=\"post\" action=\"/jobs/{job_id}/validation-runs/epoch-matrix/missing-review\">{review_hidden_runs}</form>"
+        "<div class=\"matrix-weight-panel\">"
+        "<div class=\"matrix-weight-head\">"
+        "<strong>weight選択</strong>"
+        f"<span class=\"matrix-scale-note\">表示中の検証Run {html.escape(run_label)} で、チェックしたweightをMatrix操作の対象にします。追加生成は不足画像だけを作成し、既存画像はスキップします。</span>"
+        "</div>"
+        f"<div class=\"matrix-weight-options\">{default_options}</div>"
+        "<div class=\"matrix-weight-extra hidden\" data-matrix-extra-weights>"
+        f"<div class=\"matrix-weight-options\">{extra_options}</div>"
+        "</div>"
+        "<div class=\"matrix-weight-head\">"
+        "<button class=\"matrix-weight-toggle\" type=\"button\" data-matrix-toggle-extra-weights>1.1〜2.0を表示</button>"
+        "<button class=\"matrix-weight-toggle\" type=\"submit\" form=\"cross-matrix-display-form\">選択weightでMatrix表示を更新</button>"
+        "<button class=\"matrix-weight-submit\" type=\"submit\" form=\"cross-matrix-weight-form\">表示中Runで選択weightの不足画像を追加生成</button>"
+        "<button class=\"matrix-weight-submit\" type=\"submit\" form=\"cross-matrix-missing-review-form\">表示中Runの不足レビューだけ再計算</button>"
+        "</div>"
+        "</div>"
+    )
+
+
+def cross_matrix_missing_review_controls(job_id: int, run_ids: list[int]) -> str:
+    hidden = "".join(f"<input type=\"hidden\" name=\"run_ids\" value=\"{int(run_id)}\">" for run_id in run_ids)
+    run_label = ", ".join(f"#{int(run_id)}" for run_id in run_ids)
+    return (
+        "<div class=\"matrix-review-panel\">"
+        "<strong>機械補助レビュー</strong>"
+        f"<span class=\"matrix-scale-note\">表示中の検証Run {html.escape(run_label)} の不足Embedding / Machine Reviewだけを順番に実行します。</span>"
+        f"<form method=\"post\" action=\"/jobs/{job_id}/validation-runs/epoch-matrix/missing-review\">"
+        f"{hidden}"
+        "<button class=\"matrix-review-submit\" type=\"submit\">表示中Runの不足レビューだけ再計算</button>"
+        "</form>"
         "</div>"
     )
 
@@ -1303,6 +1666,97 @@ def matrix_display_script() -> str:
     return box;
   }
 
+  function matrixRunIds() {
+    const ids = new Set();
+    new URLSearchParams(window.location.search).getAll("run_ids").forEach((value) => {
+      const id = Number(value);
+      if (id > 0) ids.add(id);
+    });
+    document.querySelectorAll('input[name="run_ids"]').forEach((input) => {
+      const id = Number(input.value);
+      if (id > 0) ids.add(id);
+    });
+    return Array.from(ids);
+  }
+
+  function matrixWeightStateKey() {
+    const runPart = matrixRunIds().sort((a, b) => a - b).join(",");
+    return `lora-studio:matrix-weights:${window.location.pathname}:${runPart}`;
+  }
+
+  function selectedMatrixWeights() {
+    return Array.from(document.querySelectorAll('input[name="selected_weights"]:checked'))
+      .map((input) => input.value)
+      .sort((a, b) => Number(a) - Number(b));
+  }
+
+  function saveMatrixWeightState() {
+    const inputs = document.querySelectorAll('input[name="selected_weights"]');
+    if (!inputs.length) return;
+    window.sessionStorage.setItem(matrixWeightStateKey(), JSON.stringify(selectedMatrixWeights()));
+  }
+
+  function restoreMatrixWeightState() {
+    const inputs = Array.from(document.querySelectorAll('input[name="selected_weights"]'));
+    if (!inputs.length) return;
+    let values = null;
+    try {
+      values = JSON.parse(window.sessionStorage.getItem(matrixWeightStateKey()) || "null");
+    } catch (error) {
+      values = null;
+    }
+    if (!Array.isArray(values)) return;
+    const selected = new Set(values.map(String));
+    inputs.forEach((input) => {
+      input.checked = selected.has(input.value);
+    });
+    syncDisplayWeightInputs();
+  }
+
+  function syncDisplayWeightInputs() {
+    const checked = new Set(Array.from(document.querySelectorAll('input[name="selected_weights"]:checked')).map((input) => input.value));
+    document.querySelectorAll('input[name="display_weights"]').forEach((input) => {
+      input.checked = checked.has(input.value);
+    });
+  }
+
+  function stripMatrixMessageAndReload() {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("matrix_message")) {
+      window.location.reload();
+      return;
+    }
+    url.searchParams.delete("matrix_message");
+    window.location.replace(url.toString());
+  }
+
+  async function pollMatrixGeneration() {
+    const runIds = matrixRunIds();
+    if (!runIds.length) return;
+    const results = await Promise.all(runIds.map(async (runId) => {
+      try {
+        const response = await fetch(`/validation-runs/${runId}/generation/status`, {
+          headers: {"Accept": "application/json", "X-Requested-With": "fetch"},
+          cache: "no-store"
+        });
+        if (!response.ok) return {run_id: runId, status: "unknown"};
+        return response.json();
+      } catch (error) {
+        return {run_id: runId, status: "unknown"};
+      }
+    }));
+    const active = results.filter((row) => ["running", "queued"].includes(row.status));
+    if (active.length) {
+      window.__matrixHadActiveGeneration = true;
+      return;
+    }
+    const url = new URL(window.location.href);
+    const hasStartMessage = (url.searchParams.get("matrix_message") || "").includes("開始");
+    if (window.__matrixHadActiveGeneration || hasStartMessage) {
+      stripMatrixMessageAndReload();
+    }
+  }
+
   document.querySelectorAll("img.matrix-image").forEach((img) => {
     if (img.complete) applyScale();
     img.addEventListener("load", applyScale, {once: true});
@@ -1333,8 +1787,27 @@ def matrix_display_script() -> str:
     applyScale();
   });
 
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-matrix-toggle-extra-weights]");
+    if (!button) return;
+    const panel = document.querySelector("[data-matrix-extra-weights]");
+    if (!panel) return;
+    const hidden = panel.classList.toggle("hidden");
+    button.textContent = hidden ? "1.1〜2.0を表示" : "1.1〜2.0を隠す";
+  });
+
+  document.addEventListener("change", (event) => {
+    if (!event.target.closest('input[name="selected_weights"]')) return;
+    syncDisplayWeightInputs();
+    saveMatrixWeightState();
+  });
+
+  syncDisplayWeightInputs();
+  restoreMatrixWeightState();
   applyScale();
   applyHiresMode();
+  pollMatrixGeneration();
+  window.setInterval(pollMatrixGeneration, 10000);
 })();
 </script>
 """

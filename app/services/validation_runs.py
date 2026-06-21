@@ -50,10 +50,16 @@ def preset_expected_count(preset: Any) -> int:
     return len(prompts) * len(seeds) * len(weights) * len(hires_modes)
 
 
-def expand_preset_conditions(preset: Any, trigger_word: str, lora_filename: str, base_model: str) -> list[dict[str, Any]]:
+def expand_preset_conditions(
+    preset: Any,
+    trigger_word: str,
+    lora_filename: str,
+    base_model: str,
+    weights_override: list[float] | None = None,
+) -> list[dict[str, Any]]:
     prompts = json_loads(preset["prompts_json"], [])
     seeds = json_loads(preset["seeds_json"], [])
-    weights = json_loads(preset["weights_json"], [])
+    weights = weights_override if weights_override is not None else json_loads(preset["weights_json"], [])
     hires_modes = json_loads(preset["hires_modes_json"], [])
     lora_name = Path(lora_filename or "selected_lora").stem
     rows: list[dict[str, Any]] = []
@@ -98,6 +104,104 @@ def expand_preset_conditions(preset: Any, trigger_word: str, lora_filename: str,
                     rows.append(condition)
                     order += 1
     return rows
+
+
+def normalize_validation_weights(values: list[Any]) -> list[float]:
+    weights: list[float] = []
+    for value in values:
+        try:
+            weight = round(float(value), 1)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= weight <= 2.0 and abs(weight * 10 - round(weight * 10)) < 0.000001:
+            weights.append(weight)
+    return sorted(set(weights))
+
+
+def add_validation_run_weights(run_id: int, weights: list[Any]) -> dict[str, Any]:
+    run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (run_id,))
+    if run is None or not run["validation_preset_id"]:
+        raise ValueError(f"Validation Run not found: {run_id}")
+    preset = validation_preset_for_run(run)
+    if preset is None:
+        raise ValueError("Validation preset not found")
+    selected_weights = normalize_validation_weights(weights)
+    if not selected_weights:
+        raise ValueError("追加生成するweightを選択してください。")
+
+    existing_hashes = {
+        row["condition_hash"]
+        for row in fetch_all("SELECT condition_hash FROM validation_expected_conditions WHERE validation_run_id = ?", (run_id,))
+    }
+    existing_weights = {
+        round(float(row["lora_weight"] or 0), 1)
+        for row in fetch_all("SELECT DISTINCT lora_weight FROM validation_expected_conditions WHERE validation_run_id = ?", (run_id,))
+    }
+    max_order_row = fetch_one("SELECT MAX(expected_order) AS max_order FROM validation_expected_conditions WHERE validation_run_id = ?", (run_id,))
+    next_order = int(max_order_row["max_order"] or 0) + 1 if max_order_row else 1
+    candidates = expand_preset_conditions(
+        preset,
+        run["trigger_word"] or "",
+        run["lora_filename"] or "",
+        run["base_model"] or "",
+        weights_override=selected_weights,
+    )
+    new_rows = [row for row in candidates if row["condition_hash"] not in existing_hashes]
+    now = utc_now()
+    with connect() as conn:
+        for row in new_rows:
+            conn.execute(
+                """
+                INSERT INTO validation_expected_conditions(
+                    validation_run_id, validation_preset_id, prompt_key, seed,
+                    lora_weight, hires_enabled, width, height, sampler, steps,
+                    cfg_scale, condition_hash, expected_order, preset_version,
+                    prompt, webui_prompt, negative_prompt, trigger_word,
+                    lora_filename, base_model, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    row["validation_preset_id"],
+                    row["prompt_key"],
+                    row["seed"],
+                    row["lora_weight"],
+                    1 if row["hires_enabled"] else 0,
+                    row["width"],
+                    row["height"],
+                    row["sampler"],
+                    row["steps"],
+                    row["cfg_scale"],
+                    row["condition_hash"],
+                    next_order,
+                    row.get("preset_version"),
+                    row.get("prompt"),
+                    row.get("webui_prompt"),
+                    row.get("negative_prompt"),
+                    row.get("trigger_word"),
+                    row.get("lora_filename"),
+                    row.get("base_model"),
+                    now,
+                ),
+            )
+            next_order += 1
+        expected_count = conn.execute(
+            "SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ?",
+            (run_id,),
+        ).fetchone()["count"]
+        conn.execute(
+            "UPDATE validation_runs SET expected_image_count = ?, updated_at = ? WHERE id = ?",
+            (expected_count, now, run_id),
+        )
+    relink_validation_images(run_id)
+    added_weights = sorted(set(selected_weights) - existing_weights)
+    return {
+        "selected_weights": selected_weights,
+        "added_conditions": len(new_rows),
+        "added_weights": added_weights,
+        "existing_weights": sorted(existing_weights),
+    }
 
 
 def make_condition_hash(data: dict[str, Any]) -> str:

@@ -1142,14 +1142,14 @@ function openLightbox(src, title) {
 
 function initValidationGenerationPolling() {
   const rows = [...document.querySelectorAll("[data-validation-run-row]")];
-  const activeRows = rows.filter((row) => row.getAttribute("data-generation-status") === "running");
+  const activeRows = rows.filter((row) => isActiveGenerationStatus(row.getAttribute("data-generation-status")));
   if (!activeRows.length) {
     return;
   }
 
   const pollRow = async (row) => {
     const runId = row.getAttribute("data-validation-run-row");
-    if (!runId || row.getAttribute("data-generation-status") !== "running") {
+    if (!runId || !isActiveGenerationStatus(row.getAttribute("data-generation-status"))) {
       return;
     }
     try {
@@ -1166,13 +1166,18 @@ function initValidationGenerationPolling() {
 
   activeRows.forEach((row) => pollRow(row));
   const timer = window.setInterval(() => {
-    const runningRows = [...document.querySelectorAll('[data-validation-run-row][data-generation-status="running"]')];
-    if (!runningRows.length) {
+    const activeRows = [...document.querySelectorAll("[data-validation-run-row]")]
+      .filter((row) => isActiveGenerationStatus(row.getAttribute("data-generation-status")));
+    if (!activeRows.length) {
       window.clearInterval(timer);
       return;
     }
-    runningRows.forEach((row) => pollRow(row));
+    activeRows.forEach((row) => pollRow(row));
   }, 5000);
+}
+
+function isActiveGenerationStatus(status) {
+  return status === "running" || status === "queued";
 }
 
 async function fetchValidationGenerationStatus(runId) {
@@ -1198,12 +1203,13 @@ function generationStatusLabel(status, fallback = "-") {
 
 function syncGenerationButtons(container, status) {
   const isRunning = status === "running";
+  const isActive = isActiveGenerationStatus(status);
   const runButton = container.querySelector("[data-generation-run-button]");
   const stopButton = container.querySelector("[data-generation-stop-button]");
   if (runButton) {
-    runButton.disabled = isRunning;
+    runButton.disabled = isActive;
     runButton.hidden = isRunning;
-    if (!isRunning) {
+    if (!isActive) {
       runButton.removeAttribute("title");
     }
   }
@@ -1214,9 +1220,10 @@ function syncGenerationButtons(container, status) {
 }
 
 function syncAllGenerationRunButtons() {
-  const isAnyRunning = Boolean(document.querySelector('[data-validation-run-row][data-generation-status="running"]'));
+  const isAnyRunning = [...document.querySelectorAll("[data-validation-run-row]")]
+    .some((row) => isActiveGenerationStatus(row.getAttribute("data-generation-status")));
   document.querySelectorAll("[data-validation-run-row]").forEach((row) => {
-    const isThisRunning = row.getAttribute("data-generation-status") === "running";
+    const isThisRunning = isActiveGenerationStatus(row.getAttribute("data-generation-status"));
     const runButton = row.querySelector("[data-generation-run-button]");
     if (!runButton || isThisRunning) {
       return;
@@ -1231,7 +1238,7 @@ function syncAllGenerationRunButtons() {
 }
 
 function applyValidationGenerationStatus(row, payload) {
-  const wasRunning = row.getAttribute("data-generation-status") === "running";
+  const wasActive = isActiveGenerationStatus(row.getAttribute("data-generation-status"));
   row.setAttribute("data-generation-status", payload.status || "");
   const label = row.querySelector("[data-generation-status-label]");
   if (label) {
@@ -1261,7 +1268,7 @@ function applyValidationGenerationStatus(row, payload) {
   }
   syncGenerationButtons(row, payload.status || "");
   syncAllGenerationRunButtons();
-  if (wasRunning && ["completed", "failed", "stopped"].includes(payload.status || "") && !document.body.hasAttribute("data-validation-generation-refreshing")) {
+  if (wasActive && ["completed", "failed", "stopped"].includes(payload.status || "") && !document.body.hasAttribute("data-validation-generation-refreshing")) {
     document.body.setAttribute("data-validation-generation-refreshing", "1");
     showPageNotice("検証画像生成の状態が変わりました。次のRunを確認するため画面を更新します。");
     schedulePageRefresh({

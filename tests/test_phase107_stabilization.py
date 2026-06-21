@@ -1451,6 +1451,70 @@ class Phase107StabilizationTests(IsolatedDbTest):
         expected = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ?", (run_id,))
         self.assertEqual(len(Path(payload["all_prompt_file"]).read_text(encoding="utf-8").splitlines()), expected["count"])
 
+    def test_bulk_validation_generation_persists_queued_runs(self) -> None:
+        from app.main import current_running_validation_generation
+        from app.services.validation_generation import start_validation_generation_sequence
+        from app.services.validation_runs import create_validation_run
+
+        first_run_id, selected_output_id = self.create_validation_generation_fixture()
+        first_run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (first_run_id,))
+        second_run_id = create_validation_run(first_run["job_id"], "standard_validation_v1", str(self.root / "models" / "base.safetensors"), "testchar", "")
+        with connect() as conn:
+            conn.execute(
+                "UPDATE validation_runs SET selected_output_id = ? WHERE id = ?",
+                (selected_output_id, second_run_id),
+            )
+
+        with mock.patch("app.services.validation_generation.start_validation_generation", return_value=12345) as start_mock, mock.patch(
+            "app.services.validation_generation.threading.Thread"
+        ) as thread_mock:
+            count = start_validation_generation_sequence([first_run_id, second_run_id])
+
+        queued = fetch_one("SELECT * FROM validation_generation_runs WHERE validation_run_id = ? ORDER BY id DESC LIMIT 1", (second_run_id,))
+        active = current_running_validation_generation()
+        self.assertEqual(count, 2)
+        start_mock.assert_called_once_with(first_run_id)
+        thread_mock.return_value.start.assert_called_once()
+        self.assertEqual(queued["status"], "queued")
+        self.assertEqual(active["status"], "queued")
+        self.assertEqual(active["validation_run_id"], second_run_id)
+
+    def test_superseded_queued_validation_generation_is_not_active(self) -> None:
+        from app.main import current_running_validation_generation
+        from app.services.validation_generation import reconcile_stale_validation_generations
+
+        run_id, _ = self.create_validation_generation_fixture()
+        now = utc_now()
+        with connect() as conn:
+            old_id = int(
+                conn.execute(
+                    """
+                    INSERT INTO validation_generation_runs(
+                        validation_run_id, status, created_at, updated_at
+                    )
+                    VALUES (?, 'queued', ?, ?)
+                    """,
+                    (run_id, now, now),
+                ).lastrowid
+            )
+            conn.execute(
+                """
+                INSERT INTO validation_generation_runs(
+                    validation_run_id, status, generated_image_count,
+                    imported_image_count, created_at, updated_at
+                )
+                VALUES (?, 'completed', 45, 45, ?, ?)
+                """,
+                (run_id, now, now),
+            )
+
+        self.assertIsNone(current_running_validation_generation())
+        fixed = reconcile_stale_validation_generations()
+        old_generation = fetch_one("SELECT * FROM validation_generation_runs WHERE id = ?", (old_id,))
+        self.assertEqual(fixed, 1)
+        self.assertEqual(old_generation["status"], "superseded")
+        self.assertIsNone(current_running_validation_generation())
+
     def test_validation_run_can_target_specific_output_epoch(self) -> None:
         from app.services.validation_runs import create_validation_run
 
@@ -1550,11 +1614,211 @@ class Phase107StabilizationTests(IsolatedDbTest):
         )
         cross_html = build_epoch_cross_matrix_html(job_id, [run_id, second_run_id])
         self.assertIn("Epoch横断Matrix", cross_html)
+        self.assertIn("表示中Runで選択weightの不足画像を追加生成", cross_html)
+        self.assertIn("選択weightでMatrix表示を更新", cross_html)
+        self.assertIn("display_weights", cross_html)
+        self.assertIn(f"/jobs/{job_id}/validation-runs/epoch-matrix/weights", cross_html)
+        self.assertIn('name="selected_weights"', cross_html)
+        self.assertIn('value="0.9"', cross_html)
+        self.assertIn("pollMatrixGeneration", cross_html)
+        self.assertIn("matrix_message", cross_html)
+        self.assertIn("表示中Runの不足レビューだけ再計算", cross_html)
+        self.assertIn(f"/jobs/{job_id}/validation-runs/epoch-matrix/missing-review", cross_html)
+        self.assertIn(f'name="run_ids" value="{run_id}"', cross_html)
+        self.assertIn(f'name="run_ids" value="{second_run_id}"', cross_html)
         self.assertIn("Epoch 4", cross_html)
         self.assertIn("Epoch 7", cross_html)
         self.assertIn(f"/validation-images/{image['id']}", cross_html)
         second_image = fetch_one("SELECT * FROM validation_images WHERE validation_run_id = ?", (second_run_id,))
         self.assertIn(f"/validation-images/{second_image['id']}", cross_html)
+
+        filtered_html = build_epoch_cross_matrix_html(job_id, [run_id, second_run_id], display_weights=["0.4"])
+        self.assertIn("seed 111111 / weight 0.4", filtered_html)
+        self.assertNotIn("seed 111111 / weight 0.6", filtered_html)
+
+    def test_validation_matrix_can_add_weight_conditions(self) -> None:
+        from app.services.validation_generation import write_validation_matrix
+        from app.services.validation_runs import add_validation_run_weights
+
+        run_id, _ = self.create_validation_generation_fixture()
+        before = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ?", (run_id,))
+        summary = add_validation_run_weights(run_id, ["0.8", "0.9", "1.0", "bad", "2.1"])
+        after = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ?", (run_id,))
+        added_weight = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ? AND lora_weight = 0.9", (run_id,))
+        run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (run_id,))
+
+        self.assertEqual(summary["selected_weights"], [0.8, 0.9, 1.0])
+        self.assertEqual(summary["added_weights"], [0.9])
+        self.assertEqual(after["count"], before["count"] + 9)
+        self.assertEqual(added_weight["count"], 9)
+        self.assertEqual(run["expected_image_count"], after["count"])
+
+        matrix_path = Path(write_validation_matrix(run_id))
+        matrix_html = matrix_path.read_text(encoding="utf-8")
+        self.assertIn("weight選択", matrix_html)
+        self.assertIn('name="selected_weights" value="0.9" checked', matrix_html)
+        self.assertIn("1.1〜2.0を表示", matrix_html)
+        self.assertIn("選択weightの不足画像を追加生成", matrix_html)
+        self.assertIn("不足レビューだけ再計算", matrix_html)
+        self.assertIn(f"/validation-runs/{run_id}/matrix/missing-review", matrix_html)
+
+    def test_validation_matrix_weight_post_adds_conditions_and_starts_missing_generation(self) -> None:
+        from app.main import validation_matrix_add_weights
+
+        run_id, _ = self.create_validation_generation_fixture()
+        with mock.patch("app.main.start_validation_generation", return_value=12345) as start_mock:
+            response = validation_matrix_add_weights(run_id, ["0.9"])
+
+        added_weight = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ? AND lora_weight = 0.9", (run_id,))
+        self.assertEqual(response.status_code, 303)
+        self.assertIn(f"/validation-runs/{run_id}/matrix?weight_message=", response.headers["location"])
+        self.assertEqual(added_weight["count"], 9)
+        start_mock.assert_called_once_with(run_id)
+
+    def test_validation_matrix_missing_review_post_starts_sequence(self) -> None:
+        from app.main import validation_matrix_missing_review
+
+        run_id, _ = self.create_validation_generation_fixture()
+        with mock.patch("app.main.start_missing_validation_review_sequence", return_value={"status": "started"}) as start_mock:
+            response = validation_matrix_missing_review(run_id)
+
+        self.assertEqual(response.status_code, 303)
+        self.assertIn(f"/validation-runs/{run_id}/matrix?weight_message=", response.headers["location"])
+        start_mock.assert_called_once_with(run_id)
+
+    def test_epoch_cross_matrix_missing_review_post_starts_sequences(self) -> None:
+        from app.main import validation_epoch_cross_matrix_missing_review
+
+        run_id, _ = self.create_validation_generation_fixture()
+        second_run_id, _ = self.create_validation_generation_fixture()
+        with mock.patch("app.main.start_missing_validation_review_sequences", return_value={"status": "started"}) as start_mock:
+            response = validation_epoch_cross_matrix_missing_review(1, [run_id, second_run_id, run_id])
+
+        self.assertEqual(response.status_code, 303)
+        location = response.headers["location"]
+        self.assertIn("/jobs/1/validation-runs/epoch-matrix?", location)
+        self.assertIn(f"run_ids={run_id}", location)
+        self.assertIn(f"run_ids={second_run_id}", location)
+        self.assertIn("matrix_message=", location)
+        start_mock.assert_called_once_with([run_id, second_run_id])
+
+    def test_epoch_cross_matrix_weight_post_adds_conditions_and_starts_sequence(self) -> None:
+        from app.main import validation_epoch_cross_matrix_add_weights
+        from app.services.validation_runs import create_validation_run
+
+        run_id, selected_output_id = self.create_validation_generation_fixture()
+        run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (run_id,))
+        second_run_id = create_validation_run(run["job_id"], "standard_validation_v1", run["base_model"], run["trigger_word"], "second")
+        with connect() as conn:
+            conn.execute(
+                "UPDATE validation_runs SET selected_output_id = ? WHERE id = ?",
+                (selected_output_id, second_run_id),
+            )
+
+        with mock.patch("app.main.start_validation_generation_sequence", return_value=2) as start_mock:
+            response = validation_epoch_cross_matrix_add_weights(run["job_id"], [run_id, second_run_id, run_id], ["0.9"])
+
+        self.assertEqual(response.status_code, 303)
+        location = response.headers["location"]
+        self.assertIn(f"/jobs/{run['job_id']}/validation-runs/epoch-matrix?", location)
+        self.assertIn(f"run_ids={run_id}", location)
+        self.assertIn(f"run_ids={second_run_id}", location)
+        self.assertIn("matrix_message=", location)
+        added_first = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ? AND lora_weight = 0.9", (run_id,))
+        added_second = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ? AND lora_weight = 0.9", (second_run_id,))
+        self.assertEqual(added_first["count"], 9)
+        self.assertEqual(added_second["count"], 9)
+        from app.services.validation_generation import build_epoch_cross_matrix_html
+
+        cross_html = build_epoch_cross_matrix_html(run["job_id"], [run_id, second_run_id])
+        self.assertIn('name="selected_weights"', cross_html)
+        self.assertIn('value="0.9" checked', cross_html)
+        start_mock.assert_called_once_with([run_id, second_run_id])
+
+    def test_missing_machine_review_job_targets_only_unscored_validation_images(self) -> None:
+        from app.main import register_validation_run_image
+        from app.services.machine_review import create_machine_review_job
+
+        run_id, _ = self.create_validation_generation_fixture()
+        first_condition = dict(fetch_one("SELECT * FROM validation_expected_conditions WHERE validation_run_id = ? ORDER BY expected_order LIMIT 1", (run_id,)))
+        second_condition = dict(fetch_one("SELECT * FROM validation_expected_conditions WHERE validation_run_id = ? ORDER BY expected_order LIMIT 1 OFFSET 1", (run_id,)))
+        first_image_path = self.make_png(self.root / "generated" / "first.png")
+        second_image_path = self.make_png(self.root / "generated" / "second.png")
+        register_validation_run_image(
+            run_id,
+            str(first_image_path),
+            "individual",
+            first_condition["prompt_key"],
+            int(first_condition["seed"]),
+            float(first_condition["lora_weight"]),
+            bool(first_condition["hires_enabled"]),
+            "",
+        )
+        register_validation_run_image(
+            run_id,
+            str(second_image_path),
+            "individual",
+            second_condition["prompt_key"],
+            int(second_condition["seed"]),
+            float(second_condition["lora_weight"]),
+            bool(second_condition["hires_enabled"]),
+            "",
+        )
+        first_image = fetch_one("SELECT * FROM validation_images WHERE validation_run_id = ? ORDER BY id LIMIT 1", (run_id,))
+        run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (run_id,))
+        job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (run["job_id"],))
+        now = utc_now()
+        with connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO machine_review_scores(
+                    source_type, source_id, project_id, job_id, validation_run_id,
+                    reference_set_version_id, dataset_version_id, embedding_model_id, provider,
+                    assist_label, confidence_label, created_at, updated_at
+                )
+                VALUES ('validation_image', ?, ?, ?, ?, ?, ?, 'mock_image_512', 'mock',
+                        'low_confidence', 'low', ?, ?)
+                """,
+                (
+                    first_image["id"],
+                    run["project_id"],
+                    run["job_id"],
+                    run_id,
+                    run["reference_set_version_id"],
+                    job["dataset_version_id"] if job else None,
+                    now,
+                    now,
+                ),
+            )
+
+        job_id = create_machine_review_job("validation_run_images_missing", run_id)
+        job = fetch_one("SELECT * FROM machine_review_jobs WHERE id = ?", (job_id,))
+        self.assertEqual(job["total_count"], 1)
+
+    def test_validation_generation_skips_registered_existing_images(self) -> None:
+        from app.services.validation_generation import (
+            generation_output_dir,
+            import_generated_images,
+            output_stem,
+            prepare_validation_generation,
+        )
+
+        run_id, _ = self.create_validation_generation_fixture()
+        first_generation = prepare_validation_generation(run_id)
+        condition = dict(fetch_one("SELECT * FROM validation_expected_conditions WHERE validation_run_id = ? ORDER BY expected_order LIMIT 1", (run_id,)))
+        image_path = generation_output_dir(run_id) / f"{output_stem(run_id, condition)}.png"
+        self.make_png(image_path)
+        self.assertEqual(import_generated_images(run_id, int(first_generation["generation_id"])), 1)
+
+        second_generation = prepare_validation_generation(run_id)
+        commands = second_generation["commands"]
+        condition_count = sum(int(command["condition_count"]) for command in commands)
+        payload = json.loads(fetch_one("SELECT command_argv_json FROM validation_generation_runs WHERE id = ?", (second_generation["generation_id"],))["command_argv_json"])
+        prompt_text = Path(second_generation["prompt_file"]).read_text(encoding="utf-8")
+
+        self.assertEqual(condition_count, 44)
+        self.assertEqual(payload["skipped_existing_count"], 1)
+        self.assertNotIn(f"ec{int(condition['id']):06d}", prompt_text)
 
     def test_sd_scripts_generation_stop_without_process_marks_stopped(self) -> None:
         from app.services.validation_generation import stop_validation_generation
