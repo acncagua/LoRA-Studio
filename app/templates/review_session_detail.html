@@ -85,6 +85,7 @@
   </div>
 </section>
 
+{% if session.status not in ['planned', 'prepared'] %}
 <section id="validation-next" class="action-panel">
   <div>
     <h2>正式検証へ進む</h2>
@@ -134,6 +135,7 @@
     {% endif %}
   </div>
 </section>
+{% endif %}
 
 {% if validation_runs_for_candidates %}
 <section class="session-summary">
@@ -191,6 +193,13 @@
     {% endif %}
   </div>
 </section>
+
+{% if session.status in ['planned', 'prepared'] %}
+<details id="validation-next" class="subsection">
+  <summary>正式検証へ進む</summary>
+  <p class="muted">このReview Sessionはまだ未生成です。正式検証は候補epochを確認して採用LoRAを選んだ後に実行します。</p>
+</details>
+{% endif %}
 
 <section class="session-summary">
   <h2>候補epoch</h2>

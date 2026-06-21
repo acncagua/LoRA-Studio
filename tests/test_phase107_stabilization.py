@@ -384,6 +384,66 @@ class ReviewPreparationPhase116Tests(IsolatedDbTest):
         self.assertIn("機械補助レビュー", html)
         self.assertIn("sample.png", html)
 
+    def test_planned_review_session_keeps_validation_next_collapsed(self) -> None:
+        from app.main import review_session_detail
+
+        job_id = self.create_completed_job_with_outputs()
+        session = ensure_candidate_review_plan(job_id, force=True)
+        assert session is not None
+
+        body = review_session_detail(request=None, session_id=int(session["id"])).body.decode("utf-8")
+
+        self.assertIn("このReview Sessionはまだ未生成です。正式検証は候補epochを確認して採用LoRAを選んだ後に実行します。", body)
+        self.assertIn("<details id=\"validation-next\"", body)
+        self.assertNotIn("<section id=\"validation-next\" class=\"action-panel\">", body)
+        self.assertNotIn("採用epochの検証Runを作成", body)
+
+    def test_completed_review_session_shows_validation_next_panel(self) -> None:
+        from app.main import review_session_detail
+
+        job_id = self.create_completed_job_with_outputs()
+        session = ensure_candidate_review_plan(job_id, force=True)
+        assert session is not None
+        matrix_path = self.root / "exports" / "review_sessions" / f"review_session_{int(session['id']):06d}" / "review_matrix.html"
+        matrix_path.parent.mkdir(parents=True, exist_ok=True)
+        matrix_path.write_text("<html></html>", encoding="utf-8")
+        now = utc_now()
+        with connect() as conn:
+            conn.execute(
+                "UPDATE review_sessions SET status = 'completed', matrix_path = ?, updated_at = ? WHERE id = ?",
+                (str(matrix_path), now, session["id"]),
+            )
+
+        body = review_session_detail(request=None, session_id=int(session["id"])).body.decode("utf-8")
+
+        self.assertIn("<section id=\"validation-next\" class=\"action-panel\">", body)
+        self.assertIn("正式検証へ進む", body)
+        self.assertIn("採用epochの検証Runを作成", body)
+
+    def test_selected_lora_job_primary_action_links_back_to_review_matrix(self) -> None:
+        from app.main import ensure_selected_lora_profile, job_detail
+
+        job_id = self.create_completed_job_with_outputs()
+        ensure_selected_lora_profile(job_id)
+        session = ensure_candidate_review_plan(job_id, force=True)
+        assert session is not None
+        matrix_path = self.root / "exports" / "review_sessions" / f"review_session_{int(session['id']):06d}" / "review_matrix.html"
+        matrix_path.parent.mkdir(parents=True, exist_ok=True)
+        matrix_path.write_text("<html></html>", encoding="utf-8")
+        now = utc_now()
+        with connect() as conn:
+            conn.execute(
+                "UPDATE review_sessions SET status = 'completed', matrix_path = ?, updated_at = ? WHERE id = ?",
+                (str(matrix_path), now, session["id"]),
+            )
+
+        body = job_detail(request=None, job_id=job_id).body.decode("utf-8")
+
+        self.assertIn("weight検証Runを作成", body)
+        self.assertIn("採用LoRAは選択済みです。次の全体工程はweight検証です。", body)
+        self.assertIn(f"/jobs/{job_id}/review-sessions/{int(session['id'])}/matrix", body)
+        self.assertIn("Review Matrixを開く", body)
+
     def test_stale_review_session_imports_partial_generated_images_without_completing(self) -> None:
         job_id = self.create_completed_job_with_outputs()
         session = ensure_candidate_review_plan(job_id, force=True)

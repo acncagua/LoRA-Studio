@@ -63,6 +63,16 @@
       <a class="button" href="#overview">概要を確認</a>
       {% endif %}
     </div>
+    {% if selected_output %}
+    <p class="muted">
+      採用LoRAは選択済みです。次の全体工程はweight検証です。
+      {% if review_preparation.current and review_preparation.current.can_open_matrix %}
+      採用前レビューを確認したい場合は、Reviewタブの<a href="/jobs/{{ job.id }}/review-sessions/{{ review_preparation.current.session_id }}/matrix">Review Matrixを開く</a>から確認できます。
+      {% else %}
+      採用前レビューを確認したい場合は、ReviewタブでReview Matrixを確認してください。
+      {% endif %}
+    </p>
+    {% endif %}
     <details class="secondary-actions">
       <summary>その他操作</summary>
       <div class="actions compact-actions">
