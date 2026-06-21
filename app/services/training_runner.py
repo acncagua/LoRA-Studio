@@ -330,14 +330,15 @@ def sd_scripts_subprocess_env() -> dict[str, str]:
     # sd-scripts makes its Python load incompatible packages such as NumPy.
     env.pop("PYTHONPATH", None)
     env.pop("PYTHONHOME", None)
-    env.setdefault("PYTHONUTF8", "1")
+    # Do not force UTF-8 mode for sd-scripts itself. Some sd-scripts/accelerate
+    # paths call Windows commands with subprocess(..., text=True); those commands
+    # can emit CP932 bytes, and PYTHONUTF8=1 makes Python decode them as UTF-8.
+    env.pop("PYTHONUTF8", None)
     env.setdefault("PYTHONIOENCODING", "utf-8:replace")
-    # sd-scripts calls git while building model metadata. On Japanese Windows,
-    # those child subprocesses can otherwise emit CP932 text into Python code
-    # that expects UTF-8, producing noisy UnicodeDecodeError tracebacks even
-    # though training continues.
-    env.setdefault("LANG", "C.UTF-8")
-    env.setdefault("LC_ALL", "C.UTF-8")
+    # Keep stdio predictable for LoRA-Studio logs, while allowing Python's
+    # subprocess text decoding inside sd-scripts to follow the Windows locale.
+    env.pop("LC_ALL", None)
+    env.pop("LANG", None)
     env.setdefault("LANGUAGE", "C")
     return env
 

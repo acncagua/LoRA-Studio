@@ -49,6 +49,9 @@
       {% elif primary_action == 'progress' %}
       <a class="button" href="#review-session-log">進捗を確認</a>
       {% if session.job_id %}<form method="post" action="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/stop"><button type="submit" class="danger">停止</button></form>{% endif %}
+      {% elif primary_action == 'retry' and session.job_id %}
+      <form method="post" action="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/run"><button type="submit" class="danger">レビュー準備をリトライ</button></form>
+      <a class="button secondary" href="#review-session-log">ログを確認</a>
       {% elif primary_action == 'open_matrix' and session.job_id %}
       <a class="button" href="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix">{{ primary_label }}</a>
       <p class="muted">画像比較とレビュー入力はReview Matrixで行います。同じprompt / seed / weightごとに候補epochを横並びで確認できます。</p>
@@ -81,6 +84,85 @@
     {% endif %}
   </div>
 </section>
+
+<section id="validation-next" class="action-panel">
+  <div>
+    <h2>正式検証へ進む</h2>
+    {% if selected_output %}
+    <p>採用中epoch <strong>{{ selected_output.epoch if selected_output.epoch is not none else selected_epoch }}</strong> で、weight検証Runを作成できます。</p>
+    <form method="post" action="/jobs/{{ session.job_id }}/validation-runs" class="form-grid">
+      <label>プリセット<select name="validation_preset_id">
+        {% for preset in validation_presets %}
+        <option value="{{ preset.id }}" {{ 'selected' if selected_lora_profile and selected_lora_profile.default_validation_preset_id == preset.id else '' }}>{{ display_validation_preset_name(preset) }} / {{ preset.expected_image_count }}枚</option>
+        {% endfor %}
+      </select></label>
+      <input type="hidden" name="base_model" value="{{ selected_lora_profile.base_model if selected_lora_profile else session.base_model_path or '' }}">
+      <input type="hidden" name="trigger_word" value="{{ selected_lora_profile.trigger_word if selected_lora_profile else session.trigger_word_at_creation or '' }}">
+      <input type="hidden" name="memo" value="Review Session #{{ session.id }} から作成">
+      <input type="hidden" name="return_to" value="/review-sessions/{{ session.id }}#validation-next">
+      <button type="submit">採用epochの検証Runを作成</button>
+    </form>
+    {% elif can_select_epoch %}
+    <p>まず候補epochから採用epochを選択してください。採用後にweight検証Runを作成できます。</p>
+    {% else %}
+    <p>画像生成とMatrix作成後に、採用epochを選んで検証Runへ進めます。</p>
+    {% endif %}
+  </div>
+  <div>
+    <h2>候補epochを横断比較</h2>
+    {% if outputs %}
+    <p>候補epochごとに検証Runを作り、同じprompt / seed / weight条件でEpoch横断Matrixを確認できます。</p>
+    <form method="post" action="/jobs/{{ session.job_id }}/validation-runs/bulk" class="form-grid">
+      <label>プリセット<select name="validation_preset_id">
+        {% for preset in validation_presets %}
+        <option value="{{ preset.id }}" {{ 'selected' if selected_lora_profile and selected_lora_profile.default_validation_preset_id == preset.id else '' }}>{{ display_validation_preset_name(preset) }} / {{ preset.expected_image_count }}枚</option>
+        {% endfor %}
+      </select></label>
+      <input type="hidden" name="base_model" value="{{ selected_lora_profile.base_model if selected_lora_profile else session.base_model_path or '' }}">
+      <input type="hidden" name="trigger_word" value="{{ selected_lora_profile.trigger_word if selected_lora_profile else session.trigger_word_at_creation or '' }}">
+      <input type="hidden" name="memo" value="Review Session #{{ session.id }} の候補epoch横断検証">
+      <input type="hidden" name="return_to" value="/review-sessions/{{ session.id }}#validation-next">
+      <div class="wide-field checkbox-grid">
+        {% for output in outputs %}
+        <label><input type="checkbox" name="output_ids" value="{{ output.id }}" checked> epoch {{ output.epoch }}{% if output.selected %}（採用中）{% endif %}</label>
+        {% endfor %}
+      </div>
+      <button type="submit">候補epochの検証Runをまとめて作成</button>
+    </form>
+    {% else %}
+    <p>候補epochに対応するLoRA出力が見つかりません。</p>
+    {% endif %}
+  </div>
+</section>
+
+{% if validation_runs_for_candidates %}
+<section class="session-summary">
+  <h2>このReview Session候補の検証Run</h2>
+  <table>
+    <thead><tr><th>epoch</th><th>検証Run</th><th>プリセット</th><th>状態</th><th>画像</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for run in validation_runs_for_candidates %}
+      <tr>
+        <td>{{ run.selected_epoch if run.selected_epoch is not none else '-' }}</td>
+        <td>#{{ run.id }}</td>
+        <td>{{ display_validation_preset_name(run.validation_preset_id) if run.validation_preset_id else run.name }}</td>
+        <td>{{ display_validation_status(run.status) }}</td>
+        <td>{{ run.actual_image_count }} / {{ run.expected_image_count }}</td>
+        <td><a class="button small-button" href="/validation-runs/{{ run.id }}?return_to=/review-sessions/{{ session.id }}%23validation-next">開く</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div class="actions compact-actions">
+    {% if validation_cross_matrix_url %}
+    <a class="button" href="{{ validation_cross_matrix_url }}" target="_blank" rel="noopener">候補epochの横断Matrixを開く</a>
+    {% else %}
+    <button type="button" disabled>横断Matrixは検証Run 2件以上で利用できます</button>
+    {% endif %}
+    {% if session.job_id %}<a class="button" href="/jobs/{{ session.job_id }}#validation-runs">学習ジョブの検証Run一覧へ</a>{% endif %}
+  </div>
+</section>
+{% endif %}
 
 <section class="panel-grid">
   <div>

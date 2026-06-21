@@ -8,6 +8,7 @@ import re
 import subprocess
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -72,6 +73,7 @@ def preset_snapshot() -> dict[str, Any]:
 
 
 ACTIVE_REVIEW_STATUSES = {"running", "generating_images", "embedding_images", "machine_reviewing", "building_matrix"}
+REVIEW_STALE_GRACE_SECONDS = 180
 
 
 def latest_review_session(job_id: int) -> dict[str, Any] | None:
@@ -127,6 +129,14 @@ def review_session_rows(job_id: int) -> list[dict[str, Any]]:
     ]
 
 
+def review_session_partial_retry_available(summary: dict[str, Any]) -> bool:
+    status = str(summary.get("status") or "")
+    expected = int(summary.get("generation_target_count") or 0)
+    generated = int(summary.get("generated_image_count") or 0)
+    registered = int(summary.get("registered_image_count") or 0)
+    return status in {"failed", "stopped"} and expected > 0 and max(generated, registered) < expected
+
+
 def summarize_review_session(session: dict[str, Any]) -> dict[str, Any]:
     session_id = int(session["id"])
     condition_count = fetch_one(
@@ -151,6 +161,9 @@ def summarize_review_session(session: dict[str, Any]) -> dict[str, Any]:
     counted_conditions = int(condition_count["c"] if condition_count else 0)
     counted_images = int(image_count["c"] if image_count else 0)
     expected = int(session.get("expected_image_count") or counted_conditions)
+    output_dir = Path(session["output_dir"]) if session.get("output_dir") else review_session_output_dir(session_id)
+    live_generated = count_generated_images(output_dir)
+    generated_count = max(int(session.get("generated_image_count") or 0), live_generated)
     status = session.get("status") or "-"
     has_matrix_path = bool(matrix_path)
     can_open_matrix = bool(matrix_path and Path(matrix_path).exists())
@@ -166,6 +179,9 @@ def summarize_review_session(session: dict[str, Any]) -> dict[str, Any]:
     elif status in {"planned", "prepared"}:
         primary_action = "start"
         primary_label = "候補レビューを開始"
+    elif status in {"failed", "stopped"} and max(generated_count, counted_images) < expected:
+        primary_action = "retry"
+        primary_label = "レビュー準備をリトライ"
     elif status in {"failed", "stopped"}:
         primary_action = "check_log"
         primary_label = "ログを確認"
@@ -179,14 +195,15 @@ def summarize_review_session(session: dict[str, Any]) -> dict[str, Any]:
         embedding_display = "対象外"
     else:
         embedding_display = f"{int(embedding.get('ready') or 0)} / {int(embedding.get('total') or 0)}"
-    return {
+    summary = {
         "session": session,
         "session_id": session_id,
         "status": status,
         "condition_count": counted_conditions,
         "image_count": counted_images,
-        "registered_image_count": int(session.get("imported_image_count") or counted_images),
-        "generated_image_count": int(session.get("generated_image_count") or 0),
+        "registered_image_count": counted_images,
+        "generated_image_count": generated_count,
+        "live_generated_image_count": live_generated,
         "machine_review_count": int(session.get("scored_image_count") or 0),
         "expected_image_count": expected,
         "generation_target_count": expected,
@@ -201,6 +218,8 @@ def summarize_review_session(session: dict[str, Any]) -> dict[str, Any]:
         "log_tail": review_session_log_tail(session, max_lines=20),
         "log_size": review_session_log_size(session),
     }
+    summary["retry_available"] = review_session_partial_retry_available(summary)
+    return summary
 
 
 def review_session_summary(job_id: int, current_session_id: int | None = None) -> dict[str, Any]:
@@ -461,32 +480,109 @@ def stop_review_preparation(session_id: int) -> None:
     append_log_note(log_path, "レビュー準備はユーザー操作で停止されました。")
 
 
+def _parse_utc_timestamp(value: Any) -> float | None:
+    if not value:
+        return None
+    try:
+        text = str(value)
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        parsed = datetime.fromisoformat(text)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+    except ValueError:
+        return None
+
+
+def review_session_recent_activity(session: dict[str, Any], log_path: Path, output_dir: Path, *, now_ts: float | None = None) -> bool:
+    now_ts = time.time() if now_ts is None else now_ts
+    latest_ts = _parse_utc_timestamp(session.get("updated_at")) or 0.0
+    for path in (log_path, output_dir):
+        try:
+            if path.exists():
+                latest_ts = max(latest_ts, path.stat().st_mtime)
+        except OSError:
+            pass
+    if output_dir.exists():
+        try:
+            for path in output_dir.rglob("*"):
+                if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES:
+                    latest_ts = max(latest_ts, path.stat().st_mtime)
+        except OSError:
+            pass
+    return latest_ts > 0 and now_ts - latest_ts < REVIEW_STALE_GRACE_SECONDS
+
+
 def reconcile_stale_review_sessions() -> int:
-    rows = fetch_all("SELECT * FROM review_sessions WHERE status = 'running'")
+    rows = fetch_all("SELECT * FROM review_sessions WHERE status IN ('running', 'stopped', 'failed') ORDER BY id")
     fixed = 0
     for row in rows:
         session = dict(row)
+        original_status = str(session.get("status") or "")
         pid = session.get("generation_process_id")
-        if pid and process_exists(int(pid)):
+        if original_status == "running" and pid and process_exists(int(pid)):
             continue
+        session_id = int(session["id"])
+        output_dir = Path(session["output_dir"]) if session.get("output_dir") else review_session_output_dir(session_id)
+        log_path = Path(str(session.get("log_path") or review_session_dir(session_id) / "review_preparation.log"))
+        if original_status == "running" and review_session_recent_activity(session, log_path, output_dir):
+            continue
+        generated = count_generated_images(output_dir)
+        registered_row = fetch_one("SELECT COUNT(*) AS count FROM review_session_images WHERE review_session_id = ? AND deleted_at IS NULL", (session_id,))
+        registered = int(registered_row["count"] if registered_row else 0)
+        db_generated = int(session.get("generated_image_count") or 0)
+        db_imported = int(session.get("imported_image_count") or 0)
+        expected = int(session.get("expected_image_count") or 0)
+        log_tail = review_session_log_tail(session, max_lines=40).lower()
+        completed = generated > 0 and expected > 0 and generated >= expected and "done!" in log_tail
+        if original_status != "running" and not completed and generated <= db_generated and registered == db_imported:
+            continue
+        status = "completed" if completed else ("stopped" if original_status == "running" else original_status)
+        return_code = 0 if completed else (4294967295 if original_status == "running" else session.get("return_code"))
+        error_message = "" if completed else (session.get("error_message") or "レビュー準備プロセスが見つかりませんでした。")
+        imported = registered
+        scored = int(session.get("scored_image_count") or 0)
+        matrix_path = str(session.get("matrix_path") or "")
+        if generated:
+            try:
+                import_review_session_images(session_id)
+                imported_row = fetch_one("SELECT COUNT(*) AS count FROM review_session_images WHERE review_session_id = ?", (session_id,))
+                imported = int(imported_row["count"] if imported_row else 0)
+                if completed and original_status != "completed":
+                    auto_embedding_after_review_generation(session_id, log_path)
+                    scored = auto_machine_review_after_review_generation(session_id, log_path)
+                    matrix_path = write_review_matrix(session_id)
+            except Exception as exc:
+                status = "failed" if completed else "stopped"
+                error_message = f"Generated image import after stale reconcile failed: {exc}"
+                append_log_note(log_path, error_message)
         end_time = utc_now()
         elapsed = elapsed_seconds(session.get("started_at"), end_time) if session.get("started_at") else None
         with connect() as conn:
             conn.execute(
                 """
                 UPDATE review_sessions
-                SET status = 'stopped', generation_process_id = NULL,
+                SET status = ?, generation_process_id = NULL,
                     ended_at = COALESCE(ended_at, ?),
                     elapsed_seconds = COALESCE(elapsed_seconds, ?),
-                    return_code = COALESCE(return_code, 4294967295),
-                    error_message = COALESCE(error_message, 'レビュー準備プロセスが見つかりませんでした。'),
+                    return_code = COALESCE(return_code, ?),
+                    generated_image_count = ?,
+                    imported_image_count = ?,
+                    scored_image_count = ?,
+                    matrix_path = COALESCE(NULLIF(matrix_path, ''), ?),
+                    error_message = COALESCE(NULLIF(error_message, ''), ?),
                     updated_at = ?
-                WHERE id = ? AND status = 'running'
+                WHERE id = ? AND status IN ('running', 'stopped', 'failed')
                 """,
-                (end_time, elapsed, end_time, session["id"]),
+                (status, end_time, elapsed, return_code, generated, imported, scored, matrix_path, error_message, end_time, session_id),
             )
-        log_path = Path(str(session.get("log_path") or review_session_dir(int(session["id"])) / "review_preparation.log"))
-        append_log_note(log_path, "running status reconciled: review process was not found. Marking session stopped.")
+        if completed:
+            append_log_note(log_path, "running status reconciled: review process was not found after all expected images were generated. Marking session completed.")
+        elif original_status == "running":
+            append_log_note(log_path, "running status reconciled: review process was not found. Marking session stopped.")
+        else:
+            append_log_note(log_path, f"{original_status} status reconciled: imported generated image files found on disk.")
         fixed += 1
     return fixed
 

@@ -159,6 +159,10 @@
     </form>
     {% elif review_preparation.current.primary_action == 'progress' %}
     <a class="button" href="/review-sessions/{{ review_preparation.current.session_id }}">進捗を確認</a>
+    {% elif review_preparation.current.primary_action == 'retry' %}
+    <form method="post" action="/jobs/{{ job.id }}/review-sessions/{{ review_preparation.current.session_id }}/run" data-review-preparation-run-form>
+      <button type="submit" class="danger" data-review-preparation-run-button {% if outputs|length == 0 %}disabled{% endif %}>レビュー準備をリトライ</button>
+    </form>
     {% elif review_preparation.current.primary_action == 'check_log' %}
     <a class="button" href="#review-preparation-log">ログを確認</a>
     {% else %}
@@ -235,6 +239,9 @@
               <a class="button small-button secondary" href="/review-sessions/{{ item.session_id }}">詳細</a>
               {% elif item.status == 'completed' %}
               <form method="post" action="/jobs/{{ job.id }}/review-sessions/{{ item.session_id }}/matrix/build"><button class="small-button" type="submit">Matrix作成</button></form>
+              <a class="button small-button secondary" href="/review-sessions/{{ item.session_id }}">詳細</a>
+              {% elif item.primary_action == 'retry' %}
+              <form method="post" action="/jobs/{{ job.id }}/review-sessions/{{ item.session_id }}/run" data-review-preparation-run-form><button class="small-button danger" type="submit">リトライ</button></form>
               <a class="button small-button secondary" href="/review-sessions/{{ item.session_id }}">詳細</a>
               {% elif item.status in ['failed', 'stopped'] %}
               <a class="button small-button danger" href="/review-sessions/{{ item.session_id }}#review-session-log">ログ</a>

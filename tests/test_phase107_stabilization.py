@@ -6,6 +6,7 @@ import types
 import unittest
 import hashlib
 import json
+import os
 from pathlib import Path
 from unittest import mock
 
@@ -22,7 +23,7 @@ from app.services.reference_sets import (
     reference_detail,
     set_project_default,
 )
-from app.services.review_sessions import ensure_candidate_review_plan, review_session_summary, write_review_matrix
+from app.services.review_sessions import ensure_candidate_review_plan, reconcile_stale_review_sessions, review_session_summary, write_review_matrix
 from app.services.validation_generation import (
     common_gen_img_args,
     normalize_sd_scripts_sampler,
@@ -52,6 +53,16 @@ class IsolatedDbTest(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (8, 8), color=(20, 120, 80)).save(path)
         return path
+
+    def make_tree_old(self, path: Path, timestamp: int = 1_577_836_800) -> None:
+        if path.is_file():
+            os.utime(path, (timestamp, timestamp))
+            return
+        for child in path.rglob("*"):
+            if child.exists():
+                os.utime(child, (timestamp, timestamp))
+        if path.exists():
+            os.utime(path, (timestamp, timestamp))
 
 
 class MetricDisplayTests(unittest.TestCase):
@@ -174,6 +185,23 @@ class ReviewSessionSummaryTests(IsolatedDbTest):
         self.assertEqual(summary["current"]["condition_count"], 18)
         self.assertFalse(summary["current"]["can_open_matrix"])
         self.assertEqual(summary["other_sessions"][0]["session_id"], completed_id)
+
+    def test_summary_uses_live_generated_count_when_db_count_is_stale(self) -> None:
+        session_id = self.add_session(status="stopped", epochs=[4], expected=6, imported=0, scored=0, matrix=False)
+        output_dir = self.root / "exports" / "review_sessions" / f"review_session_{session_id:06d}" / "images"
+        self.make_png(output_dir / "orphan_generated.png")
+        with connect() as conn:
+            conn.execute(
+                "UPDATE review_sessions SET output_dir = ?, generated_image_count = 0 WHERE id = ?",
+                (str(output_dir), session_id),
+            )
+
+        summary = review_session_summary(21, current_session_id=session_id)
+
+        self.assertEqual(summary["current"]["registered_image_count"], 0)
+        self.assertEqual(summary["current"]["generated_image_count"], 1)
+        self.assertEqual(summary["current"]["primary_action"], "retry")
+        self.assertTrue(summary["current"]["retry_available"])
 
 
 class ReviewSemanticsTests(IsolatedDbTest):
@@ -355,6 +383,115 @@ class ReviewPreparationPhase116Tests(IsolatedDbTest):
         self.assertIn("候補epochレビューMatrix", html)
         self.assertIn("機械補助レビュー", html)
         self.assertIn("sample.png", html)
+
+    def test_stale_review_session_imports_partial_generated_images_without_completing(self) -> None:
+        job_id = self.create_completed_job_with_outputs()
+        session = ensure_candidate_review_plan(job_id, force=True)
+        assert session is not None
+        session_id = int(session["id"])
+        output_dir = self.root / "exports" / "review_sessions" / f"review_session_{session_id:06d}" / "images"
+        log_path = output_dir.parent / "review_preparation.log"
+        conditions = fetch_all(
+            "SELECT * FROM review_session_conditions WHERE review_session_id = ? ORDER BY id LIMIT 2",
+            (session_id,),
+        )
+        for condition in conditions:
+            self.make_png(output_dir / f"rs{session_id:06d}_rc{int(condition['id']):06d}_{condition['condition_hash'][:12]}.png")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("INFO done!\n", encoding="utf-8")
+        old = "2020-01-01T00:00:00+00:00"
+        self.make_tree_old(output_dir.parent)
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE review_sessions
+                SET status = 'running', generation_process_id = 999999,
+                    output_dir = ?, log_path = ?, started_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (str(output_dir), str(log_path), old, old, session_id),
+            )
+
+        with mock.patch("app.services.review_sessions.process_exists", return_value=False):
+            fixed = reconcile_stale_review_sessions()
+
+        row = fetch_one("SELECT * FROM review_sessions WHERE id = ?", (session_id,))
+        imported = fetch_one("SELECT COUNT(*) AS count FROM review_session_images WHERE review_session_id = ?", (session_id,))
+        self.assertEqual(fixed, 1)
+        self.assertEqual(row["status"], "stopped")
+        self.assertEqual(row["generated_image_count"], 2)
+        self.assertEqual(row["imported_image_count"], 2)
+        self.assertEqual(imported["count"], 2)
+
+    def test_stale_review_session_keeps_recent_activity_running(self) -> None:
+        job_id = self.create_completed_job_with_outputs()
+        session = ensure_candidate_review_plan(job_id, force=True)
+        assert session is not None
+        session_id = int(session["id"])
+        output_dir = self.root / "exports" / "review_sessions" / f"review_session_{session_id:06d}" / "images"
+        log_path = output_dir.parent / "review_preparation.log"
+        condition = fetch_one(
+            "SELECT * FROM review_session_conditions WHERE review_session_id = ? ORDER BY id LIMIT 1",
+            (session_id,),
+        )
+        self.make_png(output_dir / f"rs{session_id:06d}_rc{int(condition['id']):06d}_{condition['condition_hash'][:12]}.png")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("INFO still switching epochs\n", encoding="utf-8")
+        now = utc_now()
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE review_sessions
+                SET status = 'running', generation_process_id = 999999,
+                    output_dir = ?, log_path = ?, started_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (str(output_dir), str(log_path), now, now, session_id),
+            )
+
+        with mock.patch("app.services.review_sessions.process_exists", return_value=False):
+            fixed = reconcile_stale_review_sessions()
+
+        row = fetch_one("SELECT * FROM review_sessions WHERE id = ?", (session_id,))
+        self.assertEqual(fixed, 0)
+        self.assertEqual(row["status"], "running")
+
+    def test_stopped_review_session_refreshes_imported_counts_from_disk(self) -> None:
+        job_id = self.create_completed_job_with_outputs()
+        session = ensure_candidate_review_plan(job_id, force=True)
+        assert session is not None
+        session_id = int(session["id"])
+        output_dir = self.root / "exports" / "review_sessions" / f"review_session_{session_id:06d}" / "images"
+        log_path = output_dir.parent / "review_preparation.log"
+        condition = fetch_one(
+            "SELECT * FROM review_session_conditions WHERE review_session_id = ? ORDER BY id LIMIT 1",
+            (session_id,),
+        )
+        self.make_png(output_dir / f"rs{session_id:06d}_rc{int(condition['id']):06d}_{condition['condition_hash'][:12]}.png")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("INFO done!\n", encoding="utf-8")
+        now = utc_now()
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE review_sessions
+                SET status = 'stopped', output_dir = ?, log_path = ?,
+                    generated_image_count = 0, imported_image_count = 0,
+                    started_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (str(output_dir), str(log_path), now, now, session_id),
+            )
+
+        fixed = reconcile_stale_review_sessions()
+
+        row = fetch_one("SELECT * FROM review_sessions WHERE id = ?", (session_id,))
+        imported = fetch_one("SELECT COUNT(*) AS count FROM review_session_images WHERE review_session_id = ?", (session_id,))
+        self.assertEqual(fixed, 1)
+        self.assertEqual(row["status"], "stopped")
+        self.assertEqual(row["generated_image_count"], 1)
+        self.assertEqual(row["imported_image_count"], 1)
+        self.assertEqual(imported["count"], 1)
 
 
 class ReferenceSetPhase111Tests(IsolatedDbTest):
@@ -774,12 +911,14 @@ class Phase107StabilizationTests(IsolatedDbTest):
     def test_sd_scripts_subprocess_env_strips_app_pythonpath(self) -> None:
         from app.services.training_runner import sd_scripts_subprocess_env
 
-        with mock.patch.dict("os.environ", {"PYTHONPATH": "D:/app/.venv/Lib/site-packages", "PYTHONHOME": "D:/bad"}, clear=False):
+        with mock.patch.dict("os.environ", {"PYTHONPATH": "D:/app/.venv/Lib/site-packages", "PYTHONHOME": "D:/bad", "PYTHONUTF8": "1", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"}, clear=False):
             env = sd_scripts_subprocess_env()
 
         self.assertNotIn("PYTHONPATH", env)
         self.assertNotIn("PYTHONHOME", env)
-        self.assertEqual(env["PYTHONUTF8"], "1")
+        self.assertNotIn("PYTHONUTF8", env)
+        self.assertNotIn("LANG", env)
+        self.assertNotIn("LC_ALL", env)
         self.assertEqual(env["PYTHONIOENCODING"], "utf-8:replace")
 
     def test_validation_image_outside_allowed_root_is_403(self) -> None:

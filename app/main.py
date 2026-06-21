@@ -1454,6 +1454,7 @@ def review_session_detail(request: Request, session_id: int) -> HTMLResponse:
     session = fetch_one(
         """
         SELECT rs.*, p.name AS project_name, tj.name AS job_name, tj.adopted_epoch,
+               tj.base_model_path, tj.trigger_word_at_creation,
                so.epoch AS selected_epoch
         FROM review_sessions rs
         LEFT JOIN lora_projects p ON p.id = rs.project_id
@@ -1511,16 +1512,52 @@ def review_session_detail(request: Request, session_id: int) -> HTMLResponse:
             f"""
             SELECT id, epoch, file_path, selected
             FROM training_outputs
-            WHERE job_id = ? AND epoch IN ({placeholders})
+            WHERE job_id = ? AND file_type = 'model' AND deleted_at IS NULL AND epoch IN ({placeholders})
             ORDER BY epoch, id
             """,
             (session["job_id"], *candidate_epochs),
         )
     output_by_epoch = {int(row["epoch"]): row for row in outputs if row["epoch"] is not None}
+    selected_output = fetch_one("SELECT * FROM training_outputs WHERE job_id = ? AND selected = 1", (session["job_id"],)) if session["job_id"] else None
+    selected_lora_profile = selected_lora_profile_for_display(int(session["job_id"]), selected_output) if session["job_id"] and selected_output else None
+    validation_runs_for_candidates: list[Any] = []
+    validation_runs_by_output_id: dict[int, list[Any]] = {}
+    validation_cross_matrix_url = ""
+    candidate_output_ids = [int(row["id"]) for row in outputs]
+    if session["job_id"] and candidate_output_ids:
+        placeholders = ",".join("?" for _ in candidate_output_ids)
+        validation_runs_for_candidates = fetch_all(
+            f"""
+            SELECT vr.*, o.epoch AS selected_epoch,
+                   vg.status AS generation_status,
+                   vg.process_id AS generation_process_id,
+                   vg.return_code AS generation_return_code
+            FROM validation_runs vr
+            LEFT JOIN training_outputs o ON o.id = vr.selected_output_id
+            LEFT JOIN validation_generation_runs vg ON vg.id = (
+                SELECT id FROM validation_generation_runs
+                WHERE validation_run_id = vr.id
+                ORDER BY id DESC LIMIT 1
+            )
+            WHERE vr.job_id = ? AND vr.selected_output_id IN ({placeholders})
+            ORDER BY o.epoch, vr.id DESC
+            """,
+            (session["job_id"], *candidate_output_ids),
+        )
+        validation_runs_for_candidates = decorate_validation_runs_for_job(validation_runs_for_candidates)
+        for run in validation_runs_for_candidates:
+            output_id = int(run["selected_output_id"]) if run["selected_output_id"] is not None else 0
+            validation_runs_by_output_id.setdefault(output_id, []).append(run)
+        run_ids = [str(int(run["id"])) for run in validation_runs_for_candidates]
+        if len(run_ids) >= 2:
+            validation_cross_matrix_url = f"/jobs/{session['job_id']}/validation-runs/epoch-matrix?{urlencode([('run_ids', run_id) for run_id in run_ids])}"
     status = session["status"] or ""
     matrix_path = str(session["matrix_path"] or "")
     matrix_ready = bool(matrix_path and Path(matrix_path).exists())
     can_select_epoch = status == "completed" and matrix_ready
+    expected_image_count = int(session["expected_image_count"] or 0)
+    active_image_count = int(images["active"] or 0) if images else 0
+    generated_image_count = int(session["generated_image_count"] or 0)
     if status in {"planned", "prepared"}:
         primary_action = "start"
         primary_label = "このプランで候補レビューを生成"
@@ -1533,6 +1570,9 @@ def review_session_detail(request: Request, session_id: int) -> HTMLResponse:
     elif status == "completed":
         primary_action = "build_matrix"
         primary_label = "レビューMatrixを作成"
+    elif status in {"failed", "stopped"} and expected_image_count > 0 and max(active_image_count, generated_image_count) < expected_image_count:
+        primary_action = "retry"
+        primary_label = "レビュー準備をリトライ"
     elif status in {"failed", "stopped"}:
         primary_action = "check_log"
         primary_label = "ログ確認"
@@ -1551,6 +1591,12 @@ def review_session_detail(request: Request, session_id: int) -> HTMLResponse:
         candidate_epochs=candidate_epochs,
         outputs=outputs,
         output_by_epoch=output_by_epoch,
+        selected_output=selected_output,
+        selected_lora_profile=selected_lora_profile,
+        validation_presets=validation_presets(),
+        validation_runs_for_candidates=validation_runs_for_candidates,
+        validation_runs_by_output_id=validation_runs_by_output_id,
+        validation_cross_matrix_url=validation_cross_matrix_url,
         primary_action=primary_action,
         primary_label=primary_label,
         matrix_ready=matrix_ready,
@@ -3179,6 +3225,7 @@ def job_review_session_status(job_id: int, session_id: int) -> JSONResponse:
         if output_dir.exists():
             generated = sum(1 for path in output_dir.rglob("*") if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"})
     imported_count = int(fetch_one("SELECT COUNT(*) AS count FROM review_session_images WHERE review_session_id = ?", (session_id,))["count"] or 0)
+    generated_count = max(int(session["generated_image_count"] or 0), generated)
     log_path = Path(session["log_path"]) if session["log_path"] else None
     log_size = log_path.stat().st_size if log_path and log_path.exists() else 0
     return JSONResponse(
@@ -3187,7 +3234,7 @@ def job_review_session_status(job_id: int, session_id: int) -> JSONResponse:
             "job_id": job_id,
             "status": session["status"],
             "expected_image_count": session["expected_image_count"] or 0,
-            "generated_image_count": session["generated_image_count"] or generated,
+            "generated_image_count": generated_count,
             "live_generated_image_count": generated,
             "imported_image_count": imported_count,
             "scored_image_count": session["scored_image_count"] or 0,
@@ -4067,11 +4114,15 @@ def job_create_validation_run(
     base_model: str = Form(""),
     trigger_word: str = Form(""),
     memo: str = Form(""),
+    return_to: str = Form(""),
 ) -> RedirectResponse:
     try:
         run_id = create_validation_run(job_id, validation_preset_id, base_model, trigger_word, memo)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if return_to:
+        quoted_return_to = quote(safe_local_redirect(return_to, f"/jobs/{job_id}#validation-runs"), safe="")
+        return RedirectResponse(f"/validation-runs/{run_id}?return_to={quoted_return_to}", status_code=303)
     return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
 
 
@@ -4083,6 +4134,7 @@ def job_create_validation_runs_for_outputs(
     base_model: str = Form(""),
     trigger_word: str = Form(""),
     memo: str = Form(""),
+    return_to: str = Form(""),
 ) -> RedirectResponse:
     if not output_ids:
         raise HTTPException(status_code=400, detail="検証するEpochを1つ以上選択してください。")
@@ -4101,9 +4153,10 @@ def job_create_validation_runs_for_outputs(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         created.append(run_id)
     if len(created) == 1:
-        return_to = quote(f"/jobs/{job_id}#validation-runs", safe="")
-        return RedirectResponse(f"/validation-runs/{created[0]}?return_to={return_to}", status_code=303)
-    return RedirectResponse(f"/jobs/{job_id}#validation-runs", status_code=303)
+        destination = safe_local_redirect(return_to, f"/jobs/{job_id}#validation-runs")
+        quoted_return_to = quote(destination, safe="")
+        return RedirectResponse(f"/validation-runs/{created[0]}?return_to={quoted_return_to}", status_code=303)
+    return RedirectResponse(safe_local_redirect(return_to, f"/jobs/{job_id}#validation-runs"), status_code=303)
 
 
 @app.get("/validation-runs/{run_id}", response_class=HTMLResponse)
