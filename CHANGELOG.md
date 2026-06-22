@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased - Phase 11.8.1
+
+LoRA Studio Phase 11.8.1 validates the Post-training Review Automation `quick_auto` path with real data.
+
+### 主な変更
+
+- Job #45 / Review Session #25で、Quick Candidate Reviewの実画像生成、DB登録、Embedding、Machine Review、Review Matrix作成までのE2Eを確認しました。
+- `quick_auto` / `standard_auto` のcompletedまたはrunning中Review Sessionに対してTraining completed hookが再実行されても、既存Sessionを再起動しないようにしました。
+- `quick_auto`完了後、Job詳細 / Project詳細 / Review Session詳細からReview Matrixへ辿れることを確認しました。
+
 ## Unreleased - Phase 11.8
 
 LoRA Studio Phase 11.8 adds Post-training Review Automation for candidate epoch review planning after training completion.

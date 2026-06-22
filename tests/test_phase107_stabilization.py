@@ -1586,6 +1586,28 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertEqual(job["post_training_review_status"], "planned_waiting")
         start_mock.assert_not_called()
 
+    def test_post_training_review_quick_auto_does_not_restart_completed_session(self) -> None:
+        from app.services.review_sessions import handle_post_training_review_automation
+
+        job_id = self.add_review_ready_job(mode="quick_auto")
+        with mock.patch("app.services.review_sessions.review_gpu_task_busy", return_value=False), mock.patch(
+            "app.services.review_sessions.start_review_preparation",
+            return_value=4321,
+        ) as first_start:
+            first = handle_post_training_review_automation(job_id)
+        with connect() as conn:
+            conn.execute(
+                "UPDATE review_sessions SET status = 'completed', automation_status = 'auto_started' WHERE id = ?",
+                (first["session_id"],),
+            )
+        with mock.patch("app.services.review_sessions.start_review_preparation") as second_start:
+            second = handle_post_training_review_automation(job_id)
+
+        self.assertEqual(second["status"], "completed")
+        self.assertEqual(second["session_id"], first["session_id"])
+        first_start.assert_called_once()
+        second_start.assert_not_called()
+
     def test_post_training_review_max_auto_images_blocks_auto_start(self) -> None:
         from app.services.review_sessions import handle_post_training_review_automation
 

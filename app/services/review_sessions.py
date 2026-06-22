@@ -1384,6 +1384,16 @@ def handle_post_training_review_automation(job_id: int) -> dict[str, Any]:
         mark_post_training_review(job_id, "no_plan", "候補epochまたは出力LoRAがないためReview Planを作成できませんでした。")
         return {"status": "no_plan", "message": "no plan"}
 
+    session_status = str(session["status"] or "")
+    session_mode = str(session["automation_mode"] or "")
+    if mode in {"quick_auto", "standard_auto"} and session_mode == mode:
+        if session_status == "completed":
+            mark_post_training_review(job_id, "completed", f"Review Plan #{session['id']} は完了済みです。")
+            return {"status": "completed", "session_id": int(session["id"]), "message": "existing completed session"}
+        if session_status in ACTIVE_REVIEW_STATUSES:
+            mark_post_training_review(job_id, "auto_running", f"Review Plan #{session['id']} は実行中です。")
+            return {"status": "auto_running", "session_id": int(session["id"]), "message": "existing running session"}
+
     expected = int(session["expected_image_count"] or 0)
     if mode == "plan_only":
         mark_post_training_review(job_id, "planned", f"Review Plan #{session['id']} を作成しました。")
