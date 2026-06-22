@@ -6,6 +6,11 @@ LoRA Studio Phase 11.7 adds the Weight Calibration Pipeline for adopted LoRA / s
 
 ### 主な変更
 
+- Step Estimator / Target Step Assistantを追加し、image count、repeats、epochs、batch、gradient accumulationからexpected total stepsを表示できるようにしました。
+- Optimizer Definition / Optimizer Profile / Training Recipeマスタからtarget step min/recommended/maxとtarget checkpoint countを解決し、Job作成・編集・詳細・Preflightでstep量の過不足を確認できるようにしました。
+- AdamW8bit、PagedAdamW8bit、Adafactor、Lion、DAdaptAdam、DAdaptLion、Prodigyの基本step目安とLR意味を登録しました。
+- 目標stepに合わせてrepeatsを自動計算し、Job snapshotにrepeats自動計算フラグとtarget steps sourceを保存できるようにしました。
+- 高epoch時のsave/sample interval提案と、`max_train_steps`直接指定時のAdvanced警告を追加しました。
 - Validation Runを採用後weight検証の主導線として整理し、`validation_run_kind`、`pipeline_status`、`matrix_path`、採用epoch/source情報を保存できるようにしました。
 - Weight Calibration Preflightを追加し、selected output、LoRA/base model、trigger、preset、expected conditions、sd-scripts環境、Embedding provider、Reference/Dataset coverage、GPU競合を確認します。
 - Validation Run詳細に `Prepare Weight Calibration`、`Weight検証を開始`、`Stop`、`Retry`、`Reimport`、`Weight Review Matrixを開く` の導線を追加しました。

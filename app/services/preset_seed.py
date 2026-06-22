@@ -31,9 +31,199 @@ PRESET_DEFS = [
     ("sdxl_2d_face_medium_dataset", "SDXL 2D Face - Medium Dataset", "SDXL", "sdxl_train_network.py", "40から80枚程度の素材で学習stepを抑える設定。", 40, 80, {"optimizer_type":"AdamW8bit","lr_scheduler":"constant","learning_rate":0.0001,"unet_lr":0.0001,"text_encoder_lr1":0,"text_encoder_lr2":0,"network_train_unet_only":True,"cache_text_encoder_outputs":True,"network_dim":32,"network_alpha":16,"train_batch_size":2,"repeats":6,"max_train_epochs":10,"resolution":[1024,1024]}, "枚数が多いぶんrepeatを下げ、総stepを抑える。", "caption品質の影響が大きいのでタグ集計確認を推奨する。"),
 ]
 
+TARGET_STEP_DEFAULTS = {
+    "integration_smoke_sdxl": (1, 2, 5, 1, "Integration smokeは完走確認用の最小stepです。"),
+    "sdxl_2d_face_pilot_3epoch": (100, 150, 300, 3, "Pilotは品質完成ではなく導線確認とepoch差の確認用です。"),
+    "sdxl_2d_face_pilot_generalize_3epoch": (100, 150, 300, 3, "Pilotは弱め設定の短時間確認用です。"),
+    "sdxl_2d_face_standard_6epoch": (1200, 2000, 3500, 6, "6epoch standardは短時間の本番寄り確認用です。"),
+    "default": (2500, 5000, 8000, 6, "AdamW系の標準目安です。データセットやoptimizerに合わせて調整してください。"),
+}
+
+
+OPTIMIZER_DEFINITIONS = [
+    {
+        "id": "AdamW8bit",
+        "name": "AdamW8bit",
+        "lr_meaning": "normal_lr",
+        "category": "stable",
+        "target_steps_min": 2500,
+        "target_steps_recommended": 5000,
+        "target_steps_max": 8000,
+        "target_checkpoint_count": 6,
+        "note": "通常LR指定で扱いやすい標準optimizerです。",
+    },
+    {
+        "id": "PagedAdamW8bit",
+        "name": "PagedAdamW8bit",
+        "lr_meaning": "normal_lr",
+        "category": "stable/memory",
+        "target_steps_min": 2500,
+        "target_steps_recommended": 5000,
+        "target_steps_max": 8000,
+        "target_checkpoint_count": 6,
+        "note": "AdamW8bitに近い目安で、メモリ節約寄りの選択肢です。",
+    },
+    {
+        "id": "Adafactor",
+        "name": "Adafactor",
+        "lr_meaning": "relative_step/fixed_profile",
+        "category": "memory/advanced",
+        "target_steps_min": 2200,
+        "target_steps_recommended": 4500,
+        "target_steps_max": 7500,
+        "target_checkpoint_count": 6,
+        "note": "relative_step設定と固定LR設定で意味が変わるためAdvanced扱いです。",
+    },
+    {
+        "id": "Lion",
+        "name": "Lion",
+        "lr_meaning": "normal_lr",
+        "category": "experimental",
+        "target_steps_min": 1800,
+        "target_steps_recommended": 3500,
+        "target_steps_max": 6500,
+        "target_checkpoint_count": 6,
+        "note": "効きが強めに出ることがある実験的optimizerです。",
+    },
+    {
+        "id": "DAdaptAdam",
+        "name": "DAdaptAdam",
+        "lr_meaning": "auto_lr_multiplier",
+        "category": "advanced",
+        "target_steps_min": 2000,
+        "target_steps_recommended": 4000,
+        "target_steps_max": 7000,
+        "target_checkpoint_count": 6,
+        "note": "LRは自動調整の倍率として扱います。",
+    },
+    {
+        "id": "DAdaptLion",
+        "name": "DAdaptLion",
+        "lr_meaning": "auto_lr_multiplier",
+        "category": "experimental",
+        "target_steps_min": 1800,
+        "target_steps_recommended": 3500,
+        "target_steps_max": 6500,
+        "target_checkpoint_count": 6,
+        "note": "自動LR系かつLion系の実験的optimizerです。",
+    },
+    {
+        "id": "Prodigy",
+        "name": "Prodigy",
+        "lr_meaning": "auto_lr_multiplier",
+        "category": "advanced",
+        "target_steps_min": 1800,
+        "target_steps_recommended": 3500,
+        "target_steps_max": 6500,
+        "target_checkpoint_count": 6,
+        "note": "LRは自動調整の倍率です。短期収束と固定化に注意してください。",
+    },
+]
+
+OPTIMIZER_PROFILES = [
+    {
+        "id": "adamw8bit_stable_face",
+        "optimizer_definition_id": "AdamW8bit",
+        "name": "AdamW8bit Stable Face",
+        "target_steps_min": 2500,
+        "target_steps_recommended": 5000,
+        "target_steps_max": 8000,
+        "target_checkpoint_count": 6,
+        "note": "2D顔LoRA向けの安定プロファイルです。",
+    },
+    {
+        "id": "adamw8bit_pilot",
+        "optimizer_definition_id": "AdamW8bit",
+        "name": "AdamW8bit Pilot",
+        "target_steps_min": 100,
+        "target_steps_recommended": 150,
+        "target_steps_max": 300,
+        "target_checkpoint_count": 3,
+        "note": "導線確認とepoch差確認用の短時間プロファイルです。",
+    },
+    {
+        "id": "prodigy_face",
+        "optimizer_definition_id": "Prodigy",
+        "name": "Prodigy Face",
+        "target_steps_min": 1800,
+        "target_steps_recommended": 3500,
+        "target_steps_max": 6500,
+        "target_checkpoint_count": 6,
+        "note": "Prodigyの短期収束を使う顔LoRA向けプロファイルです。",
+    },
+]
+
+TRAINING_RECIPES = [
+    {
+        "id": "integration_smoke",
+        "optimizer_profile_id": "adamw8bit_pilot",
+        "name": "Integration Smoke",
+        "target_steps_min": 1,
+        "target_steps_recommended": 2,
+        "target_steps_max": 5,
+        "target_checkpoint_count": 1,
+        "note": "品質評価ではなく完走確認用です。",
+    },
+    {
+        "id": "pilot_3epoch",
+        "optimizer_profile_id": "adamw8bit_pilot",
+        "name": "Pilot 3 Epoch",
+        "target_steps_min": 100,
+        "target_steps_recommended": 150,
+        "target_steps_max": 300,
+        "target_checkpoint_count": 3,
+        "note": "品質完成前の短時間確認用です。",
+    },
+    {
+        "id": "sdxl_face_standard",
+        "optimizer_profile_id": "adamw8bit_stable_face",
+        "name": "SDXL Face Standard",
+        "target_steps_min": 2500,
+        "target_steps_recommended": 5000,
+        "target_steps_max": 8000,
+        "target_checkpoint_count": 6,
+        "note": "SDXL顔LoRAの標準Recipe目安です。",
+    },
+    {
+        "id": "sdxl_face_standard_6epoch",
+        "optimizer_profile_id": "adamw8bit_stable_face",
+        "name": "SDXL Face Standard 6 Epoch",
+        "target_steps_min": 1200,
+        "target_steps_recommended": 2000,
+        "target_steps_max": 3500,
+        "target_checkpoint_count": 6,
+        "note": "短時間の本番寄り確認用Recipeです。",
+    },
+    {
+        "id": "sdxl_face_prodigy",
+        "optimizer_profile_id": "prodigy_face",
+        "name": "SDXL Face Prodigy",
+        "target_steps_min": 1800,
+        "target_steps_recommended": 3500,
+        "target_steps_max": 6500,
+        "target_checkpoint_count": 6,
+        "note": "Prodigy比較用Recipeです。",
+    },
+]
+
+PRESET_RECIPE_MAP = {
+    "integration_smoke_sdxl": "integration_smoke",
+    "sdxl_2d_face_pilot_3epoch": "pilot_3epoch",
+    "sdxl_2d_face_pilot_generalize_3epoch": "pilot_3epoch",
+    "sdxl_2d_face_standard_6epoch": "sdxl_face_standard_6epoch",
+    "sdxl_2d_face_prodigy_test": "sdxl_face_prodigy",
+    "sdxl_2d_face_prodigy_soft": "sdxl_face_prodigy",
+}
+
+
+def target_steps_for_preset(preset_id: str):
+    return TARGET_STEP_DEFAULTS.get(preset_id, TARGET_STEP_DEFAULTS["default"])
+
+
 PRESETS = []
 for preset_id, name, family, script, purpose, count_min, count_max, params, behavior, risk in PRESET_DEFS:
     merged = {**COMMON_PARAMS, **params}
+    target_min, target_recommended, target_max, target_checkpoint_count, step_target_note = target_steps_for_preset(preset_id)
     PRESETS.append({
         "id": preset_id,
         "name": name,
@@ -44,6 +234,12 @@ for preset_id, name, family, script, purpose, count_min, count_max, params, beha
         "params": merged,
         "expected_behavior": behavior,
         "risk_note": risk,
+        "target_steps_min": target_min,
+        "target_steps_recommended": target_recommended,
+        "target_steps_max": target_max,
+        "target_checkpoint_count": target_checkpoint_count,
+        "step_target_note": step_target_note,
+        "training_recipe_id": PRESET_RECIPE_MAP.get(preset_id, "sdxl_face_standard"),
     })
 
 
@@ -55,5 +251,36 @@ def preset_rows(now: str):
             json.dumps(preset["recommended_dataset"], ensure_ascii=False),
             preset["expected_behavior"], preset["risk_note"],
             "CODEX_LoRA_Helper_MVP_Instructions.md / kohya-ss sd-scripts v0.10.5",
-            1, None, now, now,
+            1, None,
+            preset["target_steps_min"], preset["target_steps_recommended"], preset["target_steps_max"],
+            preset["target_checkpoint_count"], preset["step_target_note"],
+            preset["training_recipe_id"],
+            now, now,
+        )
+
+
+def optimizer_definition_rows(now: str):
+    for item in OPTIMIZER_DEFINITIONS:
+        yield (
+            item["id"], item["name"], item["lr_meaning"], item["category"],
+            item["target_steps_min"], item["target_steps_recommended"], item["target_steps_max"],
+            item["target_checkpoint_count"], item["note"], now, now,
+        )
+
+
+def optimizer_profile_rows(now: str):
+    for item in OPTIMIZER_PROFILES:
+        yield (
+            item["id"], item["optimizer_definition_id"], item["name"],
+            item["target_steps_min"], item["target_steps_recommended"], item["target_steps_max"],
+            item["target_checkpoint_count"], item["note"], now, now,
+        )
+
+
+def training_recipe_rows(now: str):
+    for item in TRAINING_RECIPES:
+        yield (
+            item["id"], item["optimizer_profile_id"], item["name"],
+            item["target_steps_min"], item["target_steps_recommended"], item["target_steps_max"],
+            item["target_checkpoint_count"], item["note"], now, now,
         )

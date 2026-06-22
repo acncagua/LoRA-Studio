@@ -76,6 +76,7 @@ from app.services.operation_monitor import (
 )
 from app.services.recommendations import create_draft_job_from_recommendation, list_recommendations, regenerate_recommendations, set_recommendation_status, write_recommendation_report
 from app.services.review_candidates import ensure_epoch_candidates, regenerate_epoch_candidates
+from app.services.step_estimator import calculate_required_repeats, estimate_steps, suggest_target_steps, target_config_from_catalog
 from app.services.review_sessions import (
     ensure_candidate_review_plan,
     prepare_review_generation,
@@ -2235,7 +2236,21 @@ def preset_detail(request: Request, preset_id: str) -> HTMLResponse:
     preset = fetch_one("SELECT * FROM presets WHERE id = ?", (preset_id,))
     if preset is None:
         raise HTTPException(status_code=404, detail="Preset not found")
-    return render(request, "preset_detail.html", preset=preset)
+    recipe = None
+    profile = None
+    definition = None
+    recipe_id = preset["training_recipe_id"] if "training_recipe_id" in preset.keys() else None
+    profile_id = preset["optimizer_profile_id"] if "optimizer_profile_id" in preset.keys() else None
+    if recipe_id:
+        recipe = fetch_one("SELECT * FROM training_recipes WHERE id = ?", (recipe_id,))
+        if recipe and not profile_id:
+            profile_id = recipe["optimizer_profile_id"]
+    if profile_id:
+        profile = fetch_one("SELECT * FROM optimizer_profiles WHERE id = ?", (profile_id,))
+    definition_id = profile["optimizer_definition_id"] if profile else None
+    if definition_id:
+        definition = fetch_one("SELECT * FROM optimizer_definitions WHERE id = ?", (definition_id,))
+    return render(request, "preset_detail.html", preset=preset, recipe=recipe, optimizer_profile=profile, optimizer_definition=definition)
 
 
 @app.get("/datasets", response_class=HTMLResponse)
@@ -2812,9 +2827,14 @@ def job_new(request: Request, project_id: str = Query("")) -> HTMLResponse:
     presets = preset_option_rows(fetch_all("SELECT * FROM presets ORDER BY model_family DESC, name"))
     projects = fetch_all("SELECT * FROM lora_projects WHERE status != 'archived' ORDER BY updated_at DESC, id DESC")
     dataset_versions = fetch_all("SELECT * FROM dataset_versions ORDER BY dataset_id, version_no DESC")
+    dataset_version_dicts = [dict(row) for row in dataset_versions]
     sample_prompt_templates = fetch_all("SELECT * FROM sample_prompt_templates ORDER BY is_builtin DESC, name")
     trigger_infos = {row["dataset_id"]: row for row in fetch_all("SELECT * FROM dataset_analysis")}
     selected_project = fetch_one("SELECT * FROM lora_projects WHERE id = ?", (int(project_id),)) if project_id.strip() else None
+    initial_dataset_id = selected_project["dataset_id"] if selected_project and selected_project["dataset_id"] else (datasets[0]["id"] if datasets else None)
+    initial_version_id = selected_project["current_dataset_version_id"] if selected_project and selected_project["current_dataset_version_id"] else None
+    default_preset = fetch_one("SELECT * FROM presets WHERE id = ?", (DEFAULT_JOB_PRESET_ID,))
+    default_params = json.loads(default_preset["params_json"] or "{}") if default_preset else {}
     return render(
         request,
         "job_create.html",
@@ -2822,12 +2842,15 @@ def job_new(request: Request, project_id: str = Query("")) -> HTMLResponse:
         presets=presets,
         projects=projects,
         dataset_versions=dataset_versions,
+        dataset_versions_json=dataset_version_dicts,
         default_preset_id=DEFAULT_JOB_PRESET_ID,
         sample_prompt_templates=sample_prompt_templates,
         trigger_infos=trigger_infos,
         selected_project=selected_project,
         selected_project_id=int(project_id) if project_id.strip() else None,
         available_models=list_available_models(),
+        step_estimate=step_estimate_for_selection(initial_dataset_id, DEFAULT_JOB_PRESET_ID, default_params, initial_version_id),
+        step_estimator_presets=presets_for_step_estimator(),
         default_model_path=str(settings.ROOT_DIR / "models"),
         default_project_path=str(settings.ROOT_DIR),
     )
@@ -2849,6 +2872,13 @@ def job_create(
     project_description: str = Form(""),
     project_trigger_word: str = Form(""),
     dataset_version_id: str = Form(""),
+    max_train_epochs: str = Form(""),
+    repeats: str = Form(""),
+    train_batch_size: str = Form(""),
+    gradient_accumulation_steps: str = Form(""),
+    save_every_n_epochs: str = Form(""),
+    sample_every_n_epochs: str = Form(""),
+    repeats_auto_calculated: str = Form("0"),
 ) -> RedirectResponse:
     def resolve_dataset_version_id(selected_dataset_id: int, raw_version_id: str) -> int | None:
         if raw_version_id.strip():
@@ -2893,6 +2923,24 @@ def job_create(
         )
         dataset_version_id = str(resolved_version_id or "")
     resolved_job_version_id = resolve_dataset_version_id(dataset_id, dataset_version_id)
+    preset = fetch_one("SELECT * FROM presets WHERE id = ?", (preset_id,))
+    if preset is None:
+        raise HTTPException(status_code=400, detail="Preset not found")
+    params = json.loads(preset["params_json"] or "{}")
+    try:
+        update_params_from_form(
+            params,
+            {
+                "max_train_epochs": max_train_epochs,
+                "repeats": repeats,
+                "train_batch_size": train_batch_size,
+                "gradient_accumulation_steps": gradient_accumulation_steps,
+                "save_every_n_epochs": save_every_n_epochs,
+                "sample_every_n_epochs": sample_every_n_epochs,
+            },
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"主要パラメータの値が不正です: {exc}") from exc
     job_id = create_job({
         "project_id": selected_project_id,
         "name": name,
@@ -2905,6 +2953,8 @@ def job_create(
         "sample_prompt_template_id": sample_prompt_template_id,
         "dataset_version_id": resolved_job_version_id,
         "trigger_word": job_trigger_word,
+        "params": params,
+        "repeats_auto_calculated": repeats_auto_calculated == "1",
     })
     return RedirectResponse(f"/jobs/{job_id}?created=1", status_code=303)
 
@@ -2918,6 +2968,97 @@ def list_available_models() -> list[dict[str, str]]:
     for path in sorted(p for p in models_dir.rglob("*") if p.is_file() and p.suffix.lower() in extensions):
         rows.append({"name": path.name, "path": str(path)})
     return rows
+
+
+def dataset_image_count_for_estimate(dataset_id: int | None, dataset_version_id: int | None = None) -> int:
+    if dataset_version_id:
+        version = fetch_one("SELECT image_count FROM dataset_versions WHERE id = ?", (dataset_version_id,))
+        if version and version["image_count"] is not None:
+            return int(version["image_count"] or 0)
+    if dataset_id:
+        dataset = fetch_one("SELECT image_count FROM datasets WHERE id = ?", (dataset_id,))
+        if dataset and dataset["image_count"] is not None:
+            return int(dataset["image_count"] or 0)
+    return 0
+
+
+def step_estimate_for_selection(dataset_id: int | None, preset_id: str | None, params: dict[str, Any], dataset_version_id: int | None = None) -> dict[str, Any]:
+    preset = fetch_one("SELECT * FROM presets WHERE id = ?", (preset_id,)) if preset_id else None
+    target = step_target_context_for_selection(preset, params)
+    return estimate_steps(
+        image_count=dataset_image_count_for_estimate(dataset_id, dataset_version_id),
+        params=params,
+        target=target,
+    )
+
+
+def step_target_context_for_selection(preset: Any | None, params: dict[str, Any]) -> dict[str, Any]:
+    recipe = None
+    profile = None
+    definition = None
+    if preset is not None:
+        recipe_id = preset["training_recipe_id"] if "training_recipe_id" in preset.keys() else None
+        profile_id = preset["optimizer_profile_id"] if "optimizer_profile_id" in preset.keys() else None
+        if recipe_id:
+            recipe = fetch_one("SELECT * FROM training_recipes WHERE id = ?", (recipe_id,))
+            if recipe and not profile_id:
+                profile_id = recipe["optimizer_profile_id"] if "optimizer_profile_id" in recipe.keys() else None
+        if profile_id:
+            profile = fetch_one("SELECT * FROM optimizer_profiles WHERE id = ?", (profile_id,))
+    optimizer_type = str(params.get("optimizer_type") or "")
+    definition_id = None
+    if profile:
+        definition_id = profile["optimizer_definition_id"] if "optimizer_definition_id" in profile.keys() else None
+    if not definition_id and optimizer_type:
+        definition_id = optimizer_type
+    if definition_id:
+        definition = fetch_one("SELECT * FROM optimizer_definitions WHERE id = ?", (definition_id,))
+    return target_config_from_catalog(
+        training_recipe=recipe,
+        optimizer_profile=profile,
+        optimizer_definition=definition,
+        preset=preset,
+    )
+
+
+def presets_for_step_estimator() -> list[dict[str, Any]]:
+    rows = fetch_all("SELECT * FROM presets ORDER BY model_family DESC, name")
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["params"] = json.loads(item["params_json"] or "{}")
+        result.append(item)
+    return result
+
+
+@app.post("/api/step-estimate")
+async def api_step_estimate(request: Request) -> JSONResponse:
+    payload = await request.json()
+    dataset_id = optional_int(str(payload.get("dataset_id") or ""))
+    dataset_version_id = optional_int(str(payload.get("dataset_version_id") or ""))
+    preset_id = str(payload.get("preset_id") or "")
+    params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+    estimate = step_estimate_for_selection(dataset_id, preset_id, params, dataset_version_id)
+    target_steps = optional_int(str(payload.get("target_steps") or ""))
+    suggestions = []
+    if target_steps:
+        preset = fetch_one("SELECT * FROM presets WHERE id = ?", (preset_id,))
+        target_context = step_target_context_for_selection(preset, params)
+        suggestions = suggest_target_steps(
+            image_count=dataset_image_count_for_estimate(dataset_id, dataset_version_id),
+            params=params,
+            target_steps=target_steps,
+            target=target_context,
+            strategy=str(payload.get("strategy") or "balanced"),
+        )
+        auto_repeat = calculate_required_repeats(
+            image_count=dataset_image_count_for_estimate(dataset_id, dataset_version_id),
+            params=params,
+            target_steps=target_steps,
+        )
+    else:
+        auto_repeat = {}
+    return JSONResponse({"estimate": estimate, "suggestions": suggestions, "auto_repeat": auto_repeat})
 
 
 REVIEW_PREPARATION_RUNNING_STATUSES = {
@@ -3045,6 +3186,8 @@ def job_detail(
     machine_epoch_summary = epoch_machine_summary(job_id)
     dataset_version = fetch_one("SELECT * FROM dataset_versions WHERE id = ?", (job["dataset_version_id"],)) if job["dataset_version_id"] else None
     params = json.loads(job["params_json"])
+    step_estimate = step_estimate_for_selection(job["dataset_id"], job["preset_id"], params, job["dataset_version_id"])
+    step_estimate_snapshot = json.loads(job["step_estimate_snapshot_json"] or "{}") if "step_estimate_snapshot_json" in job.keys() and job["step_estimate_snapshot_json"] else {}
     project = fetch_one("SELECT * FROM lora_projects WHERE id = ?", (job["project_id"],)) if "project_id" in job.keys() and job["project_id"] else None
     project_jobs = fetch_all("SELECT id, name, status FROM training_jobs WHERE project_id = ? ORDER BY id", (project["id"],)) if project else []
     project_selected_job = fetch_one("SELECT id, name FROM training_jobs WHERE id = ?", (project["selected_job_id"],)) if project and project["selected_job_id"] else None
@@ -3090,6 +3233,8 @@ def job_detail(
         validation_pack_path=validation_pack_path(job_id),
         default_project_path=str(settings.ROOT_DIR),
         dataset_version=dataset_version,
+        step_estimate=step_estimate,
+        step_estimate_snapshot=step_estimate_snapshot,
         no_metadata_enabled=bool(params.get("no_metadata")),
         project=project,
         project_jobs=project_jobs,
@@ -3351,19 +3496,25 @@ def job_edit(request: Request, job_id: int) -> HTMLResponse:
     presets = preset_option_rows(fetch_all("SELECT * FROM presets ORDER BY model_family DESC, name"))
     sample_prompt_templates = fetch_all("SELECT * FROM sample_prompt_templates ORDER BY is_builtin DESC, name")
     dataset_versions = fetch_all("SELECT * FROM dataset_versions ORDER BY dataset_id, version_no DESC")
+    dataset_version_dicts = [dict(row) for row in dataset_versions]
     editable = job["status"] in EDITABLE_JOB_STATUSES
+    params = json.loads(job["params_json"])
+    step_estimate = step_estimate_for_selection(job["dataset_id"], job["preset_id"], params, job["dataset_version_id"])
     return render(
         request,
         "job_edit.html",
         job=job,
-        params=json.loads(job["params_json"]),
-        params_json_pretty=json.dumps(json.loads(job["params_json"]), ensure_ascii=False, indent=2),
+        params=params,
+        params_json_pretty=json.dumps(params, ensure_ascii=False, indent=2),
         datasets=datasets,
         presets=presets,
         sample_prompt_templates=sample_prompt_templates,
         dataset_versions=dataset_versions,
+        dataset_versions_json=dataset_version_dicts,
         available_models=list_available_models(),
         default_model_path=str(settings.ROOT_DIR / "models"),
+        step_estimate=step_estimate,
+        step_estimator_presets=presets_for_step_estimator(),
         editable=editable,
         status_labels=STATUS_LABELS,
     )
@@ -3384,6 +3535,7 @@ def job_edit_save(
     max_train_epochs: str = Form(""),
     repeats: str = Form(""),
     train_batch_size: str = Form(""),
+    gradient_accumulation_steps: str = Form(""),
     learning_rate: str = Form(""),
     unet_lr: str = Form(""),
     text_encoder_lr: str = Form(""),
@@ -3395,6 +3547,7 @@ def job_edit_save(
     optimizer_type: str = Form(""),
     lr_scheduler: str = Form(""),
     no_metadata: str = Form(""),
+    repeats_auto_calculated: str = Form("0"),
     params_json: str = Form("{}"),
 ) -> RedirectResponse:
     job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
@@ -3421,6 +3574,7 @@ def job_edit_save(
                     "max_train_epochs": max_train_epochs,
                     "repeats": repeats,
                     "train_batch_size": train_batch_size,
+                    "gradient_accumulation_steps": gradient_accumulation_steps,
                     "learning_rate": learning_rate,
                     "unet_lr": unet_lr,
                     "text_encoder_lr": text_encoder_lr,
@@ -3442,6 +3596,7 @@ def job_edit_save(
         selected_version_id = version["id"] if version else None
     trigger_word_for_job = project_or_job_trigger_word(job, dataset)
     trigger_snapshot = trigger_snapshot_for_dataset(dataset, trigger_word_for_job)
+    step_estimate = step_estimate_for_selection(dataset_id, preset_id, params, selected_version_id)
     next_status = "prepared_dirty" if job["status"] in {"prepared", "prepared_dirty"} else "draft"
     dirty = 1 if job["status"] != "draft" else 0
     now = settings_now()
@@ -3455,6 +3610,10 @@ def job_edit_save(
                 params_json = ?, status = ?, config_dirty = ?, command_line = NULL,
                 trigger_word_at_creation = ?, trigger_occurrence_count_at_creation = ?,
                 trigger_occurrence_rate_at_creation = ?, trigger_consistency_label_at_creation = ?,
+                expected_total_steps_at_creation = ?, steps_per_epoch_at_creation = ?,
+                target_steps_recommended_at_creation = ?, step_status_at_creation = ?,
+                step_estimate_snapshot_json = ?,
+                repeats_auto_calculated = ?, target_steps_source = ?,
                 updated_at = ?
             WHERE id = ?
             """,
@@ -3477,6 +3636,13 @@ def job_edit_save(
                 trigger_snapshot["count"],
                 trigger_snapshot["rate"],
                 trigger_snapshot["label"],
+                step_estimate["total_steps"],
+                step_estimate["steps_per_epoch"],
+                step_estimate["target_steps_recommended"],
+                step_estimate["status"],
+                json.dumps(step_estimate, ensure_ascii=False),
+                1 if repeats_auto_calculated == "1" else 0,
+                step_estimate["target_source"],
                 now,
                 job_id,
             ),
@@ -3490,7 +3656,24 @@ def job_preflight(job_id: int, acknowledge_trigger_mismatch: str = Form("")) -> 
         validate_job_ready(job_id, acknowledge_trigger_mismatch=acknowledge_trigger_mismatch == "yes")
     except Exception as exc:
         return RedirectResponse(f"/jobs/{job_id}?preflight={quote('NG: ' + str(exc))}", status_code=303)
-    return RedirectResponse(f"/jobs/{job_id}?preflight={quote('OK: 実行できます。')}", status_code=303)
+    job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
+    estimate_message = ""
+    if job:
+        params = json.loads(job["params_json"])
+        estimate = step_estimate_for_selection(job["dataset_id"], job["preset_id"], params, job["dataset_version_id"])
+        recipe_target = estimate.get("recipe_target_steps_recommended") or "-"
+        optimizer_target = estimate.get("optimizer_target_steps_recommended") or "-"
+        estimate_summary = (
+            f" expected steps={estimate['total_steps']}, "
+            f"recipe target={recipe_target}, optimizer target={optimizer_target}, 判定={estimate['status']}."
+        )
+        if estimate["status"] in {"TOO_LOW", "LOW", "HIGH", "TOO_HIGH", "ERROR"}:
+            estimate_message = f" Step Estimate {estimate_summary} {estimate['message']}"
+        elif estimate["warnings"]:
+            estimate_message = " Step Estimate WARNING: " + estimate_summary + " " + " / ".join(estimate["warnings"])
+        else:
+            estimate_message = " Step Estimate " + estimate_summary
+    return RedirectResponse(f"/jobs/{job_id}?preflight={quote('OK: 実行できます。' + estimate_message)}", status_code=303)
 
 
 @app.post("/jobs/{job_id}/revised-draft")
@@ -4359,6 +4542,38 @@ def validation_pipeline_prepare(run_id: int) -> RedirectResponse:
     return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
 
 
+@app.get("/validation-runs/{run_id}/pipeline/run", response_class=HTMLResponse)
+def validation_pipeline_run_confirm(request: Request, run_id: int) -> HTMLResponse:
+    try:
+        bundle = load_validation_run_bundle(run_id)
+        preflight = weight_calibration_preflight(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    run = bundle["run"]
+    job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (run["job_id"],))
+    selected_output = fetch_one("SELECT * FROM training_outputs WHERE id = ?", (run["selected_output_id"],)) if run["selected_output_id"] else None
+    conditions = [dict(row) for row in bundle["conditions"]]
+    prompts = sorted({str(row["prompt_key"]) for row in conditions})
+    seeds = sorted({int(row["seed"]) for row in conditions})
+    weights = sorted({float(row["lora_weight"] or 0) for row in conditions})
+    hires_values = sorted({bool(row["hires_enabled"]) for row in conditions})
+    return render(
+        request,
+        "validation_pipeline_run_confirm.html",
+        **bundle,
+        job=job,
+        selected_output=selected_output,
+        validation_preflight=preflight,
+        confirm_prompts=prompts,
+        confirm_seeds=seeds,
+        confirm_weights=weights,
+        confirm_hires_values=hires_values,
+        default_project_path=str(settings.ROOT_DIR),
+    )
+
+
 @app.post("/validation-runs/{run_id}/pipeline/run")
 def validation_pipeline_run(run_id: int, force_warnings: str = Form("")) -> RedirectResponse:
     try:
@@ -4382,6 +4597,15 @@ def validation_pipeline_retry(run_id: int) -> RedirectResponse:
 @app.post("/validation-runs/{run_id}/pipeline/stop")
 def validation_pipeline_stop(run_id: int) -> RedirectResponse:
     stop_weight_calibration_pipeline(run_id)
+    return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
+
+
+@app.post("/validation-runs/{run_id}/matrix/rebuild")
+def validation_run_matrix_rebuild(run_id: int) -> RedirectResponse:
+    try:
+        write_validation_matrix(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
 
 
@@ -5515,6 +5739,7 @@ def update_params_from_form(params: dict[str, Any], values: dict[str, str]) -> N
         "max_train_epochs",
         "repeats",
         "train_batch_size",
+        "gradient_accumulation_steps",
         "network_dim",
         "network_alpha",
         "save_every_n_epochs",

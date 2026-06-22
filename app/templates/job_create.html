@@ -21,6 +21,7 @@
 </section>
 
 <form method="post" action="/jobs" class="form-grid wide">
+  <input type="hidden" name="repeats_auto_calculated" value="0" data-repeats-auto-calculated>
   <fieldset class="form-fieldset wide-field" data-project-mode-form>
     <legend>Project（LoRA作成単位）</legend>
     <p class="muted">Projectは1つのLoRA作成作業です。学習ジョブはProject内の1回の学習実行として保存されます。</p>
@@ -73,6 +74,24 @@
       {% endfor %}
     </select>
   </label>
+
+  <fieldset class="form-fieldset">
+    <legend>Step調整</legend>
+    <p class="muted">空欄ならプリセット値を使います。目標stepに合わせる場合はrepeatsを自動計算してここに入力します。</p>
+    <label>max_train_epochs<input name="max_train_epochs"></label>
+    <label>repeats<input name="repeats"></label>
+    <label>train_batch_size<input name="train_batch_size"></label>
+    <label>gradient_accumulation_steps<input name="gradient_accumulation_steps"></label>
+    <label>save_every_n_epochs<input name="save_every_n_epochs"></label>
+    <label>sample_every_n_epochs<input name="sample_every_n_epochs"></label>
+  </fieldset>
+
+  <div class="wide-field">
+    <script type="application/json" data-step-presets-json>{{ step_estimator_presets|tojson }}</script>
+    <script type="application/json" data-step-dataset-versions-json>{{ dataset_versions_json|tojson }}</script>
+    {% set step_estimator_interactive = true %}
+    {% include "partials/step_estimate_panel.html" %}
+  </div>
 
   <fieldset class="form-fieldset">
     <legend>使用モデル</legend>

@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="page-head">
+  <h1>Weight検証開始の確認</h1>
+  <div class="actions">
+    <a class="button secondary" href="/validation-runs/{{ run.id }}">検証Runへ戻る</a>
+    <a class="button secondary" href="/jobs/{{ run.job_id }}">ジョブへ戻る</a>
+  </div>
+</header>
+
+{% if validation_preflight and validation_preflight.has_errors %}
+<p class="notice warning">PreflightにERRORがあります。内容を修正してから開始してください。</p>
+{% elif validation_preflight and validation_preflight.warning_count %}
+<p class="notice warning">PreflightにWARNINGがあります。内容を確認した上で開始できます。</p>
+{% endif %}
+
+<section class="panel-grid">
+  <div>
+    <h2>実行対象</h2>
+    <dl>
+      <dt>selected Job</dt><dd>#{{ run.job_id }}{% if job %} {{ job.name }}{% endif %}</dd>
+      <dt>selected epoch</dt><dd>{{ run.selected_epoch if run.selected_epoch is not none else '-' }}</dd>
+      <dt>selected LoRA</dt><dd>{% if selected_output %}{{ selected_output.file_path }}{% elif profile %}{{ profile.selected_model_path or profile.exported_model_path or '-' }}{% else %}-{% endif %}</dd>
+      <dt>validation preset</dt><dd>{{ display_validation_preset_name(preset) if preset else run.validation_preset_id or '-' }}</dd>
+      <dt>expected image count</dt><dd>{{ coverage.expected_image_count }}</dd>
+    </dl>
+  </div>
+  <div>
+    <h2>条件</h2>
+    <dl>
+      <dt>prompts数</dt><dd>{{ confirm_prompts|length }}</dd>
+      <dt>seeds数</dt><dd>{{ confirm_seeds|length }}</dd>
+      <dt>weights</dt><dd>{% for weight in confirm_weights %}{{ "%g"|format(weight) }}{% if not loop.last %}, {% endif %}{% endfor %}</dd>
+      <dt>Hires有無</dt><dd>{% for value in confirm_hires_values %}{{ 'Hiresあり' if value else 'Hiresなし' }}{% if not loop.last %}, {% endif %}{% endfor %}</dd>
+    </dl>
+  </div>
+</section>
+
+<section>
+  <h2>実行される工程</h2>
+  <ol>
+    <li>conditions作成</li>
+    <li>sd-scripts画像生成</li>
+    <li>import</li>
+    <li>embedding</li>
+    <li>machine review</li>
+    <li>matrix作成</li>
+  </ol>
+  <form method="post" action="/validation-runs/{{ run.id }}/pipeline/run" class="actions">
+    {% if validation_preflight and validation_preflight.warning_count and not validation_preflight.has_errors %}<input type="hidden" name="force_warnings" value="1">{% endif %}
+    <button type="submit" {% if validation_preflight and validation_preflight.has_errors %}disabled{% endif %}>Weight検証を開始</button>
+    <a class="button secondary" href="/validation-runs/{{ run.id }}">キャンセル</a>
+  </form>
+</section>
+
+{% if validation_preflight %}
+<section class="notice">
+  <h2>Preflight</h2>
+  <div class="summary-grid">
+    <div><span>ERROR</span><strong>{{ validation_preflight.error_count }}</strong></div>
+    <div><span>WARNING</span><strong>{{ validation_preflight.warning_count }}</strong></div>
+    <div><span>Expected Conditions</span><strong>{{ coverage.expected_image_count }}</strong></div>
+    <div><span>Output Directory</span><strong>{{ output_dir }}</strong></div>
+  </div>
+  <table>
+    <thead><tr><th>Level</th><th>Key</th><th>Message</th></tr></thead>
+    <tbody>
+      {% for check in validation_preflight.checks %}
+      <tr><td><span class="label {{ check.level|lower }}">{{ check.level }}</span></td><td>{{ check.key }}</td><td>{{ check.message }}</td></tr>
+      {% else %}
+      <tr><td colspan="3" class="muted">Preflight上のERROR/WARNINGはありません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+{% endblock %}

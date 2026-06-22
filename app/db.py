@@ -12,7 +12,7 @@ from typing import Any
 
 from app.app_version import APP_VERSION, DB_SCHEMA_VERSION
 from app import settings
-from app.services.preset_seed import preset_rows
+from app.services.preset_seed import optimizer_definition_rows, optimizer_profile_rows, preset_rows, training_recipe_rows
 
 
 INTEGRATION_SMOKE_PRESET_ID = "integration_smoke_sdxl"
@@ -53,6 +53,7 @@ def init_db() -> None:
         conn.executescript(SCHEMA_SQL)
         run_migrations(conn)
         seed_app_settings(conn)
+        seed_optimizer_catalog(conn)
         seed_presets(conn)
         seed_sample_prompt_templates(conn)
         seed_evaluation_rubrics(conn)
@@ -121,6 +122,13 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "sample_image_count": "INTEGER",
             "step_consistency_label": "TEXT",
             "step_consistency_message": "TEXT",
+            "expected_total_steps_at_creation": "INTEGER",
+            "steps_per_epoch_at_creation": "INTEGER",
+            "target_steps_recommended_at_creation": "INTEGER",
+            "step_status_at_creation": "TEXT",
+            "step_estimate_snapshot_json": "TEXT",
+            "repeats_auto_calculated": "INTEGER NOT NULL DEFAULT 0",
+            "target_steps_source": "TEXT",
             "parent_job_id": "INTEGER",
             "sample_prompt_template_id": "TEXT",
             "config_dirty": "INTEGER NOT NULL DEFAULT 0",
@@ -135,6 +143,52 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "deleted_at": "TEXT",
             "archived_reason": "TEXT",
             "delete_reason": "TEXT",
+        },
+    )
+    ensure_columns(
+        conn,
+        "presets",
+        {
+            "target_steps_min": "INTEGER",
+            "target_steps_recommended": "INTEGER",
+            "target_steps_max": "INTEGER",
+            "target_checkpoint_count": "INTEGER",
+            "step_target_note": "TEXT",
+            "training_recipe_id": "TEXT",
+            "optimizer_profile_id": "TEXT",
+        },
+    )
+    ensure_columns(
+        conn,
+        "optimizer_definitions",
+        {
+            "target_steps_min": "INTEGER",
+            "target_steps_recommended": "INTEGER",
+            "target_steps_max": "INTEGER",
+            "target_checkpoint_count": "INTEGER",
+            "note": "TEXT",
+        },
+    )
+    ensure_columns(
+        conn,
+        "optimizer_profiles",
+        {
+            "target_steps_min": "INTEGER",
+            "target_steps_recommended": "INTEGER",
+            "target_steps_max": "INTEGER",
+            "target_checkpoint_count": "INTEGER",
+            "note": "TEXT",
+        },
+    )
+    ensure_columns(
+        conn,
+        "training_recipes",
+        {
+            "target_steps_min": "INTEGER",
+            "target_steps_recommended": "INTEGER",
+            "target_steps_max": "INTEGER",
+            "target_checkpoint_count": "INTEGER",
+            "note": "TEXT",
         },
     )
     ensure_columns(
@@ -732,15 +786,79 @@ def seed_app_settings(conn: sqlite3.Connection) -> None:
     )
 
 
+def seed_optimizer_catalog(conn: sqlite3.Connection) -> None:
+    now = utc_now()
+    conn.executemany(
+        """
+        INSERT INTO optimizer_definitions(
+            id, name, lr_meaning, category, target_steps_min, target_steps_recommended,
+            target_steps_max, target_checkpoint_count, note, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            name=excluded.name,
+            lr_meaning=excluded.lr_meaning,
+            category=excluded.category,
+            target_steps_min=excluded.target_steps_min,
+            target_steps_recommended=excluded.target_steps_recommended,
+            target_steps_max=excluded.target_steps_max,
+            target_checkpoint_count=excluded.target_checkpoint_count,
+            note=excluded.note,
+            updated_at=excluded.updated_at
+        """,
+        list(optimizer_definition_rows(now)),
+    )
+    conn.executemany(
+        """
+        INSERT INTO optimizer_profiles(
+            id, optimizer_definition_id, name, target_steps_min, target_steps_recommended,
+            target_steps_max, target_checkpoint_count, note, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            optimizer_definition_id=excluded.optimizer_definition_id,
+            name=excluded.name,
+            target_steps_min=excluded.target_steps_min,
+            target_steps_recommended=excluded.target_steps_recommended,
+            target_steps_max=excluded.target_steps_max,
+            target_checkpoint_count=excluded.target_checkpoint_count,
+            note=excluded.note,
+            updated_at=excluded.updated_at
+        """,
+        list(optimizer_profile_rows(now)),
+    )
+    conn.executemany(
+        """
+        INSERT INTO training_recipes(
+            id, optimizer_profile_id, name, target_steps_min, target_steps_recommended,
+            target_steps_max, target_checkpoint_count, note, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            optimizer_profile_id=excluded.optimizer_profile_id,
+            name=excluded.name,
+            target_steps_min=excluded.target_steps_min,
+            target_steps_recommended=excluded.target_steps_recommended,
+            target_steps_max=excluded.target_steps_max,
+            target_checkpoint_count=excluded.target_checkpoint_count,
+            note=excluded.note,
+            updated_at=excluded.updated_at
+        """,
+        list(training_recipe_rows(now)),
+    )
+
+
 def seed_presets(conn: sqlite3.Connection) -> None:
     conn.executemany(
         """
         INSERT INTO presets(
             id, name, model_family, training_script, purpose, params_json,
             recommended_dataset_json, expected_behavior, risk_note, source_basis,
-            is_builtin, parent_preset_id, created_at, updated_at
+            is_builtin, parent_preset_id, target_steps_min, target_steps_recommended,
+            target_steps_max, target_checkpoint_count, step_target_note, training_recipe_id,
+            created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             name=excluded.name, model_family=excluded.model_family,
             training_script=excluded.training_script, purpose=excluded.purpose,
@@ -748,6 +866,12 @@ def seed_presets(conn: sqlite3.Connection) -> None:
             recommended_dataset_json=excluded.recommended_dataset_json,
             expected_behavior=excluded.expected_behavior, risk_note=excluded.risk_note,
             source_basis=excluded.source_basis, is_builtin=excluded.is_builtin,
+            target_steps_min=excluded.target_steps_min,
+            target_steps_recommended=excluded.target_steps_recommended,
+            target_steps_max=excluded.target_steps_max,
+            target_checkpoint_count=excluded.target_checkpoint_count,
+            step_target_note=excluded.step_target_note,
+            training_recipe_id=excluded.training_recipe_id,
             updated_at=excluded.updated_at
         """,
         list(preset_rows(utc_now())),
@@ -1251,6 +1375,8 @@ def insert_dataset(name: str, path: str, model_family: str, trigger_word: str, c
 
 
 def create_job(data: dict[str, Any]) -> int:
+    from app.services.step_estimator import estimate_steps, target_config_from_catalog
+
     now = utc_now()
     preset = fetch_one("SELECT * FROM presets WHERE id = ?", (data["preset_id"],))
     if preset is None:
@@ -1291,6 +1417,23 @@ def create_job(data: dict[str, Any]) -> int:
                 trigger_label = scan["trigger_consistency"]["label"]
             except Exception:
                 pass
+    image_count = int((version["image_count"] if version and "image_count" in version.keys() else None) or (dataset["image_count"] if dataset else 0) or 0)
+    recipe = None
+    profile = None
+    definition = None
+    recipe_id = preset["training_recipe_id"] if "training_recipe_id" in preset.keys() else None
+    profile_id = preset["optimizer_profile_id"] if "optimizer_profile_id" in preset.keys() else None
+    if recipe_id:
+        recipe = fetch_one("SELECT * FROM training_recipes WHERE id = ?", (recipe_id,))
+        if recipe and not profile_id:
+            profile_id = recipe["optimizer_profile_id"] if "optimizer_profile_id" in recipe.keys() else None
+    if profile_id:
+        profile = fetch_one("SELECT * FROM optimizer_profiles WHERE id = ?", (profile_id,))
+    definition_id = profile["optimizer_definition_id"] if profile and "optimizer_definition_id" in profile.keys() else params.get("optimizer_type")
+    if definition_id:
+        definition = fetch_one("SELECT * FROM optimizer_definitions WHERE id = ?", (str(definition_id),))
+    step_target = target_config_from_catalog(training_recipe=recipe, optimizer_profile=profile, optimizer_definition=definition, preset=preset)
+    step_estimate = estimate_steps(image_count=image_count, params=params, target=step_target)
     with connect() as conn:
         cur = conn.execute(
             """
@@ -1301,8 +1444,12 @@ def create_job(data: dict[str, Any]) -> int:
                 , parent_job_id, sample_prompt_template_id
                 , trigger_word_at_creation, trigger_occurrence_count_at_creation,
                 trigger_occurrence_rate_at_creation, trigger_consistency_label_at_creation,
+                expected_total_steps_at_creation, steps_per_epoch_at_creation,
+                target_steps_recommended_at_creation, step_status_at_creation,
+                step_estimate_snapshot_json,
+                repeats_auto_calculated, target_steps_source,
                 dataset_version_id
-            ) VALUES (?, ?, ?, ?, NULL, 'draft', ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, NULL, 'draft', ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 data.get("project_id"), data["name"], int(data["dataset_id"]), data["preset_id"],
@@ -1310,7 +1457,13 @@ def create_job(data: dict[str, Any]) -> int:
                 data.get("vae_path") or None, output_name,
                 json.dumps(params, ensure_ascii=False, indent=2), data.get("memo") or "", now, now,
                 data.get("parent_job_id"), data.get("sample_prompt_template_id") or None,
-                trigger_word, trigger_count, trigger_rate, trigger_label, dataset_version_id,
+                trigger_word, trigger_count, trigger_rate, trigger_label,
+                step_estimate["total_steps"], step_estimate["steps_per_epoch"],
+                step_estimate["target_steps_recommended"], step_estimate["status"],
+                json.dumps(step_estimate, ensure_ascii=False),
+                1 if data.get("repeats_auto_calculated") else 0,
+                step_estimate["target_source"],
+                dataset_version_id,
             ),
         )
         job_id = int(cur.lastrowid)
@@ -1657,7 +1810,25 @@ CREATE TABLE IF NOT EXISTS presets (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, model_family TEXT NOT NULL, training_script TEXT NOT NULL,
     purpose TEXT NOT NULL, params_json TEXT NOT NULL, recommended_dataset_json TEXT,
     expected_behavior TEXT, risk_note TEXT, source_basis TEXT, is_builtin INTEGER NOT NULL DEFAULT 0,
-    parent_preset_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    parent_preset_id TEXT, target_steps_min INTEGER, target_steps_recommended INTEGER,
+    target_steps_max INTEGER, target_checkpoint_count INTEGER, step_target_note TEXT,
+    training_recipe_id TEXT, optimizer_profile_id TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS optimizer_definitions (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, lr_meaning TEXT NOT NULL, category TEXT NOT NULL,
+    target_steps_min INTEGER, target_steps_recommended INTEGER, target_steps_max INTEGER,
+    target_checkpoint_count INTEGER, note TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS optimizer_profiles (
+    id TEXT PRIMARY KEY, optimizer_definition_id TEXT NOT NULL, name TEXT NOT NULL,
+    target_steps_min INTEGER, target_steps_recommended INTEGER, target_steps_max INTEGER,
+    target_checkpoint_count INTEGER, note TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS training_recipes (
+    id TEXT PRIMARY KEY, optimizer_profile_id TEXT, name TEXT NOT NULL,
+    target_steps_min INTEGER, target_steps_recommended INTEGER, target_steps_max INTEGER,
+    target_checkpoint_count INTEGER, note TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS datasets (
     id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, path TEXT NOT NULL, model_family TEXT,
@@ -1704,6 +1875,10 @@ CREATE TABLE IF NOT EXISTS training_jobs (
     parent_job_id INTEGER, sample_prompt_template_id TEXT,
     trigger_word_at_creation TEXT, trigger_occurrence_count_at_creation INTEGER,
     trigger_occurrence_rate_at_creation REAL, trigger_consistency_label_at_creation TEXT,
+    expected_total_steps_at_creation INTEGER, steps_per_epoch_at_creation INTEGER,
+    target_steps_recommended_at_creation INTEGER, step_status_at_creation TEXT,
+    step_estimate_snapshot_json TEXT,
+    repeats_auto_calculated INTEGER NOT NULL DEFAULT 0, target_steps_source TEXT,
     dataset_version_id INTEGER, config_dirty INTEGER NOT NULL DEFAULT 0,
     archived_at TEXT, deleted_at TEXT, archived_reason TEXT, delete_reason TEXT,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL

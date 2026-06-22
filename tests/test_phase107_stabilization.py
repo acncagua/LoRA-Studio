@@ -1479,6 +1479,238 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertEqual(run["pipeline_status"], "generating_images")
         thread_mock.return_value.start.assert_called_once()
 
+    def test_step_estimator_basic_formula_and_warning(self) -> None:
+        from app.services.step_estimator import estimate_steps
+
+        estimate = estimate_steps(
+            image_count=39,
+            params={"repeats": 10, "max_train_epochs": 10, "train_batch_size": 2},
+            target={"target_steps_min": 2500, "target_steps_recommended": 5000, "target_steps_max": 8000, "target_checkpoint_count": 6},
+        )
+
+        self.assertEqual(estimate["steps_per_epoch"], 195)
+        self.assertEqual(estimate["total_steps"], 1950)
+        self.assertEqual(estimate["status"], "LOW")
+        self.assertIn("少なめ", estimate["message"])
+
+    def test_step_target_catalog_priority(self) -> None:
+        from app.services.step_estimator import target_config_from_catalog
+
+        target = target_config_from_catalog(
+            training_recipe={
+                "name": "Recipe Target",
+                "target_steps_min": 100,
+                "target_steps_recommended": 200,
+                "target_steps_max": 300,
+                "target_checkpoint_count": 3,
+                "note": "recipe",
+            },
+            optimizer_profile={
+                "target_steps_min": 1000,
+                "target_steps_recommended": 2000,
+                "target_steps_max": 3000,
+                "target_checkpoint_count": 6,
+            },
+            optimizer_definition={
+                "name": "AdamW8bit",
+                "lr_meaning": "normal_lr",
+                "category": "stable",
+                "target_steps_min": 2500,
+                "target_steps_recommended": 5000,
+                "target_steps_max": 8000,
+            },
+        )
+
+        self.assertEqual(target["target_steps_recommended"], 200)
+        self.assertEqual(target["target_checkpoint_count"], 3)
+        self.assertEqual(target["step_target_source"], "recipe")
+        self.assertEqual(target["recipe_target_steps_recommended"], 200)
+        self.assertEqual(target["optimizer_target_steps_recommended"], 2000)
+        self.assertEqual(target["optimizer_lr_meaning"], "normal_lr")
+
+    def test_step_target_catalog_falls_back_to_optimizer_definition(self) -> None:
+        from app.services.step_estimator import target_config_from_catalog
+
+        target = target_config_from_catalog(
+            optimizer_definition={
+                "name": "Prodigy",
+                "lr_meaning": "auto_lr_multiplier",
+                "category": "advanced",
+                "target_steps_min": 1800,
+                "target_steps_recommended": 3500,
+                "target_steps_max": 6500,
+            },
+        )
+
+        self.assertEqual(target["target_steps_recommended"], 3500)
+        self.assertEqual(target["step_target_source"], "optimizer_definition")
+        self.assertEqual(target["optimizer_target_steps_recommended"], 3500)
+        self.assertEqual(target["optimizer_category"], "advanced")
+
+    def test_step_estimator_multiple_subsets_and_gradient_accumulation(self) -> None:
+        from app.services.step_estimator import estimate_steps
+
+        estimate = estimate_steps(
+            image_count=0,
+            params={"repeats": 1, "max_train_epochs": 5, "train_batch_size": 2, "gradient_accumulation_steps": 2},
+            subsets=[{"image_count": 10, "num_repeats": 3}, {"image_count": 5, "num_repeats": 4}],
+        )
+
+        self.assertEqual(estimate["weighted_image_count"], 50)
+        self.assertEqual(estimate["effective_batch_size"], 4)
+        self.assertEqual(estimate["steps_per_epoch"], 13)
+        self.assertEqual(estimate["total_steps"], 65)
+
+    def test_target_step_assistant_suggests_candidates_and_intervals(self) -> None:
+        from app.services.step_estimator import calculate_required_repeats, estimate_steps, suggest_target_steps
+
+        params = {"repeats": 10, "max_train_epochs": 10, "train_batch_size": 2}
+        auto = calculate_required_repeats(image_count=39, params=params, target_steps=5000)
+        suggestions = suggest_target_steps(
+            image_count=39,
+            params=params,
+            target_steps=5000,
+            target={"target_checkpoint_count": 6},
+        )
+        high_epoch = estimate_steps(image_count=39, params={**params, "max_train_epochs": 26}, target={"target_checkpoint_count": 6})
+
+        self.assertEqual(auto["required_repeats"], 26)
+        self.assertEqual(auto["expected_total_steps"], 5070)
+        self.assertTrue(any(row["expected_total_steps"] >= 4990 for row in suggestions))
+        self.assertTrue(any(row["save_every_n_epochs_proposal"] > 1 for row in suggestions))
+        self.assertEqual(high_epoch["save_every_n_epochs_proposal"], 5)
+        self.assertTrue(any("毎epoch保存" in warning for warning in high_epoch["warnings"]))
+
+    def test_target_step_assistant_uses_actual_steps_per_epoch_rounding(self) -> None:
+        from app.services.step_estimator import calculate_required_repeats
+
+        auto = calculate_required_repeats(
+            image_count=37,
+            params={"max_train_epochs": 10, "train_batch_size": 2, "gradient_accumulation_steps": 1},
+            target_steps=5000,
+        )
+
+        self.assertEqual(auto["required_repeats"], 27)
+        self.assertEqual(auto["expected_total_steps"], 5000)
+
+    def test_job_creation_saves_step_estimate_snapshot(self) -> None:
+        from app.db import create_job
+
+        project_id, dataset_id, version_id = self.create_project_fixture()
+        job_id = create_job(
+            {
+                "project_id": project_id,
+                "name": "step snapshot",
+                "dataset_id": dataset_id,
+                "dataset_version_id": version_id,
+                "preset_id": "sdxl_2d_face_adamw8bit_standard",
+                "base_model_path": "D:/models/base.safetensors",
+                "output_name": "step_snapshot",
+                "memo": "",
+            }
+        )
+        job = fetch_one(
+            """
+            SELECT expected_total_steps_at_creation, steps_per_epoch_at_creation,
+                   target_steps_recommended_at_creation, step_status_at_creation,
+                   repeats_auto_calculated, target_steps_source, step_estimate_snapshot_json
+            FROM training_jobs WHERE id = ?
+            """,
+            (job_id,),
+        )
+
+        self.assertEqual(job["steps_per_epoch_at_creation"], 250)
+        self.assertEqual(job["expected_total_steps_at_creation"], 2500)
+        self.assertEqual(job["target_steps_recommended_at_creation"], 5000)
+        self.assertEqual(job["step_status_at_creation"], "LOW")
+        self.assertEqual(job["repeats_auto_calculated"], 0)
+        self.assertEqual(job["target_steps_source"], "recipe")
+        self.assertIn("total_steps", job["step_estimate_snapshot_json"])
+        self.assertIn("recipe_target_steps_recommended", job["step_estimate_snapshot_json"])
+
+    def test_weight_calibration_pipeline_start_recreates_missing_conditions(self) -> None:
+        from app.services.validation_generation import start_weight_calibration_pipeline
+
+        run_id, _ = self.create_validation_generation_fixture()
+        with connect() as conn:
+            conn.execute("DELETE FROM validation_expected_conditions WHERE validation_run_id = ?", (run_id,))
+        with mock.patch("app.services.validation_generation.threading.Thread"):
+            start_weight_calibration_pipeline(run_id, force_warnings=True)
+
+        count = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ?", (run_id,))
+        self.assertEqual(count["count"], 45)
+
+    def test_weight_calibration_planned_primary_action_and_detail_actions(self) -> None:
+        from app.main import validation_run_detail
+
+        run_id, _ = self.create_validation_generation_fixture()
+        body = validation_run_detail(request=None, run_id=run_id).body.decode("utf-8")
+
+        self.assertIn("Weight検証を開始してください。45枚の検証画像を生成し、Embedding・Machine Review・Matrix作成まで自動で実行します。", body)
+        self.assertIn('href="/validation-runs/1/pipeline/run"', body)
+        self.assertEqual(body.count('href="/validation-runs/1/pipeline/run"'), 1)
+        self.assertNotIn("Prepare Weight Calibration", body)
+        self.assertIn("詳細操作", body)
+        self.assertIn("Weight検証を準備", body)
+        self.assertIn("画像生成だけ実行", body)
+        self.assertIn("Reimport", body)
+        self.assertIn("検証レポート出力", body)
+        self.assertIn("Matrix再作成", body)
+
+    def test_weight_calibration_start_confirmation_page_renders_execution_plan(self) -> None:
+        from app.main import validation_pipeline_run_confirm
+
+        run_id, _ = self.create_validation_generation_fixture()
+        with connect() as conn:
+            conn.execute("DELETE FROM validation_expected_conditions WHERE validation_run_id = ?", (run_id,))
+
+        body = validation_pipeline_run_confirm(request=None, run_id=run_id).body.decode("utf-8")
+        count = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ?", (run_id,))
+
+        self.assertEqual(count["count"], 45)
+        self.assertIn("Weight検証開始の確認", body)
+        self.assertIn("selected Job", body)
+        self.assertIn("selected epoch", body)
+        self.assertIn("selected LoRA", body)
+        self.assertIn("validation preset", body)
+        self.assertIn("expected image count", body)
+        self.assertIn("prompts数", body)
+        self.assertIn("seeds数", body)
+        self.assertIn("weights", body)
+        self.assertIn("Hires有無", body)
+        self.assertIn("conditions作成", body)
+        self.assertIn("sd-scripts画像生成", body)
+        self.assertIn("machine review", body)
+        self.assertIn("matrix作成", body)
+
+    def test_weight_calibration_primary_action_changes_by_state(self) -> None:
+        from app.main import validation_run_detail
+
+        run_id, _ = self.create_validation_generation_fixture()
+        matrix_path = settings.EXPORTS_DIR / "validation_runs" / "validation_run_000001" / "validation_matrix.html"
+        matrix_path.parent.mkdir(parents=True, exist_ok=True)
+        matrix_path.write_text("<html>matrix</html>", encoding="utf-8")
+        with connect() as conn:
+            conn.execute(
+                "UPDATE validation_runs SET pipeline_status = 'ready_for_review', matrix_path = ? WHERE id = ?",
+                (str(matrix_path), run_id),
+            )
+        ready_body = validation_run_detail(request=None, run_id=run_id).body.decode("utf-8")
+        self.assertIn("Weight Review Matrixを開く", ready_body)
+
+        with connect() as conn:
+            conn.execute(
+                "UPDATE validation_runs SET status = 'completed', pipeline_status = 'ready_for_review', profile_applied_at = NULL WHERE id = ?",
+                (run_id,),
+            )
+        completed_unapplied_body = validation_run_detail(request=None, run_id=run_id).body.decode("utf-8")
+        self.assertIn("Profileへ反映", completed_unapplied_body)
+
+        with connect() as conn:
+            conn.execute("UPDATE validation_runs SET profile_applied_at = ? WHERE id = ?", (utc_now(), run_id))
+        completed_applied_body = validation_run_detail(request=None, run_id=run_id).body.decode("utf-8")
+        self.assertIn("Weight Review Matrixを開く", completed_applied_body)
+
     def test_weight_calibration_pipeline_stop_sets_stopped_status(self) -> None:
         from app.services.validation_generation import stop_weight_calibration_pipeline
 

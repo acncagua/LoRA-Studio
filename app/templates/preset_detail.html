@@ -13,6 +13,13 @@
       <dt>スクリプト</dt><dd>{{ preset.training_script }}</dd>
       <dt>目的</dt><dd>{{ preset.purpose }}</dd>
       <dt>no_metadata</dt><dd>{{ '有効' if '"no_metadata": true' in preset.params_json else '無効' }}</dd>
+      <dt>training recipe</dt><dd>{{ recipe.name if recipe else (preset.training_recipe_id or '-') }}</dd>
+      <dt>recipe target</dt><dd>{% if recipe %}{{ recipe.target_steps_min or '-' }} / {{ recipe.target_steps_recommended or '-' }} / {{ recipe.target_steps_max or '-' }}{% else %}-{% endif %}</dd>
+      <dt>optimizer profile</dt><dd>{{ optimizer_profile.name if optimizer_profile else (preset.optimizer_profile_id or '-') }}</dd>
+      <dt>optimizer</dt><dd>{{ optimizer_definition.name if optimizer_definition else '-' }}</dd>
+      <dt>LR meaning</dt><dd>{{ optimizer_definition.lr_meaning if optimizer_definition else '-' }}</dd>
+      <dt>optimizer target</dt><dd>{% if optimizer_profile %}{{ optimizer_profile.target_steps_min or '-' }} / {{ optimizer_profile.target_steps_recommended or '-' }} / {{ optimizer_profile.target_steps_max or '-' }}{% elif optimizer_definition %}{{ optimizer_definition.target_steps_min or '-' }} / {{ optimizer_definition.target_steps_recommended or '-' }} / {{ optimizer_definition.target_steps_max or '-' }}{% else %}-{% endif %}</dd>
+      <dt>compat preset target</dt><dd>{{ preset.target_steps_min if preset.target_steps_min is not none else '-' }} / {{ preset.target_steps_recommended if preset.target_steps_recommended is not none else '-' }} / {{ preset.target_steps_max if preset.target_steps_max is not none else '-' }}</dd>
     </dl>
   </div>
   <div>

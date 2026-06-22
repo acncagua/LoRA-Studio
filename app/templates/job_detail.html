@@ -34,6 +34,7 @@
   <div>
     <h2>Job全体の主要操作</h2>
     <div class="actions primary-action">
+      {% if action_state.edit %}<a class="button" href="/jobs/{{ job.id }}/edit">学習ジョブを編集</a>{% endif %}
       {% if job.status == 'draft' and action_state.prepare %}
       <form method="post" action="/jobs/{{ job.id }}/prepare"><button type="submit">ファイル準備</button></form>
       {% elif job.status in ['prepared', 'failed', 'stopped'] and action_state.run %}
@@ -311,6 +312,10 @@
       <dt>想定Step</dt><dd>{{ job.expected_total_steps if job.expected_total_steps is not none else '-' }}</dd>
       <dt>実Step</dt><dd>{{ job.actual_max_step if job.actual_max_step is not none else '-' }}</dd>
       <dt>Step確認</dt><dd><span class="label {{ (job.step_consistency_label or 'unknown')|lower }}">{{ job.step_consistency_label or '-' }}</span> {{ job.step_consistency_message or '' }}</dd>
+      <dt>作成時想定Step</dt><dd>{{ job.expected_total_steps_at_creation if job.expected_total_steps_at_creation is not none else '-' }}</dd>
+      <dt>作成時Step判定</dt><dd>{{ job.step_status_at_creation or '-' }}</dd>
+      <dt>target steps source</dt><dd>{{ job.target_steps_source or '-' }}</dd>
+      <dt>repeats auto calculated</dt><dd>{{ 'yes' if job.repeats_auto_calculated else 'no' }}</dd>
       <dt>no_metadata</dt><dd>{{ '有効' if no_metadata_enabled else '無効' }}</dd>
       <dt>実行フォルダ</dt><dd>{{ job.run_dir }}</dd>
       <dt>アーカイブ</dt><dd>{% if job.archived_at %}{{ job.archived_at }}{% if job.archived_reason %} / {{ job.archived_reason }}{% endif %}{% else %}-{% endif %}</dd>
@@ -341,6 +346,19 @@
       <button type="submit">epochを選択</button><span class="save-status" data-adoption-status></span>
     </form>
   </div>
+</section>
+<section>
+  <h2>Step Estimate Snapshot</h2>
+  <dl>
+    <dt>expected_total_steps_at_creation</dt><dd>{{ job.expected_total_steps_at_creation if job.expected_total_steps_at_creation is not none else '-' }}</dd>
+    <dt>steps_per_epoch_at_creation</dt><dd>{{ job.steps_per_epoch_at_creation if job.steps_per_epoch_at_creation is not none else '-' }}</dd>
+    <dt>target_steps_recommended_at_creation</dt><dd>{{ job.target_steps_recommended_at_creation if job.target_steps_recommended_at_creation is not none else '-' }}</dd>
+    <dt>step_status_at_creation</dt><dd>{{ job.step_status_at_creation or '-' }}</dd>
+    <dt>target_steps_source</dt><dd>{{ job.target_steps_source or '-' }}</dd>
+    <dt>repeats_auto_calculated</dt><dd>{{ 'yes' if job.repeats_auto_calculated else 'no' }}</dd>
+  </dl>
+  {% set step_estimator_interactive = false %}
+  {% include "partials/step_estimate_panel.html" %}
 </section>
 
 <section id="files-cleanup">

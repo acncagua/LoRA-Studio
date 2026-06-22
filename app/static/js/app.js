@@ -129,6 +129,206 @@ function initDatasetVersionFilters() {
   });
 }
 
+function parseJsonScript(selector, root = document) {
+  const node = root.querySelector(selector);
+  if (!node) {
+    return [];
+  }
+  try {
+    return JSON.parse(node.textContent || "[]");
+  } catch (_error) {
+    return [];
+  }
+}
+
+function stepEstimatorParams(form) {
+  const presets = parseJsonScript("[data-step-presets-json]", form);
+  const presetId = form.querySelector("select[name='preset_id']")?.value || "";
+  const preset = presets.find((item) => item.id === presetId) || {};
+  const params = { ...(preset.params || {}) };
+  [
+    "repeats",
+    "max_train_epochs",
+    "train_batch_size",
+    "gradient_accumulation_steps",
+    "save_every_n_epochs",
+    "sample_every_n_epochs",
+  ].forEach((name) => {
+    const input = form.querySelector(`[name='${name}']`);
+    if (input && input.value !== "") {
+      const value = Number(input.value);
+      if (Number.isFinite(value)) {
+        params[name] = value;
+      }
+    }
+  });
+  return params;
+}
+
+async function refreshStepEstimate(form, withSuggestions = false) {
+  const panel = form.querySelector("[data-step-estimator]");
+  if (!panel) {
+    return;
+  }
+  const payload = {
+    dataset_id: form.querySelector("[name='dataset_id']")?.value || "",
+    dataset_version_id: form.querySelector("[name='dataset_version_id']")?.value || "",
+    preset_id: form.querySelector("[name='preset_id']")?.value || "",
+    params: stepEstimatorParams(form),
+    target_steps: panel.querySelector("[data-step-target]")?.value || "",
+    strategy: panel.querySelector("[data-step-strategy]")?.value || "balanced",
+  };
+  try {
+    const response = await fetch("/api/step-estimate", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "Accept": "application/json"},
+      body: JSON.stringify(withSuggestions ? payload : {...payload, target_steps: ""}),
+    });
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    const data = await response.json();
+    updateStepEstimatePanel(panel, data.estimate || {});
+    if (withSuggestions) {
+      applyAutoRepeat(form, data.auto_repeat || {});
+      updateStepSuggestions(form, data.suggestions || []);
+    }
+  } catch (error) {
+    const message = panel.querySelector("[data-step-field='message']");
+    if (message) {
+      message.textContent = `Step Estimateを更新できませんでした: ${error.message}`;
+    }
+  }
+}
+
+function updateStepEstimatePanel(panel, estimate) {
+  Object.entries(estimate).forEach(([key, value]) => {
+    const node = panel.querySelector(`[data-step-field='${key}']`);
+    if (!node) {
+      return;
+    }
+    if (key === "status") {
+      node.textContent = value ?? "-";
+      node.className = `label ${String(value || "unknown").toLowerCase()}`;
+    } else if (Array.isArray(value)) {
+      node.textContent = value.join(" / ");
+    } else {
+      node.textContent = value ?? "-";
+    }
+  });
+  const warnings = panel.querySelector("[data-step-warnings]");
+  if (warnings) {
+    warnings.innerHTML = "";
+    (estimate.warnings || []).forEach((warning) => {
+      const li = document.createElement("li");
+      li.textContent = warning;
+      warnings.appendChild(li);
+    });
+  }
+  const targetInput = panel.querySelector("[data-step-target]");
+  if (targetInput && estimate.target_steps_recommended && targetInput.dataset.manualTarget !== "true") {
+    targetInput.value = estimate.target_steps_recommended;
+  }
+}
+
+function applyAutoRepeat(form, autoRepeat) {
+  const panel = form.querySelector("[data-step-estimator]");
+  const target = panel?.querySelector("[data-step-suggestions]");
+  if (!autoRepeat || !autoRepeat.required_repeats) {
+    if (target) {
+      target.textContent = autoRepeat?.error || "repeatsを自動計算できませんでした。";
+    }
+    return;
+  }
+  const repeats = form.querySelector("[name='repeats']");
+  const autoFlag = form.querySelector("[data-repeats-auto-calculated]");
+  if (repeats) {
+    repeats.value = autoRepeat.required_repeats;
+  }
+  if (autoFlag) {
+    autoFlag.value = "1";
+  }
+  if (target) {
+    target.textContent = `repeats=${autoRepeat.required_repeats} を入力しました。expected_total_steps=${autoRepeat.expected_total_steps} です。`;
+  }
+  refreshStepEstimate(form);
+}
+
+function updateStepSuggestions(form, suggestions) {
+  const panel = form.querySelector("[data-step-estimator]");
+  const target = panel?.querySelector("[data-step-suggestions]");
+  if (!target) {
+    return;
+  }
+  const currentMessage = target.textContent;
+  target.innerHTML = "";
+  if (currentMessage) {
+    const p = document.createElement("p");
+    p.textContent = currentMessage;
+    target.appendChild(p);
+  }
+  if (!suggestions.length) {
+    return;
+  }
+  const table = document.createElement("table");
+  table.innerHTML = "<thead><tr><th>repeats</th><th>epochs</th><th>steps</th><th>save/sample</th><th>反映</th></tr></thead><tbody></tbody>";
+  const tbody = table.querySelector("tbody");
+  suggestions.forEach((item) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${item.repeats}</td><td>${item.max_train_epochs}</td><td>${item.expected_total_steps}</td><td>${item.save_every_n_epochs_proposal}</td><td></td>`;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "この候補を入力";
+    button.addEventListener("click", () => {
+      const repeats = form.querySelector("[name='repeats']");
+      const epochs = form.querySelector("[name='max_train_epochs']");
+      const saveEvery = form.querySelector("[name='save_every_n_epochs']");
+      const sampleEvery = form.querySelector("[name='sample_every_n_epochs']");
+      if (repeats) repeats.value = item.repeats;
+      if (epochs) epochs.value = item.max_train_epochs;
+      if (saveEvery && !saveEvery.value) saveEvery.value = item.save_every_n_epochs_proposal;
+      if (sampleEvery && !sampleEvery.value) sampleEvery.value = item.sample_every_n_epochs_proposal;
+      refreshStepEstimate(form);
+    });
+    tr.lastElementChild.appendChild(button);
+    tbody.appendChild(tr);
+  });
+  target.appendChild(table);
+}
+
+function initStepEstimators() {
+  document.querySelectorAll("form").forEach((form) => {
+    if (!form.querySelector("[data-step-estimator]")) {
+      return;
+    }
+    form.addEventListener("input", (event) => {
+      if (event.target.matches("[name='repeats'], [name='max_train_epochs'], [name='train_batch_size'], [name='gradient_accumulation_steps'], [name='save_every_n_epochs'], [name='sample_every_n_epochs']")) {
+        if (event.target.matches("[name='repeats']")) {
+          const autoFlag = form.querySelector("[data-repeats-auto-calculated]");
+          if (autoFlag) {
+            autoFlag.value = "0";
+          }
+        }
+        refreshStepEstimate(form);
+      }
+    });
+    form.addEventListener("change", (event) => {
+      if (event.target.matches("[name='dataset_id'], [name='dataset_version_id'], [name='preset_id']")) {
+        const targetInput = form.querySelector("[data-step-target]");
+        if (targetInput && event.target.matches("[name='preset_id']")) {
+          targetInput.dataset.manualTarget = "false";
+        }
+        refreshStepEstimate(form);
+      }
+    });
+    form.querySelector("[data-step-suggest-button]")?.addEventListener("click", () => refreshStepEstimate(form, true));
+    form.querySelector("[data-step-target]")?.addEventListener("input", (event) => {
+      event.target.dataset.manualTarget = "true";
+    });
+    refreshStepEstimate(form);
+  });
+}
+
 document.addEventListener("submit", async (event) => {
   const form = event.target.closest("[data-review-form]");
   if (!form) {
@@ -1746,6 +1946,7 @@ document.addEventListener("DOMContentLoaded", clearTransientNoticeParams);
 document.addEventListener("DOMContentLoaded", restoreScrollAfterInlineRefresh);
 document.addEventListener("DOMContentLoaded", initProjectModeForms);
 document.addEventListener("DOMContentLoaded", initDatasetVersionFilters);
+document.addEventListener("DOMContentLoaded", initStepEstimators);
 document.addEventListener("DOMContentLoaded", initEmbeddingJobStatusPolling);
 document.addEventListener("DOMContentLoaded", initMachineReviewJobStatusPolling);
 document.addEventListener("DOMContentLoaded", initReviewPreparationPolling);

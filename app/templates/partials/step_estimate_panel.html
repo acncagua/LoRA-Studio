@@ -1,0 +1,53 @@
+<section class="notice step-estimate-panel" data-step-estimator>
+  <h2>Training Estimate</h2>
+  <p class="muted">epoch数だけでは学習量を判断できないため、画像数・repeats・epoch・batchからexpected stepsを見積もります。</p>
+  <div class="summary-grid">
+    <div><span>image_count</span><strong data-step-field="image_count">{{ step_estimate.image_count if step_estimate else '-' }}</strong></div>
+    <div><span>repeats</span><strong data-step-field="repeats">{{ step_estimate.repeats if step_estimate else '-' }}</strong></div>
+    <div><span>max_train_epochs</span><strong data-step-field="max_train_epochs">{{ step_estimate.max_train_epochs if step_estimate else '-' }}</strong></div>
+    <div><span>train_batch_size</span><strong data-step-field="train_batch_size">{{ step_estimate.train_batch_size if step_estimate else '-' }}</strong></div>
+    <div><span>gradient_accumulation</span><strong data-step-field="gradient_accumulation_steps">{{ step_estimate.gradient_accumulation_steps if step_estimate else '-' }}</strong></div>
+    <div><span>effective_batch_size</span><strong data-step-field="effective_batch_size">{{ step_estimate.effective_batch_size if step_estimate else '-' }}</strong></div>
+    <div><span>steps_per_epoch</span><strong data-step-field="steps_per_epoch">{{ step_estimate.steps_per_epoch if step_estimate else '-' }}</strong></div>
+    <div><span>expected steps</span><strong data-step-field="total_steps">{{ step_estimate.total_steps if step_estimate else '-' }}</strong></div>
+    <div><span>optimizer</span><strong data-step-field="optimizer_name">{{ step_estimate.optimizer_name if step_estimate and step_estimate.optimizer_name else '-' }}</strong></div>
+    <div><span>LR meaning</span><strong data-step-field="optimizer_lr_meaning">{{ step_estimate.optimizer_lr_meaning if step_estimate and step_estimate.optimizer_lr_meaning else '-' }}</strong></div>
+    <div><span>optimizer target</span><strong><span data-step-field="optimizer_target_steps_min">{{ step_estimate.optimizer_target_steps_min if step_estimate and step_estimate.optimizer_target_steps_min is not none else '-' }}</span> / <span data-step-field="optimizer_target_steps_recommended">{{ step_estimate.optimizer_target_steps_recommended if step_estimate and step_estimate.optimizer_target_steps_recommended is not none else '-' }}</span> / <span data-step-field="optimizer_target_steps_max">{{ step_estimate.optimizer_target_steps_max if step_estimate and step_estimate.optimizer_target_steps_max is not none else '-' }}</span></strong></div>
+    <div><span>recipe</span><strong data-step-field="recipe_name">{{ step_estimate.recipe_name if step_estimate and step_estimate.recipe_name else '-' }}</strong></div>
+    <div><span>recipe target</span><strong><span data-step-field="recipe_target_steps_min">{{ step_estimate.recipe_target_steps_min if step_estimate and step_estimate.recipe_target_steps_min is not none else '-' }}</span> / <span data-step-field="recipe_target_steps_recommended">{{ step_estimate.recipe_target_steps_recommended if step_estimate and step_estimate.recipe_target_steps_recommended is not none else '-' }}</span> / <span data-step-field="recipe_target_steps_max">{{ step_estimate.recipe_target_steps_max if step_estimate and step_estimate.recipe_target_steps_max is not none else '-' }}</span></strong></div>
+    <div><span>判定</span><strong><span class="label {{ (step_estimate.status if step_estimate else 'unknown')|lower }}" data-step-field="status">{{ step_estimate.status if step_estimate else '-' }}</span></strong></div>
+    <div><span>target source</span><strong data-step-field="target_source">{{ step_estimate.target_source if step_estimate else '-' }}</strong></div>
+  </div>
+  <p data-step-field="message">{{ step_estimate.message if step_estimate else '' }}</p>
+  <p class="muted" data-step-field="target_note">{{ step_estimate.target_note if step_estimate else '' }}</p>
+  <p class="muted">
+    保存間隔提案:
+    <span data-step-field="save_every_n_epochs_proposal">{{ step_estimate.save_every_n_epochs_proposal if step_estimate else '-' }}</span> epoch /
+    サンプル間隔提案:
+    <span data-step-field="sample_every_n_epochs_proposal">{{ step_estimate.sample_every_n_epochs_proposal if step_estimate else '-' }}</span> epoch /
+    推定checkpoint数:
+    <span data-step-field="estimated_output_checkpoint_count">{{ step_estimate.estimated_output_checkpoint_count if step_estimate and step_estimate.estimated_output_checkpoint_count is not none else '-' }}</span>
+  </p>
+  <ul data-step-warnings>
+    {% if step_estimate %}
+    {% for warning in step_estimate.warnings %}
+    <li>{{ warning }}</li>
+    {% endfor %}
+    {% endif %}
+  </ul>
+  {% if step_estimator_interactive %}
+  <div class="form-grid">
+    <label>target_steps<input type="number" min="1" step="1" data-step-target value="{{ step_estimate.target_steps_recommended if step_estimate and step_estimate.target_steps_recommended else '' }}"></label>
+    <label>strategy
+      <select data-step-strategy>
+        <option value="balanced">balanced</option>
+        <option value="keep_repeats_adjust_epochs">keep repeats / adjust epochs</option>
+        <option value="keep_epochs_adjust_repeats">keep epochs / adjust repeats</option>
+        <option value="custom">custom</option>
+      </select>
+    </label>
+    <button type="button" data-step-suggest-button>目標stepに合わせてrepeatsを自動計算</button>
+  </div>
+  <div data-step-suggestions class="muted"></div>
+  {% endif %}
+</section>

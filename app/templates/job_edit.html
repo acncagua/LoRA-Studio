@@ -18,6 +18,7 @@
 {% endif %}
 
 <form method="post" action="/jobs/{{ job.id }}/edit" class="form-grid wide">
+  <input type="hidden" name="repeats_auto_calculated" value="0" data-repeats-auto-calculated>
   <label>ジョブ名<input name="name" required value="{{ job.name }}"></label>
   <label>出力名<input name="output_name" required value="{{ job.output_name }}"></label>
   <label>データセット
@@ -80,6 +81,7 @@
     <label>max_train_epochs<input name="max_train_epochs" value="{{ params.max_train_epochs or '' }}"></label>
     <label>repeats<input name="repeats" value="{{ params.repeats or '' }}"></label>
     <label>train_batch_size<input name="train_batch_size" value="{{ params.train_batch_size or '' }}"></label>
+    <label>gradient_accumulation_steps<input name="gradient_accumulation_steps" value="{{ params.gradient_accumulation_steps or '' }}"></label>
     <label>learning_rate<input name="learning_rate" value="{{ params.learning_rate or '' }}"></label>
     <label>unet_lr<input name="unet_lr" value="{{ params.unet_lr or '' }}"></label>
     <label>text_encoder_lr<input name="text_encoder_lr" value="{{ params.text_encoder_lr if params.text_encoder_lr is defined else '' }}"></label>
@@ -93,7 +95,17 @@
     <label class="checkbox-line"><input type="checkbox" name="no_metadata" value="1" {{ 'checked' if params.no_metadata else '' }}> no_metadata</label>
   </fieldset>
 
+  <div class="wide-field">
+    <script type="application/json" data-step-presets-json>{{ step_estimator_presets|tojson }}</script>
+    <script type="application/json" data-step-dataset-versions-json>{{ dataset_versions_json|tojson }}</script>
+    {% set step_estimator_interactive = true %}
+    {% include "partials/step_estimate_panel.html" %}
+  </div>
+
   <label class="wide-field">メモ<textarea name="memo">{{ job.memo or '' }}</textarea></label>
+  {% if params.max_train_steps %}
+  <p class="notice warning wide-field">max_train_stepsが指定されています。epoch-based reviewとは意味が変わる可能性があります。現時点ではrepeats / epochs調整を標準導線として推奨します。</p>
+  {% endif %}
   <label class="wide-field">Advanced JSON<textarea name="params_json" class="mono-textarea">{{ params_json_pretty }}</textarea></label>
   <button type="submit">編集内容を保存</button>
 </form>

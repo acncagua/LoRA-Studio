@@ -48,6 +48,7 @@ for the entire LoRA lifecycle.
 - Training Job Management
 - Validation Runs
 - Weight Calibration Pipeline
+- Step Estimator / Target Step Assistant
 - Reference Sets
 - Experiment Comparison
 - LoRA Selection Workflow
@@ -74,6 +75,28 @@ imports images, computes Embeddings, runs Machine Review Assist, and writes a We
 Machine Assist is supporting information; human review fields take priority.
 Suggested weights are never applied automatically. Use the explicit Apply to Profile action
 to update the selected LoRA profile.
+
+## Step Estimator / Target Step Assistant
+
+Epoch count alone is not enough to judge training volume.
+LoRA-Studio estimates expected training steps with:
+
+`effective_batch_size = train_batch_size x gradient_accumulation_steps x num_processes`
+
+`steps_per_epoch = ceil(sum(subset.image_count x subset.repeats) / effective_batch_size)`
+
+`total_steps = steps_per_epoch x max_train_epochs`
+
+Job creation, job editing, job detail, and preflight show the estimate against optimizer and recipe target steps.
+Target steps are resolved from `training_recipes`, then `optimizer_profiles`,
+then `optimizer_definitions`, with a global fallback if no catalog entry applies.
+The assistant uses the recipe recommended target as its initial value and auto-calculates repeats,
+and proposes save/sample intervals when epoch count would create too many checkpoints.
+Increasing repeats does not increase the number of output LoRA checkpoints, but it increases steps per epoch.
+Very high repeats can overfit or make the LoRA too fixed to the dataset.
+
+Direct `max_train_steps` is treated as Advanced. It overrides epoch-based total steps and can make
+epoch-based review less clear, so the normal workflow recommends adjusting repeats / epochs / batch first.
 
 ## Screenshots
 
