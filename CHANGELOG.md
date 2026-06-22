@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased - Phase 11.7
+## Unreleased - phase11.7.1
 
-LoRA Studio Phase 11.7 adds the Weight Calibration Pipeline for adopted LoRA / selected output validation.
+LoRA Studio phase11.7.1 adds the Weight Calibration Pipeline for adopted LoRA / selected output validation.
 
 ### 主な変更
 

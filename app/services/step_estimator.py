@@ -128,6 +128,19 @@ def subset_weighted_image_count(subsets: list[dict[str, Any]] | None, image_coun
     return max(0, image_count) * max(0, repeats)
 
 
+def subset_base_image_count(subsets: list[dict[str, Any]] | None, image_count: int) -> int:
+    if subsets:
+        return sum(max(0, int_or_default(subset.get("image_count"), 0)) for subset in subsets)
+    return max(0, image_count)
+
+
+def uniform_repeats_subsets(subsets: list[dict[str, Any]] | None, repeats: int) -> list[dict[str, Any]] | None:
+    if not subsets:
+        return None
+    # TODO: add a ratio-preserving mode. Step Assistant currently applies one repeats value to every subset.
+    return [{**subset, "num_repeats": repeats, "repeats": repeats} for subset in subsets]
+
+
 def estimate_steps(
     *,
     image_count: int,
@@ -249,7 +262,7 @@ def calculate_required_repeats(
     grad = max(1, int_or_default(params.get("gradient_accumulation_steps"), 1))
     processes = max(1, int_or_default(params.get("num_processes"), 1))
     effective_batch = batch * grad * processes
-    base_images = sum(max(0, int_or_default(subset.get("image_count"), 0)) for subset in subsets) if subsets else max(0, image_count)
+    base_images = subset_base_image_count(subsets, image_count)
     if base_images <= 0:
         return {
             "required_repeats": None,
@@ -262,20 +275,26 @@ def calculate_required_repeats(
             image_count=image_count,
             params={**params, "repeats": repeats},
             target={"target_steps_recommended": target_steps},
-            subsets=subsets,
+            subsets=uniform_repeats_subsets(subsets, repeats),
         )
         return int(estimate["total_steps"] or 0)
 
     while required > 1 and total_for(required - 1) >= target_steps:
         required -= 1
-    while total_for(required) < target_steps:
+    max_required = 100000
+    while total_for(required) < target_steps and required < max_required:
         required += 1
+    if required >= max_required and total_for(required) < target_steps:
+        return {
+            "required_repeats": None,
+            "error": "target_stepsに届くrepeatsを安全な範囲で計算できませんでした。",
+        }
 
     estimate = estimate_steps(
         image_count=image_count,
         params={**params, "repeats": required},
         target={"target_steps_recommended": target_steps},
-        subsets=subsets,
+        subsets=uniform_repeats_subsets(subsets, required),
     )
     return {
         "required_repeats": required,
@@ -309,7 +328,12 @@ def suggest_target_steps(
     def add(repeats: int, epochs: int, label: str) -> None:
         if repeats < 1 or epochs < 1:
             return
-        estimate = estimate_steps(image_count=image_count, params={**params, "repeats": repeats, "max_train_epochs": epochs}, target=target, subsets=subsets)
+        estimate = estimate_steps(
+            image_count=image_count,
+            params={**params, "repeats": repeats, "max_train_epochs": epochs},
+            target=target,
+            subsets=uniform_repeats_subsets(subsets, repeats),
+        )
         warning = ""
         if epochs > checkpoint_count and estimate["save_every_n_epochs_proposal"] > 1:
             warning = f"保存/サンプル間隔は {estimate['save_every_n_epochs_proposal']} epochごとを推奨します。"
@@ -327,18 +351,19 @@ def suggest_target_steps(
             }
         )
 
-    weighted_base = subset_weighted_image_count(subsets, image_count, max(1, base_repeats))
+    weighted_base = subset_weighted_image_count(uniform_repeats_subsets(subsets, max(1, base_repeats)), image_count, max(1, base_repeats))
     per_epoch_keep_repeats = math.ceil(weighted_base / effective_batch) if weighted_base else 0
     if strategy in {"keep_repeats_adjust_epochs", "balanced", "custom"} and per_epoch_keep_repeats:
         add(base_repeats, max(1, math.ceil(target_steps / per_epoch_keep_repeats)), "keep_repeats_adjust_epochs")
 
-    if strategy in {"keep_epochs_adjust_repeats", "balanced", "custom"} and image_count > 0:
-        repeats = max(1, math.ceil((target_steps * effective_batch) / (max(1, image_count) * max(1, base_epochs))))
+    base_images = subset_base_image_count(subsets, image_count)
+    if strategy in {"keep_epochs_adjust_repeats", "balanced", "custom"} and base_images > 0:
+        repeats = max(1, math.ceil((target_steps * effective_batch) / (max(1, base_images) * max(1, base_epochs))))
         add(repeats, base_epochs, "keep_epochs_adjust_repeats")
 
     if strategy in {"balanced", "custom"}:
         for repeats in range(1, 41):
-            weighted = subset_weighted_image_count(subsets, image_count, repeats)
+            weighted = subset_weighted_image_count(uniform_repeats_subsets(subsets, repeats), image_count, repeats)
             per_epoch = math.ceil(weighted / effective_batch) if weighted else 0
             if not per_epoch:
                 continue
@@ -348,4 +373,20 @@ def suggest_target_steps(
     unique: dict[tuple[int, int], dict[str, Any]] = {}
     for candidate in candidates:
         unique.setdefault((candidate["repeats"], candidate["max_train_epochs"]), candidate)
-    return sorted(unique.values(), key=lambda row: (row["delta"], row["max_train_epochs"], row["repeats"]))[:5]
+    sorted_candidates = sorted(unique.values(), key=lambda row: (row["delta"], row["max_train_epochs"], row["repeats"]))
+    essential = [
+        row
+        for row in sorted_candidates
+        if row["strategy"] in {"keep_repeats_adjust_epochs", "keep_epochs_adjust_repeats"}
+    ]
+    result: list[dict[str, Any]] = []
+    seen: set[tuple[int, int]] = set()
+    for row in essential + sorted_candidates:
+        key = (row["repeats"], row["max_train_epochs"])
+        if key in seen:
+            continue
+        result.append(row)
+        seen.add(key)
+        if len(result) >= 5:
+            break
+    return result

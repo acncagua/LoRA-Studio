@@ -1593,6 +1593,19 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertEqual(auto["required_repeats"], 27)
         self.assertEqual(auto["expected_total_steps"], 5000)
 
+    def test_target_step_assistant_handles_multiple_subsets_with_fixed_repeats(self) -> None:
+        from app.services.step_estimator import calculate_required_repeats, suggest_target_steps
+
+        subsets = [{"image_count": 10, "num_repeats": 3}, {"image_count": 5, "num_repeats": 4}]
+        params = {"repeats": 1, "max_train_epochs": 5, "train_batch_size": 4, "gradient_accumulation_steps": 1}
+        auto = calculate_required_repeats(image_count=0, params=params, target_steps=100, subsets=subsets)
+        suggestions = suggest_target_steps(image_count=0, params=params, target_steps=100, subsets=subsets)
+
+        self.assertEqual(auto["required_repeats"], 6)
+        self.assertEqual(auto["steps_per_epoch"], 23)
+        self.assertEqual(auto["expected_total_steps"], 115)
+        self.assertTrue(any(row["repeats"] == 6 and row["expected_total_steps"] == 115 for row in suggestions))
+
     def test_job_creation_saves_step_estimate_snapshot(self) -> None:
         from app.db import create_job
 
