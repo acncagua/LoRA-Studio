@@ -59,10 +59,35 @@
       {% endfor %}
     </select>
   </label>
-  <label>学習プリセット
+  <fieldset class="form-fieldset wide-field">
+    <legend>Recipe v2選択</legend>
+    <p class="muted">Phase 12.1では、用途から選ぶ / Optimizerから選ぶ / 既存Jobから派生 / 完全カスタムの入口を用意しています。Recipe v2を選ぶと、作成時点のRecipe / Optimizer / Network Type snapshotをJobに保存します。</p>
+    <label>Job作成モード
+      <select name="job_creation_mode">
+        <option value="purpose">用途から選ぶ</option>
+        <option value="optimizer">Optimizerから選ぶ</option>
+        <option value="derived">既存Jobから派生</option>
+        <option value="custom">完全カスタム</option>
+      </select>
+    </label>
+    <label>Training Recipe v2
+      <select name="recipe_v2_id">
+        <option value="">旧形式プリセットを使う</option>
+        {% for recipe in recipes_v2 %}
+        <option value="{{ recipe.id }}">
+          {{ recipe.display_name }} / {{ recipe.purpose_display_name or '-' }} / {{ recipe.optimizer_display_name or '-' }} / {{ recipe.recipe_type }}
+          {% if recipe.optimizer_category in ['experimental', 'advanced'] or 'experimental' in (recipe.optimizer_category or '') or 'advanced' in (recipe.optimizer_category or '') %} [advanced]{% endif %}
+          {% if recipe.network_type_availability != 'available' %} [{{ recipe.network_type_availability }}]{% endif %}
+        </option>
+        {% endfor %}
+      </select>
+    </label>
+    <p class="muted">Recipe Library: <a href="/training-recipes">/training-recipes</a> / Optimizer Master: <a href="/optimizers">/optimizers</a></p>
+  </fieldset>
+  <label>学習プリセット（旧形式 / legacy）
     <select name="preset_id" required>
       {% for preset in presets %}
-      <option value="{{ preset.id }}" {{ 'selected' if preset.id == default_preset_id else '' }}>{{ preset.option_label.replace(preset.name, display_preset_name(preset)) }}</option>
+      <option value="{{ preset.id }}" {{ 'selected' if preset.id == default_preset_id else '' }}>旧形式: {{ preset.option_label.replace(preset.name, display_preset_name(preset)) }}</option>
       {% endfor %}
     </select>
   </label>

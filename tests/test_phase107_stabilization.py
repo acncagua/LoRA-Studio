@@ -2287,6 +2287,94 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertIn("total_steps", job["step_estimate_snapshot_json"])
         self.assertIn("recipe_target_steps_recommended", job["step_estimate_snapshot_json"])
 
+    def test_phase121_optimizer_recipe_v2_seed(self) -> None:
+        optimizers = {row["id"] for row in fetch_all("SELECT id FROM optimizer_definitions_v2")}
+        for optimizer_id in {"AdamW8bit", "PagedAdamW8bit", "Adafactor", "Lion", "DAdaptAdam", "DAdaptLion", "Prodigy"}:
+            self.assertIn(optimizer_id, optimizers)
+
+        recipes = {row["id"] for row in fetch_all("SELECT id FROM training_recipes_v2")}
+        for recipe_id in {
+            "sdxl_character_face_adamw8bit_smoke",
+            "sdxl_character_face_adamw8bit_pilot_3epoch",
+            "sdxl_character_face_adamw8bit_standard_6epoch",
+            "sdxl_character_face_adamw8bit_standard_10epoch",
+            "sdxl_character_face_adamw8bit_generalize",
+            "sdxl_character_face_lion_balanced_experimental",
+            "sdxl_character_face_adafactor_auto_advanced",
+            "sdxl_character_face_dadapt_adam_auto_advanced",
+            "sdxl_character_face_prodigy_soft_advanced",
+        }:
+            self.assertIn(recipe_id, recipes)
+
+    def test_phase121_recipe_v2_job_creation_saves_snapshots(self) -> None:
+        from app.db import create_job
+
+        project_id, dataset_id, version_id = self.create_project_fixture()
+        job_id = create_job(
+            {
+                "project_id": project_id,
+                "name": "recipe v2 job",
+                "dataset_id": dataset_id,
+                "dataset_version_id": version_id,
+                "preset_id": "sdxl_2d_face_adamw8bit_standard",
+                "recipe_v2_id": "sdxl_character_face_adamw8bit_standard_10epoch",
+                "base_model_path": "D:/models/base.safetensors",
+                "output_name": "recipe_v2_job",
+                "params": {"repeats": 10, "max_train_epochs": 10, "train_batch_size": 2},
+                "user_overrides": {"train_batch_size": 2},
+            }
+        )
+        job = fetch_one(
+            """
+            SELECT recipe_v2_id, optimizer_definition_id, optimizer_profile_id,
+                   network_type_id, training_purpose_id, recipe_snapshot_json,
+                   params_snapshot_json, user_overrides_json,
+                   expected_total_steps_at_creation, target_steps_source
+            FROM training_jobs WHERE id = ?
+            """,
+            (job_id,),
+        )
+
+        self.assertEqual(job["recipe_v2_id"], "sdxl_character_face_adamw8bit_standard_10epoch")
+        self.assertEqual(job["optimizer_definition_id"], "AdamW8bit")
+        self.assertEqual(job["network_type_id"], "standard_lora")
+        self.assertEqual(job["training_purpose_id"], "character_face")
+        self.assertIn("optimizer_definition", job["recipe_snapshot_json"])
+        self.assertIn('"train_batch_size": 2', job["params_snapshot_json"])
+        self.assertIn('"train_batch_size": 2', job["user_overrides_json"])
+        self.assertEqual(job["expected_total_steps_at_creation"], 2500)
+        self.assertEqual(job["target_steps_source"], "recipe")
+
+    def test_phase121_compatibility_check_flags_te_cache_conflict(self) -> None:
+        from app.services.recipe_optimizer_catalog import compatibility_check
+
+        result = compatibility_check(
+            {
+                "optimizer_type": "AdamW8bit",
+                "cache_text_encoder_outputs": True,
+                "network_train_unet_only": True,
+                "text_encoder_lr1": 0.00001,
+                "text_encoder_lr2": 0,
+            },
+            network_type={"id": "standard_lora", "display_name": "Standard LoRA", "availability": "available"},
+            optimizer_definition={"id": "AdamW8bit"},
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("cache_text_encoder_outputs" in message for message in result["errors"]))
+        self.assertTrue(any("network_train_unet_only" in message for message in result["errors"]))
+
+    def test_phase121_recipe_and_optimizer_pages_render(self) -> None:
+        from app.main import optimizers_library, training_recipes_library
+
+        recipes_body = training_recipes_library(request=None, model_family="", purpose="", optimizer="", recipe_type="").body.decode("utf-8")
+        optimizers_body = optimizers_library(request=None).body.decode("utf-8")
+
+        self.assertIn("Training Recipe Library", recipes_body)
+        self.assertIn("SDXL Character Face / AdamW8bit Standard 10 Epoch", recipes_body)
+        self.assertIn("Optimizer Master", optimizers_body)
+        self.assertIn("Prodigy", optimizers_body)
+
     def test_weight_calibration_pipeline_start_recreates_missing_conditions(self) -> None:
         from app.services.validation_generation import start_weight_calibration_pipeline
 

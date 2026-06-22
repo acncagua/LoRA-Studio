@@ -106,13 +106,16 @@ def target_config_from_catalog(
             result["recipe_name"] = training_recipe["name"]
     if optimizer_definition is not None:
         keys = optimizer_definition.keys() if hasattr(optimizer_definition, "keys") else optimizer_definition
-        for source_key, result_key in (
-            ("name", "optimizer_name"),
-            ("lr_meaning", "optimizer_lr_meaning"),
-            ("category", "optimizer_category"),
-        ):
-            if source_key in keys:
-                result[result_key] = optimizer_definition[source_key]
+        if "display_name" in keys and optimizer_definition["display_name"]:
+            result["optimizer_name"] = optimizer_definition["display_name"]
+        elif "name" in keys:
+            result["optimizer_name"] = optimizer_definition["name"]
+        if "lr_semantics" in keys and optimizer_definition["lr_semantics"]:
+            result["optimizer_lr_meaning"] = optimizer_definition["lr_semantics"]
+        elif "lr_meaning" in keys:
+            result["optimizer_lr_meaning"] = optimizer_definition["lr_meaning"]
+        if "category" in keys:
+            result["optimizer_category"] = optimizer_definition["category"]
     return result
 
 

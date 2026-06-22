@@ -403,6 +403,10 @@
       <dt>スクリプト</dt><dd>{{ job.training_script }}</dd>
       <dt>派生元ジョブ</dt><dd>{% if job.parent_job_id %}<a href="/jobs/{{ job.parent_job_id }}">#{{ job.parent_job_id }}</a>{% else %}-{% endif %}</dd>
       <dt>プロンプトテンプレート</dt><dd>{{ job.sample_prompt_template_id or '-' }}</dd>
+      <dt>Recipe v2</dt><dd>{% if job.recipe_v2_id %}<code>{{ job.recipe_v2_id }}</code>{% else %}旧形式preset{% endif %}</dd>
+      <dt>Optimizer</dt><dd>{{ job.optimizer_definition_id or '-' }}{% if job.optimizer_profile_id %} / {{ job.optimizer_profile_id }}{% endif %}</dd>
+      <dt>Network Type</dt><dd>{{ job.network_type_id or '-' }}</dd>
+      <dt>Training Purpose</dt><dd>{{ job.training_purpose_id or '-' }}</dd>
       <dt>データセットバージョン</dt><dd>{% if dataset_version %}v{{ dataset_version.version_no }} (#{{ dataset_version.id }}){% else %}スナップショットなし{% endif %}</dd>
       <dt>PID</dt><dd>{{ job.process_id or '-' }}</dd>
       <dt>終了コード</dt><dd>{{ job.return_code if job.return_code is not none else '-' }}</dd>
@@ -1241,6 +1245,14 @@
   </table>
 </section>
 <section id="technical-params"><h2>パラメータ</h2><pre>{{ job.params_json }}</pre></section>
+{% if job.recipe_snapshot_json or job.params_snapshot_json or job.user_overrides_json %}
+<section id="technical-recipe-snapshot">
+  <h2>Recipe Snapshot</h2>
+  {% if job.recipe_snapshot_json %}<h3>Recipe / Optimizer Snapshot</h3><pre>{{ job.recipe_snapshot_json }}</pre>{% endif %}
+  {% if job.params_snapshot_json %}<h3>Resolved Params Snapshot</h3><pre>{{ job.params_snapshot_json }}</pre>{% endif %}
+  {% if job.user_overrides_json %}<h3>User Overrides</h3><pre>{{ job.user_overrides_json }}</pre>{% endif %}
+</section>
+{% endif %}
 <script>
 (() => {
   const tabMap = {
@@ -1251,7 +1263,7 @@
     validation: ["validation-runs", "legacy-validation", "validation-results"],
     recommendations: ["recommendations"],
     files: ["files-cleanup", "runs-cleanup"],
-    technical: ["technical", "technical-params"],
+    technical: ["technical", "technical-params", "technical-recipe-snapshot"],
   };
   const allIds = Object.values(tabMap).flat();
   const tabBySection = {};

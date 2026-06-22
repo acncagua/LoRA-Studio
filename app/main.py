@@ -2928,6 +2928,23 @@ def job_delete(job_id: int, delete_reason: str = Form(""), delete_mode: str = Fo
 def job_new(request: Request, project_id: str = Query("")) -> HTMLResponse:
     datasets = fetch_all("SELECT * FROM datasets ORDER BY id DESC")
     presets = preset_option_rows(fetch_all("SELECT * FROM presets ORDER BY model_family DESC, name"))
+    recipes_v2 = fetch_all(
+        """
+        SELECT r.*, p.display_name AS purpose_display_name,
+               od.display_name AS optimizer_display_name,
+               od.category AS optimizer_category,
+               od.lr_semantics AS optimizer_lr_semantics,
+               nt.display_name AS network_type_display_name,
+               nt.availability AS network_type_availability
+        FROM training_recipes_v2 r
+        LEFT JOIN training_purposes p ON p.id = r.training_purpose_id
+        LEFT JOIN optimizer_definitions_v2 od ON od.id = r.optimizer_definition_id
+        LEFT JOIN network_type_definitions nt ON nt.id = r.network_type_id
+        WHERE r.is_active = 1
+        ORDER BY r.model_family DESC, p.sort_order, r.sort_order, r.display_name
+        """
+    )
+    optimizers_v2 = fetch_all("SELECT * FROM optimizer_definitions_v2 WHERE is_active = 1 ORDER BY display_name")
     projects = fetch_all("SELECT * FROM lora_projects WHERE status != 'archived' ORDER BY updated_at DESC, id DESC")
     dataset_versions = fetch_all("SELECT * FROM dataset_versions ORDER BY dataset_id, version_no DESC")
     dataset_version_dicts = [dict(row) for row in dataset_versions]
@@ -2943,6 +2960,8 @@ def job_new(request: Request, project_id: str = Query("")) -> HTMLResponse:
         "job_create.html",
         datasets=datasets,
         presets=presets,
+        recipes_v2=recipes_v2,
+        optimizers_v2=optimizers_v2,
         projects=projects,
         dataset_versions=dataset_versions,
         dataset_versions_json=dataset_version_dicts,
@@ -2959,11 +2978,81 @@ def job_new(request: Request, project_id: str = Query("")) -> HTMLResponse:
     )
 
 
+@app.get("/training-recipes", response_class=HTMLResponse)
+def training_recipes_library(
+    request: Request,
+    model_family: str = Query(""),
+    purpose: str = Query(""),
+    optimizer: str = Query(""),
+    recipe_type: str = Query(""),
+) -> HTMLResponse:
+    where = ["r.is_active = 1"]
+    params: list[Any] = []
+    if model_family:
+        where.append("r.model_family = ?")
+        params.append(model_family)
+    if purpose:
+        where.append("r.training_purpose_id = ?")
+        params.append(purpose)
+    if optimizer:
+        where.append("r.optimizer_definition_id = ?")
+        params.append(optimizer)
+    if recipe_type:
+        where.append("r.recipe_type = ?")
+        params.append(recipe_type)
+    recipes = fetch_all(
+        f"""
+        SELECT r.*, p.display_name AS purpose_display_name,
+               od.display_name AS optimizer_display_name,
+               od.category AS optimizer_category,
+               od.lr_semantics AS optimizer_lr_semantics,
+               nt.display_name AS network_type_display_name,
+               nt.availability AS network_type_availability
+        FROM training_recipes_v2 r
+        LEFT JOIN training_purposes p ON p.id = r.training_purpose_id
+        LEFT JOIN optimizer_definitions_v2 od ON od.id = r.optimizer_definition_id
+        LEFT JOIN network_type_definitions nt ON nt.id = r.network_type_id
+        WHERE {" AND ".join(where)}
+        ORDER BY r.model_family DESC, p.sort_order, r.sort_order, r.display_name
+        """,
+        tuple(params),
+    )
+    return render(
+        request,
+        "training_recipes.html",
+        recipes=recipes,
+        purposes=fetch_all("SELECT * FROM training_purposes WHERE is_active = 1 ORDER BY sort_order, display_name"),
+        optimizers=fetch_all("SELECT * FROM optimizer_definitions_v2 WHERE is_active = 1 ORDER BY display_name"),
+        model_family=model_family,
+        purpose=purpose,
+        optimizer=optimizer,
+        recipe_type=recipe_type,
+    )
+
+
+@app.get("/optimizers", response_class=HTMLResponse)
+def optimizers_library(request: Request) -> HTMLResponse:
+    optimizers = fetch_all("SELECT * FROM optimizer_definitions_v2 WHERE is_active = 1 ORDER BY display_name")
+    profiles = fetch_all(
+        """
+        SELECT p.*, od.display_name AS optimizer_display_name, od.lr_semantics
+        FROM optimizer_profiles_v2 p
+        LEFT JOIN optimizer_definitions_v2 od ON od.id = p.optimizer_definition_id
+        WHERE p.is_active = 1
+        ORDER BY od.display_name, p.model_family, p.profile_type
+        """
+    )
+    network_types = fetch_all("SELECT * FROM network_type_definitions WHERE is_active = 1 ORDER BY display_name")
+    return render(request, "optimizers.html", optimizers=optimizers, profiles=profiles, network_types=network_types)
+
+
 @app.post("/jobs")
 def job_create(
     name: str = Form(...),
     dataset_id: int = Form(...),
     preset_id: str = Form(...),
+    job_creation_mode: str = Form("purpose"),
+    recipe_v2_id: str = Form(""),
     base_model_path: str = Form(...),
     vae_path: str = Form(""),
     output_name: str = Form(""),
@@ -3055,8 +3144,11 @@ def job_create(
     preset = fetch_one("SELECT * FROM presets WHERE id = ?", (preset_id,))
     if preset is None:
         raise HTTPException(status_code=400, detail="Preset not found")
-    params = json.loads(preset["params_json"] or "{}")
+    recipe_v2 = fetch_one("SELECT * FROM training_recipes_v2 WHERE id = ?", (recipe_v2_id,)) if recipe_v2_id.strip() else None
+    params = json.loads((recipe_v2["params_json"] if recipe_v2 else preset["params_json"]) or "{}")
+    user_overrides: dict[str, Any] = {}
     try:
+        before = dict(params)
         update_params_from_form(
             params,
             {
@@ -3068,6 +3160,7 @@ def job_create(
                 "sample_every_n_epochs": sample_every_n_epochs,
             },
         )
+        user_overrides = {key: params[key] for key in params if before.get(key) != params[key]}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"主要パラメータの値が不正です: {exc}") from exc
     job_id = create_job({
@@ -3083,6 +3176,9 @@ def job_create(
         "dataset_version_id": resolved_job_version_id,
         "trigger_word": job_trigger_word,
         "params": params,
+        "recipe_v2_id": recipe_v2_id.strip(),
+        "job_creation_mode": job_creation_mode,
+        "user_overrides": user_overrides,
         "repeats_auto_calculated": repeats_auto_calculated == "1",
         "post_training_review_mode": review_mode,
         "max_auto_images": auto_images,

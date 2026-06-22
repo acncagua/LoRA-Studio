@@ -13,6 +13,13 @@ from typing import Any
 from app.app_version import APP_VERSION, DB_SCHEMA_VERSION
 from app import settings
 from app.services.preset_seed import optimizer_definition_rows, optimizer_profile_rows, preset_rows, training_recipe_rows
+from app.services.recipe_optimizer_catalog import (
+    network_type_rows,
+    optimizer_definition_v2_rows,
+    optimizer_profile_v2_rows,
+    training_purpose_rows,
+    training_recipe_v2_rows,
+)
 
 
 INTEGRATION_SMOKE_PRESET_ID = "integration_smoke_sdxl"
@@ -157,6 +164,15 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "deleted_at": "TEXT",
             "archived_reason": "TEXT",
             "delete_reason": "TEXT",
+            "recipe_v2_id": "TEXT",
+            "recipe_v2_version": "INTEGER",
+            "optimizer_definition_id": "TEXT",
+            "optimizer_profile_id": "TEXT",
+            "network_type_id": "TEXT",
+            "training_purpose_id": "TEXT",
+            "recipe_snapshot_json": "TEXT",
+            "params_snapshot_json": "TEXT",
+            "user_overrides_json": "TEXT",
         },
     )
     ensure_columns(
@@ -883,6 +899,164 @@ def seed_optimizer_catalog(conn: sqlite3.Connection) -> None:
         """,
         list(training_recipe_rows(now)),
     )
+    seed_recipe_optimizer_catalog_v2(conn, now)
+
+
+def seed_recipe_optimizer_catalog_v2(conn: sqlite3.Connection, now: str | None = None) -> None:
+    now = now or utc_now()
+    conn.executemany(
+        """
+        INSERT INTO optimizer_definitions_v2(
+            id, name, display_name, category, lr_semantics, default_learning_rate,
+            default_unet_lr, default_text_encoder_lr, default_scheduler,
+            allowed_schedulers_json, optimizer_args_schema_json,
+            target_steps_min, target_steps_recommended, target_steps_max,
+            target_steps_confidence, description, risk_note, compatibility_notes_json,
+            is_builtin, is_active, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            name=excluded.name,
+            display_name=excluded.display_name,
+            category=excluded.category,
+            lr_semantics=excluded.lr_semantics,
+            default_learning_rate=excluded.default_learning_rate,
+            default_unet_lr=excluded.default_unet_lr,
+            default_text_encoder_lr=excluded.default_text_encoder_lr,
+            default_scheduler=excluded.default_scheduler,
+            allowed_schedulers_json=excluded.allowed_schedulers_json,
+            optimizer_args_schema_json=excluded.optimizer_args_schema_json,
+            target_steps_min=excluded.target_steps_min,
+            target_steps_recommended=excluded.target_steps_recommended,
+            target_steps_max=excluded.target_steps_max,
+            target_steps_confidence=excluded.target_steps_confidence,
+            description=excluded.description,
+            risk_note=excluded.risk_note,
+            compatibility_notes_json=excluded.compatibility_notes_json,
+            is_builtin=excluded.is_builtin,
+            is_active=excluded.is_active,
+            updated_at=excluded.updated_at
+        """,
+        list(optimizer_definition_v2_rows(now)),
+    )
+    conn.executemany(
+        """
+        INSERT INTO optimizer_profiles_v2(
+            id, optimizer_definition_id, model_family, profile_type, display_name,
+            default_learning_rate, default_unet_lr, default_text_encoder_lr,
+            default_scheduler, optimizer_args_json, target_steps_min,
+            target_steps_recommended, target_steps_max, description, risk_note,
+            is_builtin, is_active, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            optimizer_definition_id=excluded.optimizer_definition_id,
+            model_family=excluded.model_family,
+            profile_type=excluded.profile_type,
+            display_name=excluded.display_name,
+            default_learning_rate=excluded.default_learning_rate,
+            default_unet_lr=excluded.default_unet_lr,
+            default_text_encoder_lr=excluded.default_text_encoder_lr,
+            default_scheduler=excluded.default_scheduler,
+            optimizer_args_json=excluded.optimizer_args_json,
+            target_steps_min=excluded.target_steps_min,
+            target_steps_recommended=excluded.target_steps_recommended,
+            target_steps_max=excluded.target_steps_max,
+            description=excluded.description,
+            risk_note=excluded.risk_note,
+            is_builtin=excluded.is_builtin,
+            is_active=excluded.is_active,
+            updated_at=excluded.updated_at
+        """,
+        list(optimizer_profile_v2_rows(now)),
+    )
+    conn.executemany(
+        """
+        INSERT INTO network_type_definitions(
+            id, name, display_name, network_module, module_type, availability,
+            params_schema_json, default_network_dim, default_network_alpha,
+            description, risk_note, is_builtin, is_active, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            name=excluded.name,
+            display_name=excluded.display_name,
+            network_module=excluded.network_module,
+            module_type=excluded.module_type,
+            availability=excluded.availability,
+            params_schema_json=excluded.params_schema_json,
+            default_network_dim=excluded.default_network_dim,
+            default_network_alpha=excluded.default_network_alpha,
+            description=excluded.description,
+            risk_note=excluded.risk_note,
+            is_builtin=excluded.is_builtin,
+            is_active=excluded.is_active,
+            updated_at=excluded.updated_at
+        """,
+        list(network_type_rows(now)),
+    )
+    conn.executemany(
+        """
+        INSERT INTO training_purposes(
+            id, name, display_name, description, recommended_reference_roles_json,
+            recommended_validation_preset_id, recommended_sample_prompt_template_id,
+            params_overlay_json, sort_order, is_builtin, is_active, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            name=excluded.name,
+            display_name=excluded.display_name,
+            description=excluded.description,
+            recommended_reference_roles_json=excluded.recommended_reference_roles_json,
+            recommended_validation_preset_id=excluded.recommended_validation_preset_id,
+            recommended_sample_prompt_template_id=excluded.recommended_sample_prompt_template_id,
+            params_overlay_json=excluded.params_overlay_json,
+            sort_order=excluded.sort_order,
+            is_builtin=excluded.is_builtin,
+            is_active=excluded.is_active,
+            updated_at=excluded.updated_at
+        """,
+        list(training_purpose_rows(now)),
+    )
+    conn.executemany(
+        """
+        INSERT INTO training_recipes_v2(
+            id, name, display_name, model_family, training_purpose_id,
+            optimizer_definition_id, optimizer_profile_id, network_type_id,
+            recipe_type, params_json, basic_params_json, advanced_params_json,
+            raw_args_json, compatibility_rules_json, target_steps_min,
+            target_steps_recommended, target_steps_max, target_checkpoint_count,
+            expected_behavior, risk_note, sort_order, is_builtin, is_active,
+            created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            name=excluded.name,
+            display_name=excluded.display_name,
+            model_family=excluded.model_family,
+            training_purpose_id=excluded.training_purpose_id,
+            optimizer_definition_id=excluded.optimizer_definition_id,
+            optimizer_profile_id=excluded.optimizer_profile_id,
+            network_type_id=excluded.network_type_id,
+            recipe_type=excluded.recipe_type,
+            params_json=excluded.params_json,
+            basic_params_json=excluded.basic_params_json,
+            advanced_params_json=excluded.advanced_params_json,
+            raw_args_json=excluded.raw_args_json,
+            compatibility_rules_json=excluded.compatibility_rules_json,
+            target_steps_min=excluded.target_steps_min,
+            target_steps_recommended=excluded.target_steps_recommended,
+            target_steps_max=excluded.target_steps_max,
+            target_checkpoint_count=excluded.target_checkpoint_count,
+            expected_behavior=excluded.expected_behavior,
+            risk_note=excluded.risk_note,
+            sort_order=excluded.sort_order,
+            is_builtin=excluded.is_builtin,
+            is_active=excluded.is_active,
+            updated_at=excluded.updated_at
+        """,
+        list(training_recipe_v2_rows(now)),
+    )
 
 
 def seed_presets(conn: sqlite3.Connection) -> None:
@@ -1413,6 +1587,7 @@ def insert_dataset(name: str, path: str, model_family: str, trigger_word: str, c
 
 def create_job(data: dict[str, Any]) -> int:
     from app.services.step_estimator import estimate_steps, target_config_from_catalog
+    from app.services.recipe_optimizer_catalog import compatibility_check, json_loads, merge_params, recipe_v2_snapshot
 
     now = utc_now()
     preset = fetch_one("SELECT * FROM presets WHERE id = ?", (data["preset_id"],))
@@ -1420,7 +1595,36 @@ def create_job(data: dict[str, Any]) -> int:
         raise ValueError(f"Preset not found: {data['preset_id']}")
     dataset = fetch_one("SELECT * FROM datasets WHERE id = ?", (int(data["dataset_id"]),))
     analysis = fetch_one("SELECT * FROM dataset_analysis WHERE dataset_id = ?", (int(data["dataset_id"]),))
-    params = normalize_job_params_for_preset(preset, data.get("params"))
+    user_overrides = data.get("user_overrides") if isinstance(data.get("user_overrides"), dict) else {}
+    recipe_v2 = None
+    recipe_v2_version = None
+    optimizer_definition_v2 = None
+    optimizer_profile_v2 = None
+    network_type = None
+    training_purpose = None
+    recipe_v2_id = (data.get("recipe_v2_id") or "").strip()
+    if recipe_v2_id:
+        recipe_v2 = fetch_one("SELECT * FROM training_recipes_v2 WHERE id = ? AND is_active = 1", (recipe_v2_id,))
+        if recipe_v2 is None:
+            raise ValueError(f"Recipe v2 not found: {recipe_v2_id}")
+        optimizer_definition_v2 = fetch_one("SELECT * FROM optimizer_definitions_v2 WHERE id = ?", (recipe_v2["optimizer_definition_id"],))
+        optimizer_profile_v2 = fetch_one("SELECT * FROM optimizer_profiles_v2 WHERE id = ?", (recipe_v2["optimizer_profile_id"],))
+        network_type = fetch_one("SELECT * FROM network_type_definitions WHERE id = ?", (recipe_v2["network_type_id"],))
+        training_purpose = fetch_one("SELECT * FROM training_purposes WHERE id = ?", (recipe_v2["training_purpose_id"],))
+        purpose_overlay = json_loads(training_purpose["params_overlay_json"] if training_purpose else None, {})
+        recipe_params = json_loads(recipe_v2["params_json"], {})
+        submitted_params = data.get("params") if isinstance(data.get("params"), dict) else {}
+        params = merge_params(recipe_params, purpose_overlay, submitted_params, user_overrides)
+        recipe_v2_version = 1
+        compatibility = compatibility_check(
+            params,
+            network_type=dict(network_type) if network_type else None,
+            optimizer_definition=dict(optimizer_definition_v2) if optimizer_definition_v2 else None,
+        )
+        if compatibility["errors"]:
+            raise ValueError("Recipe compatibility error: " + " / ".join(compatibility["errors"]))
+    else:
+        params = normalize_job_params_for_preset(preset, data.get("params"))
     output_name = data.get("output_name") or data["name"].replace(" ", "_")
     requested_version_id = data.get("dataset_version_id")
     version = None
@@ -1458,19 +1662,28 @@ def create_job(data: dict[str, Any]) -> int:
     recipe = None
     profile = None
     definition = None
-    recipe_id = preset["training_recipe_id"] if "training_recipe_id" in preset.keys() else None
-    profile_id = preset["optimizer_profile_id"] if "optimizer_profile_id" in preset.keys() else None
-    if recipe_id:
+    recipe_id = recipe_v2["id"] if recipe_v2 else (preset["training_recipe_id"] if "training_recipe_id" in preset.keys() else None)
+    profile_id = recipe_v2["optimizer_profile_id"] if recipe_v2 else (preset["optimizer_profile_id"] if "optimizer_profile_id" in preset.keys() else None)
+    if recipe_v2:
+        recipe = recipe_v2
+    elif recipe_id:
         recipe = fetch_one("SELECT * FROM training_recipes WHERE id = ?", (recipe_id,))
         if recipe and not profile_id:
             profile_id = recipe["optimizer_profile_id"] if "optimizer_profile_id" in recipe.keys() else None
-    if profile_id:
+    if recipe_v2:
+        profile = optimizer_profile_v2
+    elif profile_id:
         profile = fetch_one("SELECT * FROM optimizer_profiles WHERE id = ?", (profile_id,))
-    definition_id = profile["optimizer_definition_id"] if profile and "optimizer_definition_id" in profile.keys() else params.get("optimizer_type")
+    definition_id = (
+        optimizer_definition_v2["id"]
+        if optimizer_definition_v2
+        else (profile["optimizer_definition_id"] if profile and "optimizer_definition_id" in profile.keys() else params.get("optimizer_type"))
+    )
     if definition_id:
-        definition = fetch_one("SELECT * FROM optimizer_definitions WHERE id = ?", (str(definition_id),))
+        definition = optimizer_definition_v2 or fetch_one("SELECT * FROM optimizer_definitions WHERE id = ?", (str(definition_id),))
     step_target = target_config_from_catalog(training_recipe=recipe, optimizer_profile=profile, optimizer_definition=definition, preset=preset)
     step_estimate = estimate_steps(image_count=image_count, params=params, target=step_target)
+    recipe_snapshot = recipe_v2_snapshot(recipe_v2, optimizer_definition_v2, optimizer_profile_v2, network_type, training_purpose) if recipe_v2 else None
     with connect() as conn:
         cur = conn.execute(
             """
@@ -1488,7 +1701,10 @@ def create_job(data: dict[str, Any]) -> int:
                 dataset_version_id,
                 post_training_review_mode, max_auto_images, max_auto_runtime_minutes,
                 auto_review_provider, include_neighbor_epochs
-            ) VALUES (?, ?, ?, ?, NULL, 'draft', ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                , recipe_v2_id, recipe_v2_version, optimizer_definition_id, optimizer_profile_id,
+                network_type_id, training_purpose_id, recipe_snapshot_json, params_snapshot_json,
+                user_overrides_json
+            ) VALUES (?, ?, ?, ?, NULL, 'draft', ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 data.get("project_id"), data["name"], int(data["dataset_id"]), data["preset_id"],
@@ -1508,6 +1724,15 @@ def create_job(data: dict[str, Any]) -> int:
                 int(data.get("max_auto_runtime_minutes") or 20),
                 data.get("auto_review_provider") or None,
                 1 if data.get("include_neighbor_epochs") else 0,
+                recipe_v2_id or None,
+                recipe_v2_version,
+                (optimizer_definition_v2["id"] if optimizer_definition_v2 else (str(definition_id) if definition_id else None)),
+                (optimizer_profile_v2["id"] if optimizer_profile_v2 else profile_id),
+                network_type["id"] if network_type else None,
+                training_purpose["id"] if training_purpose else None,
+                json.dumps(recipe_snapshot, ensure_ascii=False, indent=2) if recipe_snapshot else None,
+                json.dumps(params, ensure_ascii=False, indent=2),
+                json.dumps(user_overrides, ensure_ascii=False, indent=2),
             ),
         )
         job_id = int(cur.lastrowid)
@@ -1874,6 +2099,57 @@ CREATE TABLE IF NOT EXISTS training_recipes (
     target_steps_min INTEGER, target_steps_recommended INTEGER, target_steps_max INTEGER,
     target_checkpoint_count INTEGER, note TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS optimizer_definitions_v2 (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, display_name TEXT NOT NULL,
+    category TEXT NOT NULL, lr_semantics TEXT NOT NULL,
+    default_learning_rate REAL, default_unet_lr REAL, default_text_encoder_lr REAL,
+    default_scheduler TEXT, allowed_schedulers_json TEXT, optimizer_args_schema_json TEXT,
+    target_steps_min INTEGER, target_steps_recommended INTEGER, target_steps_max INTEGER,
+    target_steps_confidence TEXT, description TEXT, risk_note TEXT,
+    compatibility_notes_json TEXT, is_builtin INTEGER NOT NULL DEFAULT 0,
+    is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS optimizer_profiles_v2 (
+    id TEXT PRIMARY KEY, optimizer_definition_id TEXT NOT NULL, model_family TEXT NOT NULL,
+    profile_type TEXT NOT NULL, display_name TEXT NOT NULL,
+    default_learning_rate REAL, default_unet_lr REAL, default_text_encoder_lr REAL,
+    default_scheduler TEXT, optimizer_args_json TEXT,
+    target_steps_min INTEGER, target_steps_recommended INTEGER, target_steps_max INTEGER,
+    description TEXT, risk_note TEXT, is_builtin INTEGER NOT NULL DEFAULT 0,
+    is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS network_type_definitions (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, display_name TEXT NOT NULL,
+    network_module TEXT, module_type TEXT NOT NULL, availability TEXT NOT NULL,
+    params_schema_json TEXT, default_network_dim INTEGER, default_network_alpha INTEGER,
+    description TEXT, risk_note TEXT, is_builtin INTEGER NOT NULL DEFAULT 0,
+    is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS training_purposes (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, display_name TEXT NOT NULL,
+    description TEXT, recommended_reference_roles_json TEXT,
+    recommended_validation_preset_id TEXT, recommended_sample_prompt_template_id TEXT,
+    params_overlay_json TEXT, sort_order INTEGER NOT NULL DEFAULT 100,
+    is_builtin INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS training_recipes_v2 (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, display_name TEXT NOT NULL,
+    model_family TEXT NOT NULL, training_purpose_id TEXT, optimizer_definition_id TEXT,
+    optimizer_profile_id TEXT, network_type_id TEXT, recipe_type TEXT NOT NULL,
+    params_json TEXT NOT NULL, basic_params_json TEXT, advanced_params_json TEXT,
+    raw_args_json TEXT, compatibility_rules_json TEXT,
+    target_steps_min INTEGER, target_steps_recommended INTEGER, target_steps_max INTEGER,
+    target_checkpoint_count INTEGER, expected_behavior TEXT, risk_note TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 100, is_builtin INTEGER NOT NULL DEFAULT 0,
+    is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS training_recipe_versions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, recipe_id TEXT NOT NULL, version_no INTEGER NOT NULL,
+    params_json TEXT NOT NULL, compatibility_rules_json TEXT,
+    target_steps_min INTEGER, target_steps_recommended INTEGER, target_steps_max INTEGER,
+    created_at TEXT NOT NULL, memo TEXT
+);
 CREATE TABLE IF NOT EXISTS datasets (
     id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, path TEXT NOT NULL, model_family TEXT,
     trigger_word TEXT, class_token TEXT, image_count INTEGER, caption_count INTEGER,
@@ -1932,6 +2208,9 @@ CREATE TABLE IF NOT EXISTS training_jobs (
     auto_review_provider TEXT, include_neighbor_epochs INTEGER,
     post_training_review_status TEXT, post_training_review_message TEXT,
     dataset_version_id INTEGER, config_dirty INTEGER NOT NULL DEFAULT 0,
+    recipe_v2_id TEXT, recipe_v2_version INTEGER, optimizer_definition_id TEXT,
+    optimizer_profile_id TEXT, network_type_id TEXT, training_purpose_id TEXT,
+    recipe_snapshot_json TEXT, params_snapshot_json TEXT, user_overrides_json TEXT,
     archived_at TEXT, deleted_at TEXT, archived_reason TEXT, delete_reason TEXT,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );

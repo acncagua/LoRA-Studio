@@ -22,7 +22,7 @@ than training itself.
 ## Status
 
 Current release: v0.4.7-beta
-Development phase: Phase 11.9.2
+Development phase: Phase 12.1
 
 The core workflow is operational and
 actively used for local LoRA production,
@@ -57,6 +57,41 @@ for the entire LoRA lifecycle.
 - LoRA Selection Workflow
 - Machine Review Assist
 - Storage Cleanup Support
+
+## Phase 12.1: Training Recipe / Optimizer Master v2
+
+Phase 12.1 introduces the foundation for Recipe v2 and optimizer-aware training setup.
+The goal is to keep existing legacy presets working while moving new Job creation toward
+structured Training Recipes, Optimizer Profiles, Training Purposes, and Network Type metadata.
+
+Job creation now has four conceptual entry points:
+
+- Purpose first: choose a use case such as character face, style, costume, object, or concept.
+- Optimizer first: choose AdamW8bit, Lion, Adafactor, DAdapt, Prodigy, or another optimizer family before selecting a profile.
+- Derived from existing Job: preserve recipe and parameter snapshots from previous work.
+- Fully custom: manually adjust Basic / Advanced / Raw Args.
+
+Optimizer metadata records that learning rate does not mean the same thing for every optimizer.
+AdamW / Lion use normal LR semantics, while DAdapt and Prodigy treat `learning_rate=1.0`
+as an automatic LR multiplier, and Adafactor may use relative-step behavior.
+
+Target steps are resolved from Recipe first, then Optimizer Profile, then Optimizer Definition,
+then the global fallback. Expected steps are calculated as:
+
+```text
+effective_batch_size = train_batch_size * gradient_accumulation_steps * num_processes
+steps_per_epoch = ceil(total_training_images_with_repeats / effective_batch_size)
+total_steps = steps_per_epoch * max_train_epochs
+```
+
+Target Step Assistant normally adjusts `repeats`, `epochs`, and `batch`.
+Direct `max_train_steps` remains an Advanced option because it changes the meaning of
+epoch-based review and checkpoint comparison.
+
+Raw Args are intentionally treated as advanced and may bypass compatibility checks.
+Legacy presets remain available and existing Jobs continue to open unchanged.
+LoCon / LoHa / LoKr / LyCORIS network types are represented as planned metadata only;
+full network type support is planned for later Phase 12 work.
 
 ## Phase 11.8: Post-training Review Automation
 

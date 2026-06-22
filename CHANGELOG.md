@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased - Phase 12.1
+
+LoRA Studio Phase 12.1 adds the Training Recipe / Optimizer Master v2 foundation while keeping legacy presets and existing Jobs compatible.
+
+### 主な変更
+
+- `optimizer_definitions_v2` / `optimizer_profiles_v2` / `network_type_definitions` / `training_purposes` / `training_recipes_v2` / `training_recipe_versions` を追加しました。
+- AdamW8bit、PagedAdamW8bit、Adafactor、Lion、Lion8bit、PagedLion8bit、DAdaptAdam、DAdaptLion、Prodigy、CustomをOptimizer Master v2へ登録しました。
+- SDXL character face向けのSmoke、Pilot、Standard 6 Epoch、Standard 10 Epoch、Generalize、Lion / Adafactor / DAdaptAdam / Prodigy experimental recipesをTraining Recipe v2として登録しました。
+- Job作成画面に「用途から選ぶ」「Optimizerから選ぶ」「既存Jobから派生」「完全カスタム」の入口とTraining Recipe v2選択を追加しました。
+- Recipe Library `/training-recipes` と Optimizer Master `/optimizers` を追加しました。
+- Job作成時にRecipe v2、Optimizer、Network Type、Training Purpose、resolved params、user overrides、Step Estimateをsnapshot保存できるようにしました。
+- Compatibility Checkの基礎として、TE学習とcache_text_encoder_outputs / network_train_unet_onlyの矛盾、DAdapt / Prodigy scheduler、Adafactor relative_step、未対応Network Typeを検出します。
+- 既存presetはlegacyとして残し、既存Jobの表示と作成経路を維持しています。
+
+### 注意点
+
+- Phase 12.1ではLoCon / LoHa / LoKr / LyCORISの本格実行には対応していません。Network Type metadata上はplanned / unsupportedとして表示します。
+- Lion / Adafactor / DAdapt / Prodigyの実学習評価は今回の対象外です。Recipeは比較用・Advanced用の土台です。
+- Raw ArgsはAdvanced扱いで、互換性チェックをすり抜ける可能性があります。
+
 ## phase11.9.2 / v0.4.7-beta - 2026-06-23
 
 LoRA Studio phase11.9.2 / v0.4.7-beta is the pre-Phase-12.1 consolidation release. It aligns release metadata and collects the stabilization work added after phase11.9.1.
