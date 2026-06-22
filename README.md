@@ -21,8 +21,8 @@ than training itself.
 
 ## Status
 
-Current release: v0.4.6-beta
-Development phase: Phase 11.9.1
+Current release: v0.4.7-beta
+Development phase: Phase 11.9.2
 
 The core workflow is operational and
 actively used for local LoRA production,

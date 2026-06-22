@@ -1,5 +1,29 @@
 # Changelog
 
+## phase11.9.2 / v0.4.7-beta - 2026-06-23
+
+LoRA Studio phase11.9.2 / v0.4.7-beta is the pre-Phase-12.1 consolidation release. It aligns release metadata and collects the stabilization work added after phase11.9.1.
+
+### 主な変更
+
+- Candidate Standard Comparisonで、loss候補epochごとのStandard Validation v1作成、comparison group一括実行、Epoch横断Matrix確認までの導線を整理しました。
+- Retry Signal SummaryをProject / Job / Review Session / LoRA Profileに表示し、Draft Job作成や自動Runを行わない読み取り専用の現状診断として整理しました。
+- Step Estimator / Target Step AssistantでOptimizer / Recipe由来のtarget stepsを使い、通常運用ではrepeats / epochs / batchで学習量を調整する流れを整理しました。
+- Weight Calibration導線を、採用済みLoRAのweight検証Pipelineとして整理し、開始前確認、Matrix表示、Profile反映への導線を補強しました。
+- Performance SummaryでReview Preparation / Weight Calibrationのstage timing、gen_img.py起動回数、Embedding / Machine Review / import内訳、OneDrive配下警告を確認できるようにしました。
+- Validation generation follow-upを統合し、画像生成後に不足Embedding / Machine Reviewを自動で続ける導線へ整理しました。
+- 実行中処理モニターに、全体経過、段階経過、推定合計、推定残り、推定完了時刻、処理速度を表示するようにしました。
+- 学習プリセットのdefault `train_batch_size` を1へ寄せ、SDXL学習時のメモリ安全性を優先しました。
+- SDXL UNet-only学習で `--text_encoder_lr 0 0` を渡さないようにし、Windows native crash時の診断ログを追加しました。
+- README / README_ja / app_version.pyのrelease / phase表記を `v0.4.7-beta` / `phase11.9.2` に揃えました。
+
+### 既知の注意点
+
+- 実行中処理モニターの推定時間は、sd-scriptsのtqdmログまたは現在までの平均速度から算出する目安です。モデル保存、sample生成、OS同期、GPU負荷変動により実時間とはずれる場合があります。
+- OneDriveなど同期フォルダ配下の `runs` / `exports` / model / embedding cache は、ファイルロックや同期負荷で生成・import・Embeddingが遅くなる場合があります。
+- Standard Candidate ComparisonとWeight Calibrationは画像数が多くなるため、学習中や他GPU処理中は同時実行せず、必要に応じてplanned状態で待機させる運用を推奨します。
+- Retry Signal Summaryは現状診断であり、自動リトライJob作成や自動Runはまだ行いません。
+
 ## phase11.9.1 / v0.4.6-beta - 2026-06-23
 
 LoRA Studio phase11.9.1 / v0.4.6-beta consolidates Candidate Standard Comparison, Retry Signal Summary, performance profiling, and validation image generation follow-up review automation into the current beta release.
