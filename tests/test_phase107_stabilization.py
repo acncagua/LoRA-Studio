@@ -343,6 +343,37 @@ class ReviewPreparationPhase116Tests(IsolatedDbTest):
         self.assertEqual(sorted({row["prompt_key"] for row in conditions}), ["basic_face", "expression_pose", "full_body"])
         self.assertEqual(sorted({float(row["lora_weight"]) for row in conditions}), [0.6, 0.8])
 
+    def test_standard_candidate_comparison_group_creates_standard_runs(self) -> None:
+        from app.services.candidate_comparisons import ensure_candidate_standard_comparison_group
+
+        job_id = self.create_completed_job_with_outputs()
+        group = ensure_candidate_standard_comparison_group(job_id)
+
+        self.assertEqual(group["status"], "planned")
+        self.assertEqual(group["expected_total_images"], 135)
+        self.assertEqual(len(group["candidate_epochs"]), 3)
+        self.assertEqual(len(group["validation_run_ids"]), 3)
+        runs = fetch_all("SELECT * FROM validation_runs WHERE id IN ({}) ORDER BY selected_epoch".format(",".join("?" for _ in group["validation_run_ids"])), tuple(group["validation_run_ids"]))
+        self.assertEqual(len(runs), 3)
+        self.assertEqual({row["validation_run_kind"] for row in runs}, {"candidate_standard_comparison"})
+        self.assertEqual({row["validation_preset_id"] for row in runs}, {"standard_validation_v1"})
+        self.assertEqual({int(row["expected_image_count"]) for row in runs}, {45})
+        for run in runs:
+            count = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ?", (run["id"],))
+            self.assertEqual(count["count"], 45)
+
+    def test_standard_candidate_comparison_group_is_idempotent(self) -> None:
+        from app.services.candidate_comparisons import ensure_candidate_standard_comparison_group
+
+        job_id = self.create_completed_job_with_outputs()
+        first = ensure_candidate_standard_comparison_group(job_id)
+        second = ensure_candidate_standard_comparison_group(job_id)
+
+        self.assertEqual(first["id"], second["id"])
+        self.assertEqual(first["validation_run_ids"], second["validation_run_ids"])
+        group_count = fetch_one("SELECT COUNT(*) AS count FROM candidate_comparison_groups WHERE job_id = ?", (job_id,))
+        self.assertEqual(group_count["count"], 1)
+
     def test_review_matrix_html_is_written(self) -> None:
         job_id = self.create_completed_job_with_outputs()
         session = ensure_candidate_review_plan(job_id, force=True)
@@ -1688,7 +1719,7 @@ class Phase107StabilizationTests(IsolatedDbTest):
 
         summary = retry_signal_for_job(job_id)
         self.assertEqual(summary["retry_signal_label"], "UNDERTRAINED_STEP_SHORTAGE")
-        self.assertIn("target steps", " ".join(summary["reasons"]))
+        self.assertIn("目標Step", " ".join(summary["reasons"]))
 
     def test_retry_signal_uses_no_clear_winner_review_summary(self) -> None:
         from app.services.retry_signal import retry_signal_for_review_session
@@ -1764,7 +1795,7 @@ class Phase107StabilizationTests(IsolatedDbTest):
 
         summary = retry_signal_for_job(job_id)
         self.assertEqual(summary["retry_signal_label"], "UNDERTRAINED_STILL_IMPROVING")
-        self.assertIn("Loss trend", " ".join(summary["reasons"]))
+        self.assertIn("Loss傾向", " ".join(summary["reasons"]))
 
     def test_retry_signal_detects_overtrained_loss(self) -> None:
         from app.services.retry_signal import retry_signal_for_job
@@ -2170,7 +2201,7 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertNotIn("Prepare Weight Calibration", body)
         self.assertIn("詳細操作", body)
         self.assertIn("Weight検証を準備", body)
-        self.assertIn("画像生成だけ実行", body)
+        self.assertIn("画像生成＋不足レビュー計算", body)
         self.assertIn("Reimport", body)
         self.assertIn("検証レポート出力", body)
         self.assertIn("Matrix再作成", body)
@@ -2463,7 +2494,7 @@ class Phase107StabilizationTests(IsolatedDbTest):
         )
         cross_html = build_epoch_cross_matrix_html(job_id, [run_id, second_run_id])
         self.assertIn("Epoch横断Matrix", cross_html)
-        self.assertIn("表示中Runで選択weightの不足画像を追加生成", cross_html)
+        self.assertIn("選択weightを追加生成して不足レビューも再計算", cross_html)
         self.assertIn("選択weightでMatrix表示を更新", cross_html)
         self.assertIn("display_weights", cross_html)
         self.assertIn(f"/jobs/{job_id}/validation-runs/epoch-matrix/weights", cross_html)
@@ -2471,7 +2502,6 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertIn('value="0.9"', cross_html)
         self.assertIn("pollMatrixGeneration", cross_html)
         self.assertIn("matrix_message", cross_html)
-        self.assertIn("表示中Runの不足レビューだけ再計算", cross_html)
         self.assertIn(f"/jobs/{job_id}/validation-runs/epoch-matrix/missing-review", cross_html)
         self.assertIn(f'name="run_ids" value="{run_id}"', cross_html)
         self.assertIn(f'name="run_ids" value="{second_run_id}"', cross_html)
@@ -2507,7 +2537,7 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertIn("weight選択", matrix_html)
         self.assertIn('name="selected_weights" value="0.9" checked', matrix_html)
         self.assertIn("1.1〜2.0を表示", matrix_html)
-        self.assertIn("選択weightの不足画像を追加生成", matrix_html)
+        self.assertIn("選択weightを追加生成して不足レビューも再計算", matrix_html)
         self.assertIn("不足レビューだけ再計算", matrix_html)
         self.assertIn(f"/validation-runs/{run_id}/matrix/missing-review", matrix_html)
 
@@ -2522,7 +2552,7 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertEqual(response.status_code, 303)
         self.assertIn(f"/validation-runs/{run_id}/matrix?weight_message=", response.headers["location"])
         self.assertEqual(added_weight["count"], 9)
-        start_mock.assert_called_once_with(run_id)
+        start_mock.assert_called_once_with(run_id, run_missing_review_after=True)
 
     def test_validation_matrix_missing_review_post_starts_sequence(self) -> None:
         from app.main import validation_matrix_missing_review
@@ -2582,7 +2612,11 @@ class Phase107StabilizationTests(IsolatedDbTest):
         cross_html = build_epoch_cross_matrix_html(run["job_id"], [run_id, second_run_id])
         self.assertIn('name="selected_weights"', cross_html)
         self.assertIn('value="0.9" checked', cross_html)
-        start_mock.assert_called_once_with([run_id, second_run_id])
+        start_mock.assert_called_once_with(
+            [run_id, second_run_id],
+            run_missing_review_after=True,
+            missing_review_run_ids=[run_id, second_run_id],
+        )
 
     def test_missing_machine_review_job_targets_only_unscored_validation_images(self) -> None:
         from app.main import register_validation_run_image

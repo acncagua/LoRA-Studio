@@ -21,8 +21,8 @@ than training itself.
 
 ## Status
 
-Current release: v0.4.4-beta
-Development phase: Phase 11.9
+Current release: v0.4.6-beta
+Development phase: Phase 11.9.1
 
 The core workflow is operational and
 actively used for local LoRA production,
@@ -51,6 +51,7 @@ for the entire LoRA lifecycle.
 - Post-training Review Automation
 - Retry Signal Summary
 - Step Estimator / Target Step Assistant
+- Candidate Standard Comparison
 - Reference Sets
 - Experiment Comparison
 - LoRA Selection Workflow
@@ -78,6 +79,18 @@ Weight Calibration standard 45-image validation.
 When Machine Assist scores are close, LoRA-Studio shows a candidate group with
 `no_clear_winner` instead of forcing a single winner. This means human visual comparison should decide.
 Machine Assist remains advisory and does not replace human review or apply choices automatically.
+
+## Candidate Review Modes
+
+LoRA-Studio separates pre-adoption epoch review from post-adoption weight validation.
+
+- Quick Candidate Review: a lightweight pre-adoption review for choosing the candidate epoch.
+- Standard Candidate Comparison: creates Standard Validation v1 runs for the primary / secondary / check loss candidate epochs, 45 images per epoch, and runs them as one comparison group with an epoch cross matrix.
+- Manual: keeps the existing manual Validation Run workflow for custom epoch or preset choices.
+- Weight Calibration: runs after an epoch / LoRA has been adopted and determines the recommended weight range for the selected LoRA.
+
+Standard Candidate Comparison is useful when Quick Candidate Review is not enough and you want the same 45-image Standard Validation coverage across several candidate epochs.
+The UI shows the candidate epochs, expected image count, estimated runtime, and estimated storage before starting.
 
 ## Phase 11.9: Retry Signal Summary
 

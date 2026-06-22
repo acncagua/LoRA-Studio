@@ -108,7 +108,7 @@
       <summary>詳細操作</summary>
       <div class="actions compact-actions">
         <form method="post" action="/validation-runs/{{ run.id }}/pipeline/prepare"><button type="submit">Weight検証を準備</button></form>
-        <form method="post" action="/validation-runs/{{ run.id }}/generation/run" data-generation-run-form><button type="submit" data-generation-run-button {% if (generation and generation.status == 'running') or (running_generation and (not generation or generation.status != 'running')) %}disabled{% endif %}>画像生成だけ実行</button></form>
+        <form method="post" action="/validation-runs/{{ run.id }}/generation/run" data-generation-run-form><button type="submit" data-generation-run-button {% if (generation and generation.status == 'running') or (running_generation and (not generation or generation.status != 'running')) %}disabled{% endif %}>画像生成＋不足レビュー計算</button></form>
         <form method="post" action="/validation-runs/{{ run.id }}/generation/stop" data-generation-stop-form><button type="submit" class="danger" data-generation-stop-button {% if not generation or generation.status != 'running' %}disabled{% endif %}>画像生成を停止</button></form>
         <form method="post" action="/validation-runs/{{ run.id }}/generation/import"><button type="submit">Reimport</button></form>
         <form method="post" action="/validation-runs/{{ run.id }}/export-report"><button type="submit">検証レポート出力</button></form>

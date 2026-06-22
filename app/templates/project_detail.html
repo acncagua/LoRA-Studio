@@ -82,23 +82,24 @@
 </section>
 
 <section class="notice">
-  <h2>Post-training Review Automation</h2>
-  <p class="muted">Project default設定です。Job側にoverrideがある場合はJob詳細で別文脈として表示します。</p>
-  <form method="post" action="/projects/{{ project.id }}/review-automation" class="form-grid">
-    <label>Project default
-      <select name="post_training_review_mode">
+  <h2>学習後レビュー自動化</h2>
+  <p class="muted">Project既定設定です。Job側にoverrideがある場合はJob詳細で別文脈として表示します。</p>
+  <form method="post" action="/projects/{{ project.id }}/review-automation" class="form-grid" data-review-automation-settings>
+    <label>Project既定
+      <select name="post_training_review_mode" data-review-automation-mode>
         {% set project_review_mode = project.post_training_review_mode or 'plan_only' %}
-        <option value="manual" {{ 'selected' if project_review_mode == 'manual' else '' }}>manual</option>
-        <option value="plan_only" {{ 'selected' if project_review_mode == 'plan_only' else '' }}>plan_only</option>
-        <option value="quick_auto" {{ 'selected' if project_review_mode == 'quick_auto' else '' }}>quick_auto</option>
-        <option value="standard_auto" {{ 'selected' if project_review_mode == 'standard_auto' else '' }}>standard_auto</option>
+        <option value="manual" {{ 'selected' if project_review_mode == 'manual' else '' }}>手動</option>
+        <option value="plan_only" {{ 'selected' if project_review_mode == 'plan_only' else '' }}>計画のみ</option>
+        <option value="quick_auto" {{ 'selected' if project_review_mode == 'quick_auto' else '' }}>クイック自動（最大18枚）</option>
+        <option value="standard_auto" {{ 'selected' if project_review_mode == 'standard_auto' else '' }}>標準自動（45枚×候補epoch）</option>
       </select>
     </label>
-    <label>max_auto_images<input name="max_auto_images" value="{{ project.max_auto_images or 18 }}"></label>
-    <label>max_auto_runtime_minutes<input name="max_auto_runtime_minutes" value="{{ project.max_auto_runtime_minutes or 20 }}"></label>
-    <label>auto_review_provider<input name="auto_review_provider" value="{{ project.auto_review_provider or 'default' }}"></label>
+    <label>自動開始する最大画像数<input name="max_auto_images" value="{{ project.max_auto_images or 18 }}" data-review-automation-images></label>
+    <label>自動開始する最大想定時間（分）<input name="max_auto_runtime_minutes" value="{{ project.max_auto_runtime_minutes or 20 }}" data-review-automation-runtime></label>
+    <label>レビューprovider<input name="auto_review_provider" value="{{ project.auto_review_provider or 'default' }}"></label>
+    <p class="muted" data-review-automation-note>計画のみではReview Planだけ作成し、画像生成は自動開始しません。</p>
     <label class="checkbox-line"><input type="checkbox" name="include_neighbor_epochs" value="1" {{ 'checked' if project.include_neighbor_epochs else '' }}> loss候補の近隣epochも含める</label>
-    <button type="submit">Project defaultを保存</button>
+    <button type="submit">Project既定を保存</button>
   </form>
 </section>
 
@@ -135,8 +136,8 @@
         <td>{{ job.max_train_epochs }}</td>
         <td>{{ job.selected_epoch if job.selected_epoch is not none else job.adopted_epoch if job.adopted_epoch is not none else '-' }}</td>
         <td>
-          Project default: {{ project.post_training_review_mode or 'plan_only' }}<br>
-          Job override: {{ job.post_training_review_mode or 'inherit' }}
+          Project既定: {{ {'manual': '手動', 'plan_only': '計画のみ', 'quick_auto': 'クイック自動', 'standard_auto': '標準自動'}.get(project.post_training_review_mode or 'plan_only', project.post_training_review_mode or '計画のみ') }}<br>
+          Job側設定: {{ {'manual': '手動', 'plan_only': '計画のみ', 'quick_auto': 'クイック自動', 'standard_auto': '標準自動'}.get(job.post_training_review_mode, 'Project既定を使用') }}
         </td>
         <td>{{ job.health_label or job.loss_health_label or '-' }}</td>
         <td>

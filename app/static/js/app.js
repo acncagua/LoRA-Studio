@@ -329,6 +329,67 @@ function initStepEstimators() {
   });
 }
 
+function updateReviewAutomationDefaults(container, { initial = false } = {}) {
+  if (!container) {
+    return;
+  }
+  const mode = container.querySelector("[data-review-automation-mode]");
+  const images = container.querySelector("[data-review-automation-images]");
+  const runtime = container.querySelector("[data-review-automation-runtime]");
+  const note = container.querySelector("[data-review-automation-note]");
+  if (!mode || !images || !runtime) {
+    return;
+  }
+
+  const currentImages = String(images.value || "").trim();
+  const currentRuntime = String(runtime.value || "").trim();
+  const isLegacyQuickImages = currentImages === "" || currentImages === "18";
+  const isLegacyQuickRuntime = currentRuntime === "" || currentRuntime === "20" || currentRuntime === "60";
+  const isStandardImages = currentImages === "150";
+  const isStandardRuntime = currentRuntime === "240";
+
+  if (mode.value === "standard_auto") {
+    if (!initial || isLegacyQuickImages) {
+      images.value = "150";
+    }
+    if (!initial || isLegacyQuickRuntime) {
+      runtime.value = "240";
+    }
+    if (note) {
+      note.textContent = "標準自動はStandard Validation v1を候補epochごとに実行します。候補3件なら45枚×3=135枚のため、既定では150枚・240分まで自動開始します。";
+    }
+    return;
+  }
+
+  if (mode.value === "quick_auto") {
+    if (!initial || isStandardImages) {
+      images.value = "18";
+    }
+    if (!initial || isStandardRuntime) {
+      runtime.value = "60";
+    }
+    if (note) {
+      note.textContent = "クイック自動は候補epoch最大3件、prompt 3種、seed 1件、weight 2種の最大18枚を自動生成します。";
+    }
+    return;
+  }
+
+  if (note) {
+    note.textContent = mode.value === "manual"
+      ? "手動ではReview Plan作成も画像生成も自動では行いません。"
+      : "計画のみではReview Planだけ作成し、画像生成は自動開始しません。";
+  }
+}
+
+function initReviewAutomationSettings() {
+  document.querySelectorAll("[data-review-automation-settings]").forEach((container) => {
+    updateReviewAutomationDefaults(container, { initial: true });
+    container.querySelector("[data-review-automation-mode]")?.addEventListener("change", () => {
+      updateReviewAutomationDefaults(container);
+    });
+  });
+}
+
 document.addEventListener("submit", async (event) => {
   const form = event.target.closest("[data-review-form]");
   if (!form) {
@@ -1493,7 +1554,7 @@ function initBulkValidationGenerationSubmit() {
       showPageNotice("画像生成する検証Runを選択してください。", "warning", form);
       return;
     }
-    showPageNotice(`選択した検証Run ${selected} 件の画像生成を開始します。`, "info", form);
+    showPageNotice(`選択した検証Run ${selected} 件の画像生成を開始します。生成後に不足レビューも自動で再計算します。`, "info", form);
     window.setTimeout(() => {
       if (button) {
         button.disabled = true;
@@ -1548,7 +1609,7 @@ function initBulkValidationAssistSubmit() {
           });
           if (button) {
             button.disabled = false;
-            button.textContent = button.dataset.originalText || "選択した検証RunのEmbedding / 機械補助レビューを開始";
+            button.textContent = button.dataset.originalText || "画像生成済みRunの不足レビューだけ再計算";
           }
           startEmbeddingJobPolling(
             payload.running_job_id,
@@ -1573,7 +1634,7 @@ function initBulkValidationAssistSubmit() {
       });
       if (button) {
         button.disabled = false;
-        button.textContent = button.dataset.originalText || "選択した検証RunのEmbedding / 機械補助レビューを開始";
+        button.textContent = button.dataset.originalText || "画像生成済みRunの不足レビューだけ再計算";
       }
     }
   });
@@ -1672,7 +1733,7 @@ function finishBulkAssistIfComplete(payloadsByRunId) {
   });
   const button = form.querySelector("[data-bulk-assist-button]");
   if (button) {
-    button.textContent = button.dataset.originalText || "選択した検証RunのEmbedding / 機械補助レビューを開始";
+    button.textContent = button.dataset.originalText || "画像生成済みRunの不足レビューだけ再計算";
   }
   const panel = document.querySelector("[data-bulk-assist-status]");
   if (panel) {
@@ -1947,6 +2008,7 @@ document.addEventListener("DOMContentLoaded", restoreScrollAfterInlineRefresh);
 document.addEventListener("DOMContentLoaded", initProjectModeForms);
 document.addEventListener("DOMContentLoaded", initDatasetVersionFilters);
 document.addEventListener("DOMContentLoaded", initStepEstimators);
+document.addEventListener("DOMContentLoaded", initReviewAutomationSettings);
 document.addEventListener("DOMContentLoaded", initEmbeddingJobStatusPolling);
 document.addEventListener("DOMContentLoaded", initMachineReviewJobStatusPolling);
 document.addEventListener("DOMContentLoaded", initReviewPreparationPolling);

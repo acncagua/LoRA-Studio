@@ -32,9 +32,11 @@ class ClosingConnection(sqlite3.Connection):
 
 def connect() -> sqlite3.Connection:
     settings.DATA_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(settings.DB_PATH, factory=ClosingConnection)
+    conn = sqlite3.connect(settings.DB_PATH, timeout=30.0, factory=ClosingConnection)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 30000")
+    conn.execute("PRAGMA journal_mode = WAL")
     return conn
 
 
@@ -533,6 +535,10 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             ON validation_runs(job_id);
         CREATE INDEX IF NOT EXISTS idx_validation_runs_project
             ON validation_runs(project_id);
+        CREATE INDEX IF NOT EXISTS idx_candidate_comparison_groups_job
+            ON candidate_comparison_groups(job_id);
+        CREATE INDEX IF NOT EXISTS idx_candidate_comparison_groups_status
+            ON candidate_comparison_groups(status);
         CREATE INDEX IF NOT EXISTS idx_validation_generation_runs_run
             ON validation_generation_runs(validation_run_id);
         CREATE INDEX IF NOT EXISTS idx_validation_generation_runs_status
@@ -2028,6 +2034,26 @@ CREATE TABLE IF NOT EXISTS validation_generation_runs (
     generated_image_count INTEGER NOT NULL DEFAULT 0,
     imported_image_count INTEGER NOT NULL DEFAULT 0,
     error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS candidate_comparison_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL, project_id INTEGER,
+    preset_id TEXT NOT NULL DEFAULT 'standard_validation_v1',
+    name TEXT NOT NULL,
+    candidate_epochs_json TEXT NOT NULL,
+    validation_run_ids_json TEXT NOT NULL DEFAULT '[]',
+    expected_total_images INTEGER NOT NULL DEFAULT 0,
+    registered_image_count INTEGER NOT NULL DEFAULT 0,
+    embedding_ready_count INTEGER NOT NULL DEFAULT 0,
+    machine_review_score_count INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'planned',
+    matrix_path TEXT,
+    estimate_json TEXT,
+    stage_timing_json TEXT,
+    started_at TEXT, ended_at TEXT, elapsed_seconds INTEGER,
+    error_message TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, memo TEXT,
+    UNIQUE(job_id, preset_id, candidate_epochs_json)
 );
 CREATE TABLE IF NOT EXISTS review_sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

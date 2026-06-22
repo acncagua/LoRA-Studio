@@ -386,7 +386,7 @@ def command_text(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def start_validation_generation(run_id: int) -> int:
+def start_validation_generation(run_id: int, run_missing_review_after: bool = False) -> int:
     reject_if_gpu_busy()
     # 実行時に必ず最新のValidation条件・採用LoRA・出力ファイル名で生成ファイルを作り直す。
     # これにより、古いplanned生成Runや過去バージョンのpromptファイルを誤って再利用しない。
@@ -441,14 +441,29 @@ def start_validation_generation(run_id: int) -> int:
         )
     thread = threading.Thread(
         target=monitor_generation,
-        args=(int(generation["id"]), first_process, commands, 0, log_handle, start_time, log_path, sd_scripts_path, env),
+        args=(
+            int(generation["id"]),
+            first_process,
+            commands,
+            0,
+            log_handle,
+            start_time,
+            log_path,
+            sd_scripts_path,
+            env,
+            run_missing_review_after,
+        ),
         daemon=True,
     )
     thread.start()
     return first_process.pid
 
 
-def start_validation_generation_sequence(run_ids: list[int]) -> int:
+def start_validation_generation_sequence(
+    run_ids: list[int],
+    run_missing_review_after: bool = False,
+    missing_review_run_ids: list[int] | None = None,
+) -> int:
     unique_run_ids: list[int] = []
     seen: set[int] = set()
     for run_id in run_ids:
@@ -478,6 +493,14 @@ def start_validation_generation_sequence(run_ids: list[int]) -> int:
         thread = threading.Thread(
             target=_validation_generation_sequence_worker,
             args=(remaining_run_ids,),
+            daemon=True,
+        )
+        thread.start()
+    if run_missing_review_after:
+        followup_run_ids = missing_review_run_ids or unique_run_ids
+        thread = threading.Thread(
+            target=_validation_generation_followup_review_worker,
+            args=(unique_run_ids, followup_run_ids),
             daemon=True,
         )
         thread.start()
@@ -989,6 +1012,34 @@ def _validation_generation_sequence_worker(run_ids: list[int]) -> None:
             time.sleep(5)
 
 
+def _validation_generation_followup_review_worker(generation_run_ids: list[int], review_run_ids: list[int]) -> None:
+    unique_generation_run_ids = list(dict.fromkeys(int(run_id) for run_id in generation_run_ids if int(run_id) > 0))
+    unique_review_run_ids = list(dict.fromkeys(int(run_id) for run_id in review_run_ids if int(run_id) > 0))
+    if not unique_generation_run_ids or not unique_review_run_ids:
+        return
+    while True:
+        active = False
+        for run_id in unique_generation_run_ids:
+            generation = latest_generation_run(run_id)
+            if generation is not None and generation["status"] in {"running", "queued"}:
+                active = True
+                break
+        if not active:
+            break
+        time.sleep(5)
+    completed_generation_run_ids: set[int] = set()
+    for run_id in unique_generation_run_ids:
+        generation = latest_generation_run(run_id)
+        if generation is not None and generation["status"] == "completed":
+            completed_generation_run_ids.add(run_id)
+        else:
+            log_path = validation_run_dir(run_id) / "generation" / "missing_review_sequence.log"
+            append_generation_note(log_path, "画像生成が完了していないため、不足レビュー再計算の自動開始をスキップしました。")
+    reviewable_run_ids = [run_id for run_id in unique_review_run_ids if run_id not in unique_generation_run_ids or run_id in completed_generation_run_ids]
+    if reviewable_run_ids:
+        _missing_validation_review_sequence_worker(reviewable_run_ids)
+
+
 def reject_if_gpu_busy() -> None:
     running_job = fetch_one("SELECT id FROM training_jobs WHERE status = 'running' LIMIT 1")
     if running_job:
@@ -1008,6 +1059,7 @@ def monitor_generation(
     log_path: Path,
     sd_scripts_path: Path,
     env: dict[str, str],
+    run_missing_review_after: bool = False,
 ) -> None:
     return_code = process.wait()
     current_generation = fetch_one("SELECT validation_run_id, output_dir FROM validation_generation_runs WHERE id = ?", (generation_id,))
@@ -1036,7 +1088,18 @@ def monitor_generation(
                 "UPDATE validation_generation_runs SET process_id = ?, updated_at = ? WHERE id = ?",
                 (next_process.pid, utc_now(), generation_id),
             )
-        monitor_generation(generation_id, next_process, commands, command_index + 1, log_handle, start_time_text, log_path, sd_scripts_path, env)
+        monitor_generation(
+            generation_id,
+            next_process,
+            commands,
+            command_index + 1,
+            log_handle,
+            start_time_text,
+            log_path,
+            sd_scripts_path,
+            env,
+            run_missing_review_after,
+        )
         return
 
     log_handle.close()
@@ -1079,6 +1142,9 @@ def monitor_generation(
         )
     update_validation_run_counts(run_id)
     mark_stage("validation_runs", run_id, "pipeline_end", final_end_time)
+    if status == "completed" and run_missing_review_after:
+        append_generation_note(log_path, "画像生成完了後の不足Embedding / 不足Machine Reviewを自動で再計算します。")
+        _missing_validation_review_worker(run_id)
 
 
 def stop_validation_generation(run_id: int) -> None:
@@ -1775,7 +1841,7 @@ def matrix_weight_controls(run_id: int) -> str:
         "</div>"
         "<div class=\"matrix-weight-head\">"
         "<button class=\"matrix-weight-toggle\" type=\"button\" data-matrix-toggle-extra-weights>1.1〜2.0を表示</button>"
-        "<button class=\"matrix-weight-submit\" type=\"submit\" form=\"matrix-weight-form\">選択weightの不足画像を追加生成</button>"
+        "<button class=\"matrix-weight-submit\" type=\"submit\" form=\"matrix-weight-form\">選択weightを追加生成して不足レビューも再計算</button>"
         "<button class=\"matrix-weight-submit\" type=\"submit\" form=\"matrix-missing-review-form\">不足レビューだけ再計算</button>"
         "</div>"
         "</div>"
@@ -1786,7 +1852,7 @@ def matrix_missing_review_controls(run_id: int) -> str:
     return (
         "<div class=\"matrix-review-panel\">"
         "<strong>機械補助レビュー</strong>"
-        "<span class=\"matrix-scale-note\">追加生成後に未計算のEmbedding / Machine Reviewだけを実行します。</span>"
+        "<span class=\"matrix-scale-note\">画像生成済みの未計算Embedding / Machine Reviewだけを実行します。</span>"
         f"<form method=\"post\" action=\"/validation-runs/{run_id}/matrix/missing-review\">"
         "<button class=\"matrix-review-submit\" type=\"submit\">不足レビューだけ再計算</button>"
         "</form>"
@@ -1837,7 +1903,7 @@ def cross_matrix_weight_controls(job_id: int, runs: list[dict[str, Any]], displa
         "<div class=\"matrix-weight-panel\">"
         "<div class=\"matrix-weight-head\">"
         "<strong>weight選択</strong>"
-        f"<span class=\"matrix-scale-note\">表示中の検証Run {html.escape(run_label)} で、チェックしたweightをMatrix操作の対象にします。追加生成は不足画像だけを作成し、既存画像はスキップします。</span>"
+        f"<span class=\"matrix-scale-note\">表示中の検証Run {html.escape(run_label)} で、チェックしたweightをMatrix操作の対象にします。追加生成は不足画像だけを作成し、既存画像はスキップします。生成後は不足Embedding / Machine Reviewまで自動で再計算します。</span>"
         "</div>"
         f"<div class=\"matrix-weight-options\">{default_options}</div>"
         "<div class=\"matrix-weight-extra hidden\" data-matrix-extra-weights>"
@@ -1846,8 +1912,7 @@ def cross_matrix_weight_controls(job_id: int, runs: list[dict[str, Any]], displa
         "<div class=\"matrix-weight-head\">"
         "<button class=\"matrix-weight-toggle\" type=\"button\" data-matrix-toggle-extra-weights>1.1〜2.0を表示</button>"
         "<button class=\"matrix-weight-toggle\" type=\"submit\" form=\"cross-matrix-display-form\">選択weightでMatrix表示を更新</button>"
-        "<button class=\"matrix-weight-submit\" type=\"submit\" form=\"cross-matrix-weight-form\">表示中Runで選択weightの不足画像を追加生成</button>"
-        "<button class=\"matrix-weight-submit\" type=\"submit\" form=\"cross-matrix-missing-review-form\">表示中Runの不足レビューだけ再計算</button>"
+        "<button class=\"matrix-weight-submit\" type=\"submit\" form=\"cross-matrix-weight-form\">選択weightを追加生成して不足レビューも再計算</button>"
         "</div>"
         "</div>"
     )
@@ -2013,15 +2078,34 @@ def matrix_display_script() -> str:
 
   function matrixRunIds() {
     const ids = new Set();
-    new URLSearchParams(window.location.search).getAll("run_ids").forEach((value) => {
-      const id = Number(value);
-      if (id > 0) ids.add(id);
+    const params = new URLSearchParams(window.location.search);
+    ["run_ids", "run_id"].forEach((name) => {
+      params.getAll(name).forEach((value) => {
+        const id = Number(value);
+        if (id > 0) ids.add(id);
+      });
     });
     document.querySelectorAll('input[name="run_ids"]').forEach((input) => {
       const id = Number(input.value);
       if (id > 0) ids.add(id);
     });
     return Array.from(ids);
+  }
+
+  function syncMatrixRunInputsForSubmit(form) {
+    if (!form || !form.id) return;
+    const runIds = matrixRunIds().sort((a, b) => a - b);
+    form.querySelectorAll('input[name="run_ids"]').forEach((input) => input.remove());
+    runIds.forEach((runId) => {
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = "run_ids";
+      input.value = String(runId);
+      form.appendChild(input);
+    });
+    const action = new URL(form.getAttribute("action") || window.location.pathname, window.location.href);
+    action.search = "";
+    form.action = action.pathname;
   }
 
   function matrixWeightStateKey() {
@@ -2067,8 +2151,9 @@ def matrix_display_script() -> str:
 
   function stripMatrixMessageAndReload() {
     const url = new URL(window.location.href);
+    url.searchParams.delete("run_id");
     if (!url.searchParams.has("matrix_message")) {
-      window.location.reload();
+      window.location.replace(url.toString());
       return;
     }
     url.searchParams.delete("matrix_message");
@@ -2145,6 +2230,12 @@ def matrix_display_script() -> str:
     if (!event.target.closest('input[name="selected_weights"]')) return;
     syncDisplayWeightInputs();
     saveMatrixWeightState();
+  });
+
+  document.addEventListener("submit", (event) => {
+    const form = event.target.closest("#cross-matrix-weight-form, #cross-matrix-display-form, #cross-matrix-missing-review-form");
+    if (!form) return;
+    syncMatrixRunInputsForSubmit(form);
   });
 
   syncDisplayWeightInputs();

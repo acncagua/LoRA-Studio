@@ -19,6 +19,13 @@ from app import settings
 from app.app_version import app_version_info
 from app.db import connect, create_dataset_version, create_job, fetch_all, fetch_one, import_latest_environment, init_db, insert_dataset, upsert_dataset_analysis
 from app.services.command_builder import prepare_job_files
+from app.services.candidate_comparisons import (
+    candidate_standard_estimate,
+    ensure_candidate_standard_comparison_group,
+    latest_candidate_comparison_groups,
+    start_candidate_standard_comparison,
+    write_group_cross_matrix,
+)
 from app.services.embedding_service import (
     active_embedding_model,
     cleanup_preview as embedding_cleanup_preview,
@@ -125,6 +132,7 @@ from app.services.validation_generation import (
     generation_view_state,
     import_generated_images,
     missing_validation_generation_count,
+    normalize_matrix_weights,
     prepare_validation_generation,
     reconcile_stale_validation_generations,
     start_missing_validation_review_sequence,
@@ -691,7 +699,7 @@ JOB_FILTERS = [
 
 def job_action_state(job: Any, selected_output: Any | None = None) -> dict[str, Any]:
     status = job["status"]
-    dirty = bool(job["config_dirty"] if "config_dirty" in job.keys() else 0)
+    dirty = bool(job["config_dirty"] if "config_dirty" in job.keys() else 0) or status == "prepared_dirty"
     archived = bool(row_value(job, "archived_at"))
     deleted = bool(row_value(job, "deleted_at"))
     deletable_draft = status in DELETABLE_JOB_STATUSES and not deleted
@@ -1862,6 +1870,11 @@ def project_review_automation_save(
         except (TypeError, ValueError):
             return default
 
+    auto_images, auto_runtime = normalize_review_automation_limits(
+        mode,
+        positive_int(max_auto_images, 18),
+        positive_int(max_auto_runtime_minutes, 20),
+    )
     with connect() as conn:
         conn.execute(
             """
@@ -1873,8 +1886,8 @@ def project_review_automation_save(
             """,
             (
                 mode,
-                positive_int(max_auto_images, 18),
-                positive_int(max_auto_runtime_minutes, 20),
+                auto_images,
+                auto_runtime,
                 auto_review_provider.strip() or "default",
                 1 if include_neighbor_epochs == "1" else 0,
                 settings_now(),
@@ -2767,6 +2780,16 @@ def settings_now() -> str:
     return utc_now()
 
 
+def normalize_review_automation_limits(mode: str, images: int, runtime_minutes: int) -> tuple[int, int]:
+    if mode == "standard_auto":
+        # 旧UIのQuick用初期値(18枚/20分)がstandard_autoに残っていた場合は、
+        # Standard Validation v1 x 候補3epochを自動開始できる安全枠へ補正する。
+        return (150 if images == 18 else images, 240 if runtime_minutes == 20 else runtime_minutes)
+    if mode == "quick_auto":
+        return (images, 60 if runtime_minutes == 20 else runtime_minutes)
+    return (images, runtime_minutes)
+
+
 def decode_analysis(row: Any) -> dict[str, Any]:
     if row is None:
         return {}
@@ -2973,6 +2996,13 @@ def job_create(
         except (TypeError, ValueError):
             return default
 
+    review_mode = normalized_review_mode(post_training_review_mode)
+    auto_images, auto_runtime = normalize_review_automation_limits(
+        review_mode,
+        positive_int(max_auto_images, 18),
+        positive_int(max_auto_runtime_minutes, 20),
+    )
+
     def resolve_dataset_version_id(selected_dataset_id: int, raw_version_id: str) -> int | None:
         if raw_version_id.strip():
             version = fetch_one(
@@ -3012,9 +3042,9 @@ def job_create(
                 "base_model_path": base_model_path,
                 "status": "draft",
                 "memo": memo,
-                "post_training_review_mode": normalized_review_mode(post_training_review_mode),
-                "max_auto_images": positive_int(max_auto_images, 18),
-                "max_auto_runtime_minutes": positive_int(max_auto_runtime_minutes, 20),
+                "post_training_review_mode": review_mode,
+                "max_auto_images": auto_images,
+                "max_auto_runtime_minutes": auto_runtime,
                 "auto_review_provider": auto_review_provider.strip() or "default",
                 "include_neighbor_epochs": include_neighbor_epochs == "1",
             }
@@ -3053,9 +3083,9 @@ def job_create(
         "trigger_word": job_trigger_word,
         "params": params,
         "repeats_auto_calculated": repeats_auto_calculated == "1",
-        "post_training_review_mode": normalized_review_mode(post_training_review_mode),
-        "max_auto_images": positive_int(max_auto_images, 18),
-        "max_auto_runtime_minutes": positive_int(max_auto_runtime_minutes, 20),
+        "post_training_review_mode": review_mode,
+        "max_auto_images": auto_images,
+        "max_auto_runtime_minutes": auto_runtime,
         "auto_review_provider": auto_review_provider.strip() or "default",
         "include_neighbor_epochs": include_neighbor_epochs == "1",
     })
@@ -3283,6 +3313,8 @@ def job_detail(
     selected_lora_profile = selected_lora_profile_for_display(job_id, selected_output)
     recommendations = list_recommendations(job_id)
     review_preparation = review_session_summary(job_id, current_session_id=review_session_id)
+    candidate_standard_estimate_data = candidate_standard_estimate(job_id)
+    candidate_standard_groups = latest_candidate_comparison_groups(job_id)
     review_prepare = normalize_review_prepare_message(review_prepare, review_preparation)
     operation_monitor = job_operation_monitor(job, review_preparation)
     machine_score_map = score_map_for_samples(job_id)
@@ -3331,6 +3363,8 @@ def job_detail(
         selected_lora_profile=selected_lora_profile,
         recommendations=recommendations,
         review_preparation=review_preparation,
+        candidate_standard_estimate=candidate_standard_estimate_data,
+        candidate_standard_groups=candidate_standard_groups,
         operation_monitor=operation_monitor,
         rubric_options=rubric_options(),
         validation_pack_path=validation_pack_path(job_id),
@@ -3450,6 +3484,73 @@ def job_review_preparation_run(request: Request, job_id: int):
             }
         )
     return RedirectResponse(f"/jobs/{job_id}?review_prepare={quote(f'Review Preparationを開始しました。PID: {pid}')}#review-preparation", status_code=303)
+
+
+@app.post("/jobs/{job_id}/candidate-comparisons/standard/create")
+def job_candidate_standard_create(job_id: int, force: str = Form("")) -> RedirectResponse:
+    try:
+        group = ensure_candidate_standard_comparison_group(job_id, force=force == "1")
+    except Exception as exc:
+        return RedirectResponse(f"/jobs/{job_id}?review_prepare_error={quote(str(exc))}#candidate-standard-comparison", status_code=303)
+    group_id = int(group["id"])
+    return RedirectResponse(
+        f"/jobs/{job_id}?review_prepare={quote(f'Standard Candidate Comparison group #{group_id} を作成しました。')}#candidate-standard-comparison",
+        status_code=303,
+    )
+
+
+@app.post("/jobs/{job_id}/candidate-comparisons/standard/run")
+def job_candidate_standard_run(job_id: int, force: str = Form("")) -> RedirectResponse:
+    try:
+        group = ensure_candidate_standard_comparison_group(job_id, force=force == "1")
+        group_id = int(group["id"])
+        start_candidate_standard_comparison(group_id)
+    except Exception as exc:
+        return RedirectResponse(f"/jobs/{job_id}?review_prepare_error={quote(str(exc))}#candidate-standard-comparison", status_code=303)
+    return RedirectResponse(
+        f"/jobs/{job_id}?review_prepare={quote(f'Standard Candidate Comparison group #{group_id} を開始しました。')}#candidate-standard-comparison",
+        status_code=303,
+    )
+
+
+@app.post("/jobs/{job_id}/candidate-comparisons/{group_id}/run")
+def job_candidate_standard_group_run(job_id: int, group_id: int) -> RedirectResponse:
+    group = fetch_one("SELECT * FROM candidate_comparison_groups WHERE id = ? AND job_id = ?", (group_id, job_id))
+    if group is None:
+        raise HTTPException(status_code=404, detail="Candidate comparison group not found")
+    try:
+        start_candidate_standard_comparison(group_id)
+    except Exception as exc:
+        return RedirectResponse(f"/jobs/{job_id}?review_prepare_error={quote(str(exc))}#candidate-standard-comparison", status_code=303)
+    return RedirectResponse(f"/jobs/{job_id}?review_prepare={quote(f'Standard Candidate Comparison group #{group_id} を開始しました。')}#candidate-standard-comparison", status_code=303)
+
+
+@app.post("/jobs/{job_id}/candidate-comparisons/{group_id}/matrix/build")
+def job_candidate_standard_group_matrix_build(job_id: int, group_id: int) -> RedirectResponse:
+    group = fetch_one("SELECT * FROM candidate_comparison_groups WHERE id = ? AND job_id = ?", (group_id, job_id))
+    if group is None:
+        raise HTTPException(status_code=404, detail="Candidate comparison group not found")
+    try:
+        matrix_path = write_group_cross_matrix(group_id)
+        with connect() as conn:
+            conn.execute(
+                "UPDATE candidate_comparison_groups SET matrix_path = ?, status = CASE WHEN status = 'planned' THEN 'ready_for_review' ELSE status END, updated_at = ? WHERE id = ?",
+                (matrix_path, settings_now(), group_id),
+            )
+    except Exception as exc:
+        return RedirectResponse(f"/jobs/{job_id}?review_prepare_error={quote(str(exc))}#candidate-standard-comparison", status_code=303)
+    return RedirectResponse(f"/jobs/{job_id}?review_prepare={quote('Standard Candidate Comparisonの横断Matrixを作成しました。')}#candidate-standard-comparison", status_code=303)
+
+
+@app.get("/jobs/{job_id}/candidate-comparisons/{group_id}/matrix", response_class=HTMLResponse)
+def job_candidate_standard_group_matrix(job_id: int, group_id: int) -> HTMLResponse:
+    group = fetch_one("SELECT * FROM candidate_comparison_groups WHERE id = ? AND job_id = ?", (group_id, job_id))
+    if group is None:
+        raise HTTPException(status_code=404, detail="Candidate comparison group not found")
+    matrix_path = group["matrix_path"]
+    if not matrix_path or not Path(str(matrix_path)).exists():
+        raise HTTPException(status_code=404, detail="Candidate comparison matrix not generated yet")
+    return HTMLResponse(Path(str(matrix_path)).read_text(encoding="utf-8", errors="replace"))
 
 
 @app.post("/jobs/{job_id}/review-sessions/{session_id}/run")
@@ -3668,6 +3769,13 @@ def job_edit_save(
         except (TypeError, ValueError):
             return default
 
+    review_mode = normalized_review_mode(post_training_review_mode)
+    auto_images, auto_runtime = normalize_review_automation_limits(
+        review_mode,
+        positive_int(max_auto_images, 18),
+        positive_int(max_auto_runtime_minutes, 20),
+    )
+
     job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -3764,9 +3872,9 @@ def job_edit_save(
                 json.dumps(step_estimate, ensure_ascii=False),
                 1 if repeats_auto_calculated == "1" else 0,
                 step_estimate["target_source"],
-                normalized_review_mode(post_training_review_mode),
-                positive_int(max_auto_images, 18),
-                positive_int(max_auto_runtime_minutes, 20),
+                review_mode,
+                auto_images,
+                auto_runtime,
                 auto_review_provider.strip() or "default",
                 1 if include_neighbor_epochs == "1" else 0,
                 now,
@@ -4756,7 +4864,7 @@ def validation_run_matrix_rebuild(run_id: int) -> RedirectResponse:
 @app.post("/validation-runs/{run_id}/generation/run")
 def validation_generation_run(run_id: int) -> RedirectResponse:
     try:
-        start_validation_generation(run_id)
+        start_validation_generation(run_id, run_missing_review_after=True)
     except (ValueError, RuntimeError) as exc:
         return RedirectResponse(f"/validation-runs/{run_id}?generation_error={quote(str(exc))}", status_code=303)
     return RedirectResponse(f"/validation-runs/{run_id}", status_code=303)
@@ -4768,7 +4876,7 @@ def job_validation_generation_run(job_id: int, run_id: int) -> RedirectResponse:
     if run is None:
         raise HTTPException(status_code=404, detail="Validation Run not found")
     try:
-        start_validation_generation(run_id)
+        start_validation_generation(run_id, run_missing_review_after=True)
     except (ValueError, RuntimeError) as exc:
         return RedirectResponse(f"/jobs/{job_id}?generation_error={quote(str(exc))}#validation-runs", status_code=303)
     return RedirectResponse(f"/jobs/{job_id}#validation-runs", status_code=303)
@@ -4791,10 +4899,14 @@ def job_validation_generation_run_selected(job_id: int, run_ids: list[int] = For
     if not valid_run_ids:
         return RedirectResponse(f"/jobs/{job_id}?generation_error={quote('選択した検証Runが見つかりません。')}#validation-runs", status_code=303)
     try:
-        count = start_validation_generation_sequence(valid_run_ids)
+        count = start_validation_generation_sequence(
+            valid_run_ids,
+            run_missing_review_after=True,
+            missing_review_run_ids=valid_run_ids,
+        )
     except (ValueError, RuntimeError) as exc:
         return RedirectResponse(f"/jobs/{job_id}?generation_error={quote(str(exc))}#validation-runs", status_code=303)
-    message = f"選択した検証Run {count} 件の画像生成を順番に開始しました。"
+    message = f"選択した検証Run {count} 件の画像生成を順番に開始しました。生成完了後に不足Embedding / 不足Machine Reviewを自動で再計算します。"
     return RedirectResponse(f"/jobs/{job_id}?generation_message={quote(message)}#validation-runs", status_code=303)
 
 
@@ -4952,10 +5064,10 @@ def validation_matrix_add_weights(run_id: int, selected_weights: list[str] = For
             write_validation_matrix(run_id)
             message = f"選択weightはすべて生成済みです。既存画像をスキップしました。追加条件: {summary['added_conditions']}件。"
             return RedirectResponse(f"/validation-runs/{run_id}/matrix?weight_message={quote(message)}", status_code=303)
-        start_validation_generation(run_id)
+        start_validation_generation(run_id, run_missing_review_after=True)
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    message = f"選択weightの不足画像 {missing_count} 件を生成開始しました。既存画像はスキップします。"
+    message = f"選択weightの不足画像 {missing_count} 件を生成開始しました。生成完了後に不足Embedding / 不足Machine Reviewを自動で再計算します。既存画像はスキップします。"
     return RedirectResponse(f"/validation-runs/{run_id}/matrix?weight_message={quote(message)}", status_code=303)
 
 
@@ -4969,15 +5081,48 @@ def validation_matrix_missing_review(run_id: int) -> RedirectResponse:
     return RedirectResponse(f"/validation-runs/{run_id}/matrix?weight_message={quote(message)}", status_code=303)
 
 
+def _canonical_matrix_run_ids(request: Request | None, form_run_ids: list[int]) -> list[int]:
+    values: list[int] = []
+    for value in form_run_ids:
+        try:
+            run_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if run_id > 0:
+            values.append(run_id)
+    if request is not None:
+        for name in ("run_ids", "run_id"):
+            for value in request.query_params.getlist(name):
+                try:
+                    run_id = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if run_id > 0:
+                    values.append(run_id)
+    return list(dict.fromkeys(values))
+
+
 @app.get("/jobs/{job_id}/validation-runs/epoch-matrix", response_class=HTMLResponse)
 def validation_epoch_cross_matrix(
+    request: Request,
     job_id: int,
     run_ids: list[int] = Query(default=[]),
+    run_id: list[int] = Query(default=[]),
     display_weights: list[str] = Query(default=[]),
     matrix_message: str = Query(""),
 ) -> HTMLResponse:
+    canonical_run_ids = list(dict.fromkeys(int(value) for value in [*run_ids, *run_id] if int(value) > 0))
+    canonical_weights = normalize_matrix_weights(display_weights)
+    canonical_params: list[tuple[str, Any]] = [("run_ids", value) for value in canonical_run_ids]
+    canonical_params.extend(("display_weights", f"{weight:g}") for weight in canonical_weights)
+    if matrix_message:
+        canonical_params.append(("matrix_message", matrix_message))
+    canonical_query = urlencode(canonical_params)
+    if request.url.query != canonical_query:
+        suffix = f"?{canonical_query}" if canonical_query else ""
+        return RedirectResponse(f"/jobs/{job_id}/validation-runs/epoch-matrix{suffix}", status_code=303)
     try:
-        html_text = build_epoch_cross_matrix_html(job_id, run_ids, display_weights=display_weights)
+        html_text = build_epoch_cross_matrix_html(job_id, canonical_run_ids, display_weights=canonical_weights)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if matrix_message:
@@ -4987,8 +5132,12 @@ def validation_epoch_cross_matrix(
 
 
 @app.post("/jobs/{job_id}/validation-runs/epoch-matrix/missing-review")
-def validation_epoch_cross_matrix_missing_review(job_id: int, run_ids: list[int] = Form(default=[])) -> RedirectResponse:
-    unique_run_ids = list(dict.fromkeys(int(run_id) for run_id in run_ids if int(run_id) > 0))
+def validation_epoch_cross_matrix_missing_review(
+    job_id: int,
+    run_ids: list[int] = Form(default=[]),
+    request: Request = None,
+) -> RedirectResponse:
+    unique_run_ids = _canonical_matrix_run_ids(request, run_ids)
     base_params = [("run_ids", run_id) for run_id in unique_run_ids]
     destination = f"/jobs/{job_id}/validation-runs/epoch-matrix"
     try:
@@ -5006,8 +5155,9 @@ def validation_epoch_cross_matrix_add_weights(
     job_id: int,
     run_ids: list[int] = Form(default=[]),
     selected_weights: list[str] = Form(default=[]),
+    request: Request = None,
 ) -> RedirectResponse:
-    unique_run_ids = list(dict.fromkeys(int(run_id) for run_id in run_ids if int(run_id) > 0))
+    unique_run_ids = _canonical_matrix_run_ids(request, run_ids)
     base_params = [("run_ids", run_id) for run_id in unique_run_ids]
     destination = f"/jobs/{job_id}/validation-runs/epoch-matrix"
     generation_run_ids: list[int] = []
@@ -5024,16 +5174,22 @@ def validation_epoch_cross_matrix_add_weights(
             if missing_validation_generation_count(run_id) > 0:
                 generation_run_ids.append(run_id)
         if generation_run_ids:
-            start_validation_generation_sequence(generation_run_ids)
+            start_validation_generation_sequence(
+                generation_run_ids,
+                run_missing_review_after=True,
+                missing_review_run_ids=unique_run_ids,
+            )
             message = (
                 f"表示中Run {len(unique_run_ids)} 件にweight条件を反映しました。"
-                f"不足画像がある {len(generation_run_ids)} 件の生成を開始しました。追加条件: {added_conditions}件。"
+                f"不足画像がある {len(generation_run_ids)} 件の生成を開始しました。"
+                "生成完了後に不足Embedding / 不足Machine Reviewを自動で再計算します。"
+                f"追加条件: {added_conditions}件。"
             )
         else:
-            for run_id in unique_run_ids:
-                write_validation_matrix(run_id)
+            start_missing_validation_review_sequences(unique_run_ids)
             message = (
-                f"選択weightはすべて生成済みです。既存画像をスキップしました。追加条件: {added_conditions}件。"
+                f"選択weightはすべて生成済みです。既存画像をスキップし、不足Embedding / 不足Machine Reviewの再計算を開始しました。"
+                f"追加条件: {added_conditions}件。"
             )
     except (ValueError, RuntimeError) as exc:
         query = urlencode([*base_params, ("matrix_message", str(exc))])

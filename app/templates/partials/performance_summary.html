@@ -1,34 +1,34 @@
 {% if performance_summary %}
 <section class="notice performance-summary">
-  <h2>Performance Summary</h2>
-  <p class="muted">sd-scripts画像生成、Embedding、Machine Review、Matrix作成の所要時間をLoRA-Studio側の観測時刻と生成画像mtimeから推定します。</p>
+  <h2>処理時間サマリ</h2>
+  <p class="muted">sd-scripts画像生成、Embedding、機械補助レビュー、Matrix作成の所要時間をLoRA-Studio側の観測時刻と生成画像mtimeから推定します。</p>
   {% if performance_summary.warnings %}
   {% for warning in performance_summary.warnings %}
   <p class="notice warning">{{ warning }}</p>
   {% endfor %}
   {% endif %}
   <div class="summary-grid">
-    <div><span>total elapsed</span><strong>{{ format_seconds(performance_summary.total_elapsed_seconds) }}</strong></div>
-    <div><span>generation elapsed</span><strong>{{ format_seconds(performance_summary.generation_elapsed_seconds) }}</strong></div>
-    <div><span>import elapsed</span><strong>{{ format_seconds(performance_summary.import_elapsed_seconds) }}</strong></div>
-    <div><span>embedding elapsed</span><strong>{{ format_seconds(performance_summary.embedding_elapsed_seconds) }}</strong></div>
-    <div><span>machine review elapsed</span><strong>{{ format_seconds(performance_summary.machine_review_elapsed_seconds) }}</strong></div>
-    <div><span>matrix elapsed</span><strong>{{ format_seconds(performance_summary.matrix_elapsed_seconds) }}</strong></div>
-    <div><span>generation process count</span><strong>{{ performance_summary.generation_process_count }}</strong></div>
-    <div><span>avg seconds per image</span><strong>{{ performance_summary.avg_seconds_per_image if performance_summary.avg_seconds_per_image is not none else '-' }}</strong></div>
-    <div><span>estimated model load overhead</span><strong>{{ format_seconds(performance_summary.estimated_model_load_overhead_seconds) }}</strong></div>
-    <div><span>embedding provider</span><strong>{{ performance_summary.embedding_runtime.provider or '-' }}</strong></div>
-    <div><span>embedding device</span><strong>{{ performance_summary.embedding_runtime.device or '-' }}</strong></div>
-    <div><span>embedding dtype</span><strong>{{ performance_summary.embedding_runtime.dtype or '-' }}</strong></div>
-    <div><span>embedding batch_size</span><strong>{{ performance_summary.embedding_runtime.batch_size or '-' }}</strong></div>
+    <div><span>合計時間</span><strong>{{ format_seconds(performance_summary.total_elapsed_seconds) }}</strong></div>
+    <div><span>画像生成時間</span><strong>{{ format_seconds(performance_summary.generation_elapsed_seconds) }}</strong></div>
+    <div><span>取り込み時間</span><strong>{{ format_seconds(performance_summary.import_elapsed_seconds) }}</strong></div>
+    <div><span>Embedding時間</span><strong>{{ format_seconds(performance_summary.embedding_elapsed_seconds) }}</strong></div>
+    <div><span>機械補助レビュー時間</span><strong>{{ format_seconds(performance_summary.machine_review_elapsed_seconds) }}</strong></div>
+    <div><span>Matrix作成時間</span><strong>{{ format_seconds(performance_summary.matrix_elapsed_seconds) }}</strong></div>
+    <div><span>画像生成プロセス数</span><strong>{{ performance_summary.generation_process_count }}</strong></div>
+    <div><span>1枚あたり平均秒数</span><strong>{{ performance_summary.avg_seconds_per_image if performance_summary.avg_seconds_per_image is not none else '-' }}</strong></div>
+    <div><span>推定モデルロード時間</span><strong>{{ format_seconds(performance_summary.estimated_model_load_overhead_seconds) }}</strong></div>
+    <div><span>Embedding provider</span><strong>{{ performance_summary.embedding_runtime.provider or '-' }}</strong></div>
+    <div><span>Embedding device</span><strong>{{ performance_summary.embedding_runtime.device or '-' }}</strong></div>
+    <div><span>Embedding dtype</span><strong>{{ performance_summary.embedding_runtime.dtype or '-' }}</strong></div>
+    <div><span>Embedding batch_size</span><strong>{{ performance_summary.embedding_runtime.batch_size or '-' }}</strong></div>
   </div>
   <details>
-    <summary>sd-scripts generation commands</summary>
+    <summary>sd-scripts画像生成コマンド</summary>
     {% if performance_summary.commands %}
     <table>
       <thead>
         <tr>
-          <th>#</th><th>name</th><th>conditions</th><th>outputs</th><th>elapsed</th><th>first image</th><th>last image</th><th>LoRA</th>
+          <th>#</th><th>名前</th><th>条件数</th><th>出力数</th><th>所要時間</th><th>最初の画像</th><th>最後の画像</th><th>LoRA</th>
         </tr>
       </thead>
       <tbody>
@@ -47,27 +47,27 @@
       </tbody>
     </table>
     {% else %}
-    <p class="muted">generation command timingはまだありません。</p>
+    <p class="muted">画像生成コマンドの計測情報はまだありません。</p>
     {% endif %}
   </details>
   <details>
-    <summary>Import detail</summary>
+    <summary>取り込み詳細</summary>
     {% set import_detail = performance_summary.stage_timing.import_detail or {} %}
     {% if import_detail %}
     <div class="summary-grid">
-      <div><span>file scan</span><strong>{{ format_seconds(import_detail.file_scan_seconds) }}</strong></div>
-      <div><span>condition hash match</span><strong>{{ format_seconds(import_detail.condition_hash_match_seconds) }}</strong></div>
-      <div><span>duplicate check</span><strong>{{ format_seconds(import_detail.duplicate_check_seconds) }}</strong></div>
-      <div><span>image open / dimension</span><strong>{{ format_seconds(import_detail.image_open_dimension_seconds) }}</strong></div>
+      <div><span>ファイル走査</span><strong>{{ format_seconds(import_detail.file_scan_seconds) }}</strong></div>
+      <div><span>条件hash照合</span><strong>{{ format_seconds(import_detail.condition_hash_match_seconds) }}</strong></div>
+      <div><span>重複確認</span><strong>{{ format_seconds(import_detail.duplicate_check_seconds) }}</strong></div>
+      <div><span>画像サイズ確認</span><strong>{{ format_seconds(import_detail.image_open_dimension_seconds) }}</strong></div>
       <div><span>sha256</span><strong>{{ format_seconds(import_detail.sha256_seconds) }}</strong></div>
-      <div><span>DB insert/update</span><strong>{{ format_seconds(import_detail.db_write_seconds) }}</strong></div>
-      <div><span>scanned files</span><strong>{{ import_detail.scanned_files or 0 }}</strong></div>
-      <div><span>image files</span><strong>{{ import_detail.image_files or 0 }}</strong></div>
-      <div><span>duplicates</span><strong>{{ import_detail.duplicates or 0 }}</strong></div>
-      <div><span>inserted</span><strong>{{ import_detail.inserted or 0 }}</strong></div>
+      <div><span>DB書き込み</span><strong>{{ format_seconds(import_detail.db_write_seconds) }}</strong></div>
+      <div><span>走査ファイル数</span><strong>{{ import_detail.scanned_files or 0 }}</strong></div>
+      <div><span>画像ファイル数</span><strong>{{ import_detail.image_files or 0 }}</strong></div>
+      <div><span>重複数</span><strong>{{ import_detail.duplicates or 0 }}</strong></div>
+      <div><span>登録数</span><strong>{{ import_detail.inserted or 0 }}</strong></div>
     </div>
     {% else %}
-    <p class="muted">Import detail timingはまだありません。</p>
+    <p class="muted">取り込み詳細の計測情報はまだありません。</p>
     {% endif %}
   </details>
 </section>

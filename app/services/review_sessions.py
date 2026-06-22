@@ -1402,6 +1402,13 @@ def review_automation_settings_for_job(job_id: int) -> dict[str, Any]:
     result["post_training_review_mode"] = mode if mode in POST_TRAINING_REVIEW_MODES else "plan_only"
     result["max_auto_images"] = max(1, int(result.get("max_auto_images") or 18))
     result["max_auto_runtime_minutes"] = max(1, int(result.get("max_auto_runtime_minutes") or 20))
+    if result["post_training_review_mode"] == "standard_auto":
+        if result["max_auto_images"] == 18:
+            result["max_auto_images"] = 150
+        if result["max_auto_runtime_minutes"] == 20:
+            result["max_auto_runtime_minutes"] = 240
+    elif result["post_training_review_mode"] == "quick_auto" and result["max_auto_runtime_minutes"] == 20:
+        result["max_auto_runtime_minutes"] = 60
     result["include_neighbor_epochs"] = 1 if str(result.get("include_neighbor_epochs") or "0") in {"1", "true", "True", "yes"} else 0
     return result
 

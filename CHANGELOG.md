@@ -1,5 +1,31 @@
 # Changelog
 
+## phase11.9.1 / v0.4.6-beta - 2026-06-23
+
+LoRA Studio phase11.9.1 / v0.4.6-beta consolidates Candidate Standard Comparison, Retry Signal Summary, performance profiling, and validation image generation follow-up review automation into the current beta release.
+
+### 主な変更
+
+- Candidate Standard Comparisonでloss候補epochごとにStandard Validation v1を作成し、comparison groupとして一括実行・横断Matrix確認できるようにしました。
+- Validation画像生成の通常操作は、生成完了後に不足Embedding / Machine Reviewまで自動で再計算する導線へ統合しました。
+- 横断Matrixのweight追加生成も、追加生成後に不足レビュー再計算まで自動で続くようにしました。
+- Job詳細のValidation Run一覧で、画像生成とレビュー計算の一括操作を分かりやすく整理しました。
+- Retry Signal Summary、Performance Summary、Post-training Review Automationの表示・文言・導線を調整しました。
+
+## Phase 11.7.1 Candidate Standard Comparison
+
+Phase 11.7.1 adds a Standard Candidate Comparison route for running Standard Validation v1 across loss candidate epochs as one comparison group.
+
+### 主な変更
+
+- Review Preparationに `Quick Candidate Review` / `Standard Candidate Comparison` / `Manual` の方式選択を追加しました。
+- loss候補epochの `primary` / `secondary` / `check` を対象に、Standard Validation v1のValidation Runを候補epochごとに作成できるようにしました。
+- `candidate_comparison_groups` を追加し、候補epoch、Validation Run群、想定画像数、実行状態、横断Matrixパスをまとめて追跡します。
+- Standard Candidate Comparison groupから画像生成、import、Embedding、Machine Review、各Run Matrix、Epoch横断Matrixまで一括実行できます。
+- 開始前に候補epoch数、45枚 x epoch数、推定時間、推定容量を表示します。
+- Quick Candidate Reviewは採用epochを決める軽量レビュー、Standard Candidate Comparisonは候補epochの標準45枚比較、Weight Calibrationは採用済みLoRAの推奨weight決定としてUI文言を整理しました。
+- SQLite接続にbusy timeout / WAL設定を追加し、background worker更新には軽いretry/backoffを入れました。
+
 ## Unreleased - Phase 11.9.0
 
 LoRA Studio Phase 11.9.0 adds Retry Signal Summary as a read-only decision aid before any automatic retry workflow.

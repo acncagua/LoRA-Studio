@@ -34,8 +34,9 @@
   <div>
     <h2>Job全体の主要操作</h2>
     <div class="actions primary-action">
-      {% if action_state.edit %}<a class="button" href="/jobs/{{ job.id }}/edit">学習ジョブを編集</a>{% endif %}
-      {% if job.status == 'draft' and action_state.prepare %}
+      {% if action_state.dirty and action_state.prepare %}
+      <form method="post" action="/jobs/{{ job.id }}/prepare"><button type="submit">ファイル準備を再実行</button></form>
+      {% elif job.status == 'draft' and action_state.prepare %}
       <form method="post" action="/jobs/{{ job.id }}/prepare"><button type="submit">ファイル準備</button></form>
       {% elif job.status in ['prepared', 'failed', 'stopped'] and action_state.run %}
       <form method="post" action="/jobs/{{ job.id }}/run">
@@ -60,6 +61,8 @@
       <form method="post" action="/jobs/{{ job.id }}/review-preparation/run" data-review-preparation-run-form><button type="submit" data-review-preparation-run-button>候補レビューを作成</button></form>
       {% elif job.status == 'failed' %}
       <a class="button danger" href="#technical-log">ログを確認</a>
+      {% elif action_state.edit %}
+      <a class="button" href="/jobs/{{ job.id }}/edit">学習ジョブを編集</a>
       {% else %}
       <a class="button" href="#overview">概要を確認</a>
       {% endif %}
@@ -137,13 +140,94 @@
   <h2>レビュー準備</h2>
   <p>採用前に候補epochを比較するための準備です。loss候補epochの前後を少数prompt / weightで生成し、横断Matrixで見比べます。採用後の45枚標準検証はweight検証Runとして別に実行します。</p>
   <div class="summary-grid">
-    <div><span>Project default</span><strong>{{ project.post_training_review_mode if project else 'plan_only' }}</strong></div>
-    <div><span>Job override</span><strong>{{ job.post_training_review_mode or 'inherit' }}</strong></div>
-    <div><span>Post-training Review</span><strong>{{ job.post_training_review_mode or (project.post_training_review_mode if project else 'plan_only') or 'plan_only' }}</strong></div>
+    <div><span>Project既定</span><strong>{{ {'manual': '手動', 'plan_only': '計画のみ', 'quick_auto': 'クイック自動', 'standard_auto': '標準自動'}.get(project.post_training_review_mode if project else 'plan_only', project.post_training_review_mode if project else '計画のみ') }}</strong></div>
+    <div><span>Job側設定</span><strong>{{ {'manual': '手動', 'plan_only': '計画のみ', 'quick_auto': 'クイック自動', 'standard_auto': '標準自動'}.get(job.post_training_review_mode, 'Project既定を使用') }}</strong></div>
+    <div><span>学習後レビュー</span><strong>{{ {'manual': '手動', 'plan_only': '計画のみ', 'quick_auto': 'クイック自動', 'standard_auto': '標準自動'}.get(job.post_training_review_mode or (project.post_training_review_mode if project else 'plan_only') or 'plan_only', '計画のみ') }}</strong></div>
     <div><span>Automation状態</span><strong>{{ job.post_training_review_status or '-' }}</strong></div>
     <div><span>最大自動画像</span><strong>{{ job.max_auto_images or (project.max_auto_images if project else 18) or 18 }}</strong></div>
     <div><span>近隣epoch</span><strong>{{ 'include' if (job.include_neighbor_epochs or (project and project.include_neighbor_epochs)) else 'quick only' }}</strong></div>
   </div>
+  <section id="candidate-standard-comparison" class="subsection">
+    <h3>レビュー方式</h3>
+    <div class="panel-grid three-column">
+      <div class="notice">
+        <h4>クイック候補レビュー</h4>
+        <p class="muted">採用epochを決める軽量レビューです。少数prompt / seed / weightで候補epochを素早く横断確認します。</p>
+        <form method="post" action="/jobs/{{ job.id }}/review-preparation/run" data-review-preparation-run-form>
+          <button type="submit" data-review-preparation-run-button {% if outputs|length == 0 %}disabled{% endif %}>クイック候補レビューを開始</button>
+        </form>
+      </div>
+      <div class="notice">
+        <h4>標準候補比較</h4>
+        <p class="muted">loss候補epochごとにStandard Validation v1を作成し、45枚 x 候補epoch数で重めに比較します。</p>
+        <dl>
+          <dt>候補epoch</dt><dd>{{ candidate_standard_estimate.candidate_epochs|join(', ') if candidate_standard_estimate.candidate_epochs else '-' }}</dd>
+          <dt>画像数</dt><dd>{{ candidate_standard_estimate.images_per_epoch }} × {{ candidate_standard_estimate.epoch_count }} = {{ candidate_standard_estimate.expected_total_images }}</dd>
+          <dt>推定時間</dt><dd>約 {{ candidate_standard_estimate.estimated_runtime_minutes }} 分</dd>
+          <dt>推定容量</dt><dd>約 {{ candidate_standard_estimate.estimated_storage_gb }} GB</dd>
+        </dl>
+        <div class="inline-actions">
+          <form method="post" action="/jobs/{{ job.id }}/candidate-comparisons/standard/create">
+            <button type="submit" {% if outputs|length == 0 or not candidate_standard_estimate.candidate_epochs %}disabled{% endif %}>比較グループを作成</button>
+          </form>
+          <form method="post" action="/jobs/{{ job.id }}/candidate-comparisons/standard/run">
+            <button type="submit" {% if outputs|length == 0 or not candidate_standard_estimate.candidate_epochs %}disabled{% endif %}>標準比較を一括実行</button>
+          </form>
+        </div>
+      </div>
+      <div class="notice">
+        <h4>手動</h4>
+        <p class="muted">特殊な候補epochやpresetを使う場合の手動導線です。検証タブでValidation Runを個別に作成してください。</p>
+        <a class="button secondary" href="#tab-validation">検証タブへ</a>
+        <p class="muted">Weight Calibrationは採用済みLoRAの推奨weightを決める検証です。採用epoch決定前の候補比較とは別工程です。</p>
+      </div>
+    </div>
+    {% if candidate_standard_groups %}
+    <h4>標準候補比較グループ</h4>
+    <div class="table-scroll">
+      <table class="wide-table compact-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>状態</th>
+            <th>候補epoch</th>
+            <th>検証Run</th>
+            <th>画像</th>
+            <th>Embedding</th>
+            <th>機械補助レビュー</th>
+            <th>Matrix</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for group in candidate_standard_groups %}
+          <tr>
+            <td>#{{ group.id }}</td>
+            <td><span class="label {{ group.status }}">{{ group.status }}</span>{% if group.error_message %}<br><span class="muted">{{ group.error_message }}</span>{% endif %}</td>
+            <td>{{ group.candidate_epochs|join(', ') }}</td>
+            <td>{% for run_id in group.validation_run_ids %}<a href="/validation-runs/{{ run_id }}">#{{ run_id }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</td>
+            <td>{{ group.registered_image_count }} / {{ group.expected_total_images }}</td>
+            <td>{{ group.embedding_ready_count }} / {{ group.expected_total_images }}</td>
+            <td>{{ group.machine_review_score_count }} / {{ group.expected_total_images }}</td>
+            <td><span class="label {% if group.matrix_ready %}completed{% elif group.matrix_path %}warning{% else %}unknown{% endif %}">{% if group.matrix_ready %}作成済み{% elif group.matrix_path %}パスあり / ファイルなし{% else %}未作成{% endif %}</span></td>
+            <td class="inline-actions">
+              {% if group.matrix_ready %}
+              <a class="button small-button" href="/jobs/{{ job.id }}/candidate-comparisons/{{ group.id }}/matrix" target="_blank" rel="noopener">横断Matrix</a>
+              {% endif %}
+              {% if group.status not in ['running', 'generating_images', 'embedding_images', 'machine_reviewing', 'building_matrix'] %}
+              <form method="post" action="/jobs/{{ job.id }}/candidate-comparisons/{{ group.id }}/run"><button class="small-button" type="submit">一括実行</button></form>
+              <form method="post" action="/jobs/{{ job.id }}/candidate-comparisons/{{ group.id }}/matrix/build"><button class="small-button secondary" type="submit">Matrix作成</button></form>
+              {% else %}
+              <span class="button small-button disabled">実行中</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </section>
   {% if job.post_training_review_message %}
   <p class="muted">{{ job.post_training_review_message }}</p>
   {% elif (job.post_training_review_mode or (project.post_training_review_mode if project else 'plan_only')) == 'manual' %}
@@ -330,8 +414,8 @@
       <dt>Step確認</dt><dd><span class="label {{ (job.step_consistency_label or 'unknown')|lower }}">{{ job.step_consistency_label or '-' }}</span> {{ job.step_consistency_message or '' }}</dd>
       <dt>作成時想定Step</dt><dd>{{ job.expected_total_steps_at_creation if job.expected_total_steps_at_creation is not none else '-' }}</dd>
       <dt>作成時Step判定</dt><dd>{{ job.step_status_at_creation or '-' }}</dd>
-      <dt>target steps source</dt><dd>{{ job.target_steps_source or '-' }}</dd>
-      <dt>repeats auto calculated</dt><dd>{{ 'yes' if job.repeats_auto_calculated else 'no' }}</dd>
+      <dt>目標Stepの参照元</dt><dd>{{ {'recipe': 'レシピ', 'optimizer_profile': 'Optimizerプロファイル', 'optimizer_definition': 'Optimizer定義', 'global': '全体既定'}.get(job.target_steps_source, job.target_steps_source or '-') }}</dd>
+      <dt>repeats自動計算</dt><dd>{{ 'はい' if job.repeats_auto_calculated else 'いいえ' }}</dd>
       <dt>no_metadata</dt><dd>{{ '有効' if no_metadata_enabled else '無効' }}</dd>
       <dt>実行フォルダ</dt><dd>{{ job.run_dir }}</dd>
       <dt>アーカイブ</dt><dd>{% if job.archived_at %}{{ job.archived_at }}{% if job.archived_reason %} / {{ job.archived_reason }}{% endif %}{% else %}-{% endif %}</dd>
@@ -345,9 +429,9 @@
     <p data-adopted-model-path>{{ job.adopted_model_path or '未選択' }}</p>
     {% if selected_output %}
     <dl>
-      <dt>Export済み</dt><dd>{{ 'yes' if selected_output.external_copy_path else 'no' }}</dd>
+      <dt>Export済み</dt><dd>{{ 'はい' if selected_output.external_copy_path else 'いいえ' }}</dd>
       <dt>Export先</dt><dd>{{ selected_output.external_copy_path or '-' }}</dd>
-      <dt>hash一致</dt><dd>{{ 'yes' if selected_output.export_verified_at else 'no' }}</dd>
+      <dt>hash一致</dt><dd>{{ 'はい' if selected_output.export_verified_at else 'いいえ' }}</dd>
     </dl>
     {% endif %}
     {% if validation_pack_path %}<p class="muted">検証パック: {{ validation_pack_path }}</p>{% endif %}
@@ -364,14 +448,14 @@
   </div>
 </section>
 <section>
-  <h2>Step Estimate Snapshot</h2>
-  <dl>
-    <dt>expected_total_steps_at_creation</dt><dd>{{ job.expected_total_steps_at_creation if job.expected_total_steps_at_creation is not none else '-' }}</dd>
-    <dt>steps_per_epoch_at_creation</dt><dd>{{ job.steps_per_epoch_at_creation if job.steps_per_epoch_at_creation is not none else '-' }}</dd>
-    <dt>target_steps_recommended_at_creation</dt><dd>{{ job.target_steps_recommended_at_creation if job.target_steps_recommended_at_creation is not none else '-' }}</dd>
-    <dt>step_status_at_creation</dt><dd>{{ job.step_status_at_creation or '-' }}</dd>
-    <dt>target_steps_source</dt><dd>{{ job.target_steps_source or '-' }}</dd>
-    <dt>repeats_auto_calculated</dt><dd>{{ 'yes' if job.repeats_auto_calculated else 'no' }}</dd>
+  <h2>Step見積もりスナップショット</h2>
+  <dl class="wide-dl">
+    <dt>作成時の想定総Step</dt><dd>{{ job.expected_total_steps_at_creation if job.expected_total_steps_at_creation is not none else '-' }}</dd>
+    <dt>作成時の1epochあたりStep</dt><dd>{{ job.steps_per_epoch_at_creation if job.steps_per_epoch_at_creation is not none else '-' }}</dd>
+    <dt>作成時の推奨目標Step</dt><dd>{{ job.target_steps_recommended_at_creation if job.target_steps_recommended_at_creation is not none else '-' }}</dd>
+    <dt>作成時のStep判定</dt><dd>{{ job.step_status_at_creation or '-' }}</dd>
+    <dt>目標Stepの参照元</dt><dd>{{ {'recipe': 'レシピ', 'optimizer_profile': 'Optimizerプロファイル', 'optimizer_definition': 'Optimizer定義', 'global': '全体既定'}.get(job.target_steps_source, job.target_steps_source or '-') }}</dd>
+    <dt>repeats自動計算</dt><dd>{{ 'はい' if job.repeats_auto_calculated else 'いいえ' }}</dd>
   </dl>
   {% set step_estimator_interactive = false %}
   {% include "partials/step_estimate_panel.html" %}
@@ -915,7 +999,7 @@
             <td class="inline-actions">
               <a class="button" href="/validation-runs/{{ run.id }}?return_to=/jobs/{{ job.id }}%23validation-runs">詳細</a>
               <form method="post" action="/jobs/{{ job.id }}/validation-runs/{{ run.id }}/generation/run" data-generation-run-form>
-                <button type="submit" data-generation-run-button {% if run.generation_status == 'running' or running_generation %}disabled{% endif %} {% if run.generation_status == 'running' %}hidden{% endif %} {% if running_generation and run.generation_status != 'running' %}title="他の検証画像生成が実行中です"{% endif %}>画像生成を実行</button>
+                <button type="submit" data-generation-run-button {% if run.generation_status == 'running' or running_generation %}disabled{% endif %} {% if run.generation_status == 'running' %}hidden{% endif %} {% if running_generation and run.generation_status != 'running' %}title="他の検証画像生成が実行中です"{% endif %}>画像生成＋レビュー</button>
               </form>
               <form method="post" action="/jobs/{{ job.id }}/validation-runs/{{ run.id }}/generation/stop" data-generation-stop-form>
                 <button type="submit" class="danger" data-generation-stop-button {% if run.generation_status != 'running' %}disabled hidden{% endif %}>停止</button>
@@ -968,16 +1052,16 @@
       </table>
       <div class="actions">
         <form id="bulk-generation-form" method="post" action="/jobs/{{ job.id }}/validation-runs/generation/run-selected" data-bulk-generation-form>
-          <button type="submit" data-bulk-generation-button {% if validation_runs|length == 0 or running_generation %}disabled{% endif %}>選択した検証Runの画像生成を開始</button>
+          <button type="submit" data-bulk-generation-button {% if validation_runs|length == 0 or running_generation %}disabled{% endif %}>選択した検証Runの画像生成とレビュー計算を開始</button>
         </form>
         <form id="bulk-assist-form" method="post" action="/jobs/{{ job.id }}/validation-runs/assist/run-selected" data-bulk-assist-form>
-          <button type="submit" data-bulk-assist-button {% if validation_runs|length == 0 or running_generation %}disabled{% endif %}>選択した検証RunのEmbedding / 機械補助レビューを開始</button>
+          <button type="submit" data-bulk-assist-button {% if validation_runs|length == 0 or running_generation %}disabled{% endif %}>画像生成済みRunの不足レビューだけ再計算</button>
         </form>
         <form id="epoch-matrix-form" method="get" action="/jobs/{{ job.id }}/validation-runs/epoch-matrix" target="_blank" rel="noopener">
           <button type="submit" {% if validation_runs|length < 2 %}disabled{% endif %}>選択した検証RunでEpoch横断Matrixを開く</button>
         </form>
       </div>
-      <p class="muted">複数Runを選択して画像生成を開始すると、同時実行せず上から順に生成します。画像が揃ったらEmbedding / 機械補助レビューを一括で計算し、同じprompt / seed / weight条件をEpoch横断Matrixで横並び比較できます。</p>
+      <p class="muted">複数Runを選択して画像生成を開始すると、同時実行せず上から順に生成し、完了後に不足Embedding / 機械補助レビューまで自動で計算します。画像が揃ったら同じprompt / seed / weight条件をEpoch横断Matrixで横並び比較できます。</p>
     </div>
   </div>
 </section>

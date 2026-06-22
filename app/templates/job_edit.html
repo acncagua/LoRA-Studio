@@ -95,21 +95,22 @@
     <label class="checkbox-line"><input type="checkbox" name="no_metadata" value="1" {{ 'checked' if params.no_metadata else '' }}> no_metadata</label>
   </fieldset>
 
-  <fieldset class="form-fieldset">
-    <legend>Post-training Review Automation</legend>
-    <p class="muted">学習完了後の採用前Review Plan作成を自動化します。plan_onlyでは画像生成を自動開始しません。</p>
-    <label>mode
-      <select name="post_training_review_mode">
+  <fieldset class="form-fieldset" data-review-automation-settings>
+    <legend>学習後レビュー自動化</legend>
+    <p class="muted">学習完了後の採用前Review Plan作成を自動化します。「計画のみ」では画像生成を自動開始しません。</p>
+    <label>モード
+      <select name="post_training_review_mode" data-review-automation-mode>
         {% set review_mode = job.post_training_review_mode or 'plan_only' %}
-        <option value="manual" {{ 'selected' if review_mode == 'manual' else '' }}>manual</option>
-        <option value="plan_only" {{ 'selected' if review_mode == 'plan_only' else '' }}>plan_only</option>
-        <option value="quick_auto" {{ 'selected' if review_mode == 'quick_auto' else '' }}>quick_auto</option>
-        <option value="standard_auto" {{ 'selected' if review_mode == 'standard_auto' else '' }}>standard_auto</option>
+        <option value="manual" {{ 'selected' if review_mode == 'manual' else '' }}>手動</option>
+        <option value="plan_only" {{ 'selected' if review_mode == 'plan_only' else '' }}>計画のみ</option>
+        <option value="quick_auto" {{ 'selected' if review_mode == 'quick_auto' else '' }}>クイック自動（最大18枚）</option>
+        <option value="standard_auto" {{ 'selected' if review_mode == 'standard_auto' else '' }}>標準自動（45枚×候補epoch）</option>
       </select>
     </label>
-    <label>max_auto_images<input name="max_auto_images" value="{{ job.max_auto_images or 18 }}"></label>
-    <label>max_auto_runtime_minutes<input name="max_auto_runtime_minutes" value="{{ job.max_auto_runtime_minutes or 20 }}"></label>
-    <label>auto_review_provider<input name="auto_review_provider" value="{{ job.auto_review_provider or 'default' }}"></label>
+    <label>自動開始する最大画像数<input name="max_auto_images" value="{{ job.max_auto_images or 18 }}" data-review-automation-images></label>
+    <label>自動開始する最大想定時間（分）<input name="max_auto_runtime_minutes" value="{{ job.max_auto_runtime_minutes or 20 }}" data-review-automation-runtime></label>
+    <label>レビューprovider<input name="auto_review_provider" value="{{ job.auto_review_provider or 'default' }}"></label>
+    <p class="muted" data-review-automation-note>計画のみではReview Planだけ作成し、画像生成は自動開始しません。</p>
     <label class="checkbox-line"><input type="checkbox" name="include_neighbor_epochs" value="1" {{ 'checked' if job.include_neighbor_epochs else '' }}> loss候補の近隣epochも含める</label>
   </fieldset>
 

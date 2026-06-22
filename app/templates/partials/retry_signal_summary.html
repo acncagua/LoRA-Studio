@@ -1,16 +1,16 @@
 {% if retry_signal %}
 <section class="notice retry-signal-summary">
-  <h2>Retry Signal Summary</h2>
-  <p class="muted">Training / Review / Weight Calibrationの結果から、リトライ検討の材料を分類します。Draft Job作成やRunは自動実行しません。</p>
-  <p class="muted">Recommendation Engineの実験提案とは別の、読み取り専用の現状診断です。</p>
+  <h2>リトライ判断サマリ</h2>
+  <p class="muted">学習・レビュー・Weight検証の結果から、リトライ検討の材料を分類します。下書きJob作成や実行は自動では行いません。</p>
+  <p class="muted">実験提案とは別の、読み取り専用の現状診断です。</p>
   <div class="summary-grid">
     <div>
-      <span>retry_signal_label</span>
+      <span>判定ラベル</span>
       <strong><span class="status-badge">{{ retry_signal.retry_signal_label }}</span></strong>
     </div>
     <div>
-      <span>confidence</span>
-      <strong>{{ retry_signal.confidence }}</strong>
+      <span>信頼度</span>
+      <strong>{{ {'high': '高', 'medium': '中', 'low': '低'}.get(retry_signal.confidence, retry_signal.confidence) }}</strong>
     </div>
   </div>
   <div class="two-column">
