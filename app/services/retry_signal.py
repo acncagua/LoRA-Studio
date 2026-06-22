@@ -149,6 +149,14 @@ def build_retry_signal(
         reasons.append(failure)
         actions.append("失敗タグの傾向を確認し、Dataset / prompt / caption修正を優先してください。")
 
+    if label == ACCEPTABLE and profile and validation_run and validation_run["status"] in {"completed", "ready_for_review", "images_registered"}:
+        min_weight = profile["recommended_weight_min"] if "recommended_weight_min" in profile.keys() else validation_run["recommended_weight_min"]
+        max_weight = profile["recommended_weight_max"] if "recommended_weight_max" in profile.keys() else validation_run["recommended_weight_max"]
+        if min_weight is not None and max_weight is not None:
+            confidence = "high"
+            reasons.append("Selected LoRA and Weight Calibration result are available without strong retry signals.")
+            actions.append("現在のLoRAは採用可能です。推奨weightを確認し、必要ならexport / cleanupへ進んでください。")
+
     if not reasons:
         reasons.append("Step、loss、review、weight calibrationに強いRetryシグナルはありません。")
         actions.append("現状採用または追加の人間評価を優先し、自動Retryは行いません。")
@@ -229,6 +237,27 @@ def candidate_position_signal(job: Any) -> dict[str, Any]:
 def review_session_signal(review_session: Any | None) -> dict[str, Any]:
     if not review_session:
         return signal(None, [], [])
+    status = str(review_session["status"] or "")
+    if status in {"planned", "prepared"}:
+        return signal(None, [], [], {"status": status, "review_ready": False})
+    human = fetch_all(
+        """
+        SELECT epoch, AVG(rating_overall) AS avg_rating, COUNT(*) AS count
+        FROM review_session_images
+        WHERE review_session_id = ? AND rating_overall IS NOT NULL
+        GROUP BY epoch
+        ORDER BY avg_rating DESC, count DESC, epoch
+        """,
+        (review_session["id"],),
+    )
+    if human:
+        top = human[0]
+        return signal(
+            None,
+            [],
+            ["Human ratingが入力済みです。Machine Assistより人間評価を優先して採用epochを確認してください。"],
+            {"human_review_count": sum(int(row["count"] or 0) for row in human), "human_top_epoch": top["epoch"], "human_top_rating": top["avg_rating"]},
+        )
     summary = review_machine_candidate_summary(int(review_session["id"]))
     if summary.get("confidence") == "no_clear_winner":
         return signal(NO_CLEAR_WINNER, ["Review Session machine assist has no clear winner."], ["Review Matrixで候補群を人間評価し、採用epochを決めてください。"], {"candidate_group": summary.get("candidate_group")})

@@ -482,6 +482,17 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         {
             "machine_review_score_id": "INTEGER",
             "deleted_at": "TEXT",
+            "rating_face": "INTEGER",
+            "rating_costume": "INTEGER",
+            "rating_style": "INTEGER",
+            "rating_stability": "INTEGER",
+            "rating_flexibility": "INTEGER",
+            "rating_overall": "INTEGER",
+            "strength_label": "TEXT",
+            "overfit_level": "TEXT",
+            "adoption_label": "TEXT",
+            "failure_tags_json": "TEXT",
+            "rubric_version": "TEXT",
         },
     )
     conn.executescript(
@@ -2063,7 +2074,12 @@ CREATE TABLE IF NOT EXISTS review_session_images (
     prompt_key TEXT, prompt_role TEXT, seed INTEGER, lora_weight REAL,
     image_path TEXT NOT NULL, file_size INTEGER, sha256 TEXT,
     width INTEGER, height INTEGER, machine_review_score_id INTEGER,
-    deleted_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    deleted_at TEXT,
+    rating_face INTEGER, rating_costume INTEGER, rating_style INTEGER,
+    rating_stability INTEGER, rating_flexibility INTEGER, rating_overall INTEGER,
+    strength_label TEXT, overfit_level TEXT, adoption_label TEXT,
+    failure_tags_json TEXT, rubric_version TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS validation_expected_conditions (
     id INTEGER PRIMARY KEY AUTOINCREMENT, validation_run_id INTEGER NOT NULL,

@@ -98,6 +98,25 @@ Labels include `ACCEPTABLE`, `UNDERTRAINED_STEP_SHORTAGE`,
 `PARAMETER_TOO_STRONG`, `DATASET_OR_CAPTION_ISSUE`, and `NO_CLEAR_WINNER`.
 This feature does not create Draft Jobs and does not start runs automatically.
 
+Retry Signal Summary is intentionally separate from the Recommendation Engine:
+Retry Signal is a read-only diagnosis of the current result, while the Recommendation Engine creates experiment proposals and can create a Draft Job only when the user explicitly clicks that action.
+The retry signal follows a three-stage interpretation model:
+
+- Pre-Review checks training amount, target steps, loss trend, dataset/caption/trigger consistency, and candidate epoch position.
+- Machine Review checks reference similarity, dataset nearest-neighbor risk, no-clear-winner cases, and weight calibration signals.
+- Human Review takes priority whenever human ratings or notes exist; Machine Assist never overrides human visual judgment.
+
+Label meanings:
+
+- `ACCEPTABLE`: no strong retry signal; selected LoRA and validation evidence can be used as-is.
+- `UNDERTRAINED_STEP_SHORTAGE`: expected steps are below the target range; use Target Step Assistant or consider repeats/epochs changes.
+- `UNDERTRAINED_STILL_IMPROVING`: loss or best candidate suggests the run may still be improving near the end.
+- `OVERTRAINED`: later epochs or overfit signals look worse; prefer earlier epochs or lower training intensity.
+- `PARAMETER_TOO_WEAK`: LoRA effect is weak even at high weight; check dim/LR/trigger/captions.
+- `PARAMETER_TOO_STRONG`: LoRA is strong at low weight or overfit-prone; check lower LR, fewer repeats/epochs, or lower dim.
+- `DATASET_OR_CAPTION_ISSUE`: dataset, trigger, captions, reference set, or failure tags should be fixed before retrying.
+- `NO_CLEAR_WINNER`: Machine Assist does not separate candidates clearly; use human comparison or neighbor epoch review.
+
 ## Performance Notes
 
 For faster generation and review pipelines, keep large model files, `runs`,

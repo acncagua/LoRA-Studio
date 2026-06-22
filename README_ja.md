@@ -76,6 +76,27 @@ Training / Review / Weight Calibrationの結果から、リトライが必要そ
 Project詳細、Job詳細、Review Session詳細、LoRA Profile詳細に表示します。
 Draft Job作成や自動Runは行わず、判断材料として留めます。
 
+Retry Signal SummaryとRecommendation Engineの役割は明確に分けています。
+Retry Signal Summaryは現状診断だけを行う読み取り専用表示です。
+Recommendation Engineは次回実験案を作り、ユーザーが明示的に押した場合だけDraft Job作成に進みます。
+
+判定は3段階で読みます。
+
+- Pre-Review: expected steps、target steps、loss trend、Dataset / caption / trigger整合性、候補epoch位置を確認します。
+- Machine Review: reference similarity、dataset nearest、overfit risk、no_clear_winner、Weight Calibrationのweight傾向を確認します。
+- Human Review: 人間評価やメモがある場合は、それをMachine Assistより優先します。Machine Assistは最終判断を置き換えません。
+
+各labelの意味:
+
+- `ACCEPTABLE`: 強いRetryシグナルがなく、採用LoRAや検証結果をそのまま使える状態です。
+- `UNDERTRAINED_STEP_SHORTAGE`: expected stepsがtarget範囲より少なく、Target Step Assistantやrepeats/epochs調整を検討する状態です。
+- `UNDERTRAINED_STILL_IMPROVING`: lossや候補epoch位置から、終盤でもまだ改善中の可能性がある状態です。
+- `OVERTRAINED`: 後半epochやoverfit signalが悪化しており、早めepochや低LR、少なめ学習を検討する状態です。
+- `PARAMETER_TOO_WEAK`: 高weightでもLoRA効果が弱く、dim、LR、trigger、caption確認を検討する状態です。
+- `PARAMETER_TOO_STRONG`: 低weightでも強すぎる、またはoverfit傾向があり、低LR、repeats/epochs削減、低dimを検討する状態です。
+- `DATASET_OR_CAPTION_ISSUE`: Dataset、caption、trigger、Reference Set、failure tagsの確認を優先する状態です。
+- `NO_CLEAR_WINNER`: Machine Assistでは候補差が小さく、画像比較や近隣Epoch追加検証、人間評価を優先する状態です。
+
 ## Performance Notes
 
 生成速度とReview Pipelineの安定性を優先する場合、大容量モデル、`runs`、`exports`、Embedding cacheはOneDriveなどの同期フォルダ外に置くことを推奨します。

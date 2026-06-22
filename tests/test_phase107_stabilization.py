@@ -1698,6 +1698,7 @@ class Phase107StabilizationTests(IsolatedDbTest):
         session = create_candidate_review_plan(job_id, include_neighbor_epochs=False, force=True, max_candidate_epochs=2)
         now = utc_now()
         with connect() as conn:
+            conn.execute("UPDATE review_sessions SET status = 'completed' WHERE id = ?", (session["id"],))
             for epoch, value in ((1, 0.801), (2, 0.795)):
                 image_path = self.make_png(self.root / "exports" / "review_sessions" / f"retry_signal_{epoch}.png")
                 cur = conn.execute(
@@ -1746,6 +1747,165 @@ class Phase107StabilizationTests(IsolatedDbTest):
         summary = retry_signal_for_profile(profile_id)
         self.assertEqual(summary["retry_signal_label"], "PARAMETER_TOO_STRONG")
         self.assertIn("0.4", " ".join(summary["reasons"]))
+
+    def test_retry_signal_detects_still_improving_loss(self) -> None:
+        from app.services.retry_signal import retry_signal_for_job
+
+        job_id = self.add_review_ready_job(mode="plan_only", epochs=(1, 2, 3))
+        now = utc_now()
+        with connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO training_metric_summaries(job_id, epoch_trend_label, health_label, updated_at)
+                VALUES (?, 'STILL_IMPROVING', 'OK', ?)
+                """,
+                (job_id, now),
+            )
+
+        summary = retry_signal_for_job(job_id)
+        self.assertEqual(summary["retry_signal_label"], "UNDERTRAINED_STILL_IMPROVING")
+        self.assertIn("Loss trend", " ".join(summary["reasons"]))
+
+    def test_retry_signal_detects_overtrained_loss(self) -> None:
+        from app.services.retry_signal import retry_signal_for_job
+
+        job_id = self.add_review_ready_job(mode="plan_only", epochs=(1, 2, 3))
+        now = utc_now()
+        with connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO training_metric_summaries(job_id, epoch_trend_label, health_label, updated_at)
+                VALUES (?, 'OVERTRAINING', 'DANGER', ?)
+                """,
+                (job_id, now),
+            )
+
+        summary = retry_signal_for_job(job_id)
+        self.assertEqual(summary["retry_signal_label"], "OVERTRAINED")
+        self.assertIn("DANGER", " ".join(summary["reasons"]))
+
+    def test_retry_signal_detects_parameter_too_weak_from_profile(self) -> None:
+        from app.services.retry_signal import retry_signal_for_profile
+
+        job_id = self.add_review_ready_job(mode="plan_only", epochs=(1, 2, 3))
+        now = utc_now()
+        with connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO selected_lora_profiles(
+                    job_id, profile_name, selected_model_path,
+                    recommended_weight_min, recommended_weight_max,
+                    created_at, updated_at
+                )
+                VALUES (?, 'weak profile', 'D:/models/test.safetensors', 0.9, 1.0, ?, ?)
+                """,
+                (job_id, now, now),
+            )
+            profile_id = int(cur.lastrowid)
+
+        summary = retry_signal_for_profile(profile_id)
+        self.assertEqual(summary["retry_signal_label"], "PARAMETER_TOO_WEAK")
+        self.assertIn("0.9", " ".join(summary["reasons"]))
+
+    def test_retry_signal_detects_dataset_or_caption_issue(self) -> None:
+        from app.services.retry_signal import retry_signal_for_job
+
+        job_id = self.add_review_ready_job(mode="plan_only", epochs=(1, 2, 3))
+        with connect() as conn:
+            conn.execute(
+                "UPDATE training_jobs SET trigger_consistency_label_at_creation = 'WARNING' WHERE id = ?",
+                (job_id,),
+            )
+
+        summary = retry_signal_for_job(job_id)
+        self.assertEqual(summary["retry_signal_label"], "DATASET_OR_CAPTION_ISSUE")
+        self.assertEqual(summary["confidence"], "high")
+
+    def test_retry_signal_accepts_completed_profile_and_weight_calibration(self) -> None:
+        from app.services.retry_signal import retry_signal_for_profile
+
+        job_id = self.add_review_ready_job(mode="plan_only", epochs=(1, 2, 3))
+        now = utc_now()
+        with connect() as conn:
+            conn.execute(
+                "UPDATE training_epoch_summaries SET moving_avg_final_loss = 0.2, avg_loss = 0.2 WHERE job_id = ?",
+                (job_id,),
+            )
+            cur = conn.execute(
+                """
+                INSERT INTO selected_lora_profiles(
+                    job_id, profile_name, selected_model_path,
+                    recommended_weight_min, recommended_weight_max,
+                    created_at, updated_at
+                )
+                VALUES (?, 'accepted profile', 'D:/models/test.safetensors', 0.6, 0.8, ?, ?)
+                """,
+                (job_id, now, now),
+            )
+            profile_id = int(cur.lastrowid)
+            conn.execute(
+                """
+                INSERT INTO validation_runs(
+                    job_id, selected_lora_profile_id, validation_preset_id, name,
+                    status, recommended_weight_min, recommended_weight_max,
+                    expected_image_count, actual_image_count, created_at, updated_at
+                )
+                VALUES (?, ?, 'standard_validation_v1', 'accepted validation',
+                        'completed', 0.6, 0.8, 45, 45, ?, ?)
+                """,
+                (job_id, profile_id, now, now),
+            )
+
+        summary = retry_signal_for_profile(profile_id)
+        self.assertEqual(summary["retry_signal_label"], "ACCEPTABLE")
+        self.assertEqual(summary["confidence"], "high")
+        self.assertIn("採用可能", " ".join(summary["recommended_next_actions"]))
+
+    def test_retry_signal_planned_review_does_not_force_no_clear_winner(self) -> None:
+        from app.services.retry_signal import retry_signal_for_review_session
+        from app.services.review_sessions import create_candidate_review_plan
+
+        job_id = self.add_review_ready_job(mode="plan_only", epochs=(1, 2))
+        session = create_candidate_review_plan(job_id, include_neighbor_epochs=False, force=True, max_candidate_epochs=2)
+
+        summary = retry_signal_for_review_session(session["id"])
+        self.assertNotEqual(summary["retry_signal_label"], "NO_CLEAR_WINNER")
+        self.assertFalse(summary["evidence"]["review_signal"]["evidence"]["review_ready"])
+
+    def test_retry_signal_human_rating_overrides_no_clear_machine_assist(self) -> None:
+        from app.services.retry_signal import retry_signal_for_review_session
+        from app.services.review_sessions import create_candidate_review_plan
+
+        job_id = self.add_review_ready_job(mode="plan_only", epochs=(1, 2))
+        session = create_candidate_review_plan(job_id, include_neighbor_epochs=False, force=True, max_candidate_epochs=2)
+        now = utc_now()
+        with connect() as conn:
+            conn.execute("UPDATE review_sessions SET status = 'completed' WHERE id = ?", (session["id"],))
+            for epoch, value, rating in ((1, 0.801, 5), (2, 0.795, 3)):
+                image_path = self.make_png(self.root / "exports" / "review_sessions" / f"human_retry_signal_{epoch}.png")
+                cur = conn.execute(
+                    """
+                    INSERT INTO review_session_images(review_session_id, job_id, epoch, image_path, rating_overall, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (session["id"], job_id, epoch, str(image_path), rating, now, now),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO machine_review_scores(
+                        source_type, source_id, job_id, embedding_model_id, provider,
+                        epoch, reference_similarity_avg, reference_similarity_max,
+                        overfit_risk_label, assist_score, assist_label, confidence_label,
+                        reason_json, created_at, updated_at
+                    )
+                    VALUES ('review_session_image', ?, ?, 'mock', 'mock', ?, ?, ?, 'unknown', ?, 'candidate', 'medium', '[]', ?, ?)
+                    """,
+                    (int(cur.lastrowid), job_id, epoch, value, value, value, now, now),
+                )
+
+        summary = retry_signal_for_review_session(session["id"])
+        self.assertNotEqual(summary["retry_signal_label"], "NO_CLEAR_WINNER")
+        self.assertEqual(summary["evidence"]["review_signal"]["evidence"]["human_top_epoch"], 1)
 
     def test_performance_profile_records_stage_timing_and_process_count(self) -> None:
         from app.services.performance_profile import mark_command_end, mark_command_start, mark_stage, performance_summary, reset_pipeline_timing
