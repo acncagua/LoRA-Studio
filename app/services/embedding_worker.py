@@ -377,6 +377,7 @@ def run_embedding_job(job_id: int) -> int:
     vector_dim = int(model["vector_dim"] or 512)
     normalize = bool(model["normalize"])
     max_image_size = int(settings["max_image_size"] or 1024)
+    batch_size = int(settings["batch_size"] or 1)
     items = fetch_all("SELECT * FROM embedding_job_items WHERE embedding_job_id = ? ORDER BY id", (job_id,))
     vector_provider: TransformersClipProvider | OpenClipProvider | None = None
     try:
@@ -423,7 +424,13 @@ def run_embedding_job(job_id: int) -> int:
         (source.source_type, source.source_id, source.source_path): source
         for source in sources_for_job_type(job["job_type"], job["target_id"])
     }
-    print(f"Embedding job #{job_id} started: provider={provider}, items={len(items)}", flush=True)
+    print(
+        "Embedding job "
+        f"#{job_id} started: provider={provider}, device={settings['device'] or 'auto'}, "
+        f"dtype={settings['dtype'] or 'fp32'}, batch_size={batch_size}, items={len(items)}",
+        flush=True,
+    )
+    print("Embedding provider/model is initialized once per job; images are processed without per-image model reload.", flush=True)
 
     for index, item in enumerate(items, start=1):
         item_id = int(item["id"])

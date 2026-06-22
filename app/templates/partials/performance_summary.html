@@ -1,0 +1,74 @@
+{% if performance_summary %}
+<section class="notice performance-summary">
+  <h2>Performance Summary</h2>
+  <p class="muted">sd-scripts画像生成、Embedding、Machine Review、Matrix作成の所要時間をLoRA-Studio側の観測時刻と生成画像mtimeから推定します。</p>
+  {% if performance_summary.warnings %}
+  {% for warning in performance_summary.warnings %}
+  <p class="notice warning">{{ warning }}</p>
+  {% endfor %}
+  {% endif %}
+  <div class="summary-grid">
+    <div><span>total elapsed</span><strong>{{ format_seconds(performance_summary.total_elapsed_seconds) }}</strong></div>
+    <div><span>generation elapsed</span><strong>{{ format_seconds(performance_summary.generation_elapsed_seconds) }}</strong></div>
+    <div><span>import elapsed</span><strong>{{ format_seconds(performance_summary.import_elapsed_seconds) }}</strong></div>
+    <div><span>embedding elapsed</span><strong>{{ format_seconds(performance_summary.embedding_elapsed_seconds) }}</strong></div>
+    <div><span>machine review elapsed</span><strong>{{ format_seconds(performance_summary.machine_review_elapsed_seconds) }}</strong></div>
+    <div><span>matrix elapsed</span><strong>{{ format_seconds(performance_summary.matrix_elapsed_seconds) }}</strong></div>
+    <div><span>generation process count</span><strong>{{ performance_summary.generation_process_count }}</strong></div>
+    <div><span>avg seconds per image</span><strong>{{ performance_summary.avg_seconds_per_image if performance_summary.avg_seconds_per_image is not none else '-' }}</strong></div>
+    <div><span>estimated model load overhead</span><strong>{{ format_seconds(performance_summary.estimated_model_load_overhead_seconds) }}</strong></div>
+    <div><span>embedding provider</span><strong>{{ performance_summary.embedding_runtime.provider or '-' }}</strong></div>
+    <div><span>embedding device</span><strong>{{ performance_summary.embedding_runtime.device or '-' }}</strong></div>
+    <div><span>embedding dtype</span><strong>{{ performance_summary.embedding_runtime.dtype or '-' }}</strong></div>
+    <div><span>embedding batch_size</span><strong>{{ performance_summary.embedding_runtime.batch_size or '-' }}</strong></div>
+  </div>
+  <details>
+    <summary>sd-scripts generation commands</summary>
+    {% if performance_summary.commands %}
+    <table>
+      <thead>
+        <tr>
+          <th>#</th><th>name</th><th>conditions</th><th>outputs</th><th>elapsed</th><th>first image</th><th>last image</th><th>LoRA</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for command in performance_summary.commands %}
+        <tr>
+          <td>{{ command.command_index }}</td>
+          <td>{{ command.name or '-' }}</td>
+          <td>{{ command.condition_count or 0 }}</td>
+          <td>{{ command.output_count or 0 }}</td>
+          <td>{{ format_seconds(command.elapsed_seconds) }}</td>
+          <td>{{ command.first_output_detected_at or '-' }}</td>
+          <td>{{ command.last_output_detected_at or '-' }}</td>
+          <td class="muted">{{ command.lora_file or '-' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">generation command timingはまだありません。</p>
+    {% endif %}
+  </details>
+  <details>
+    <summary>Import detail</summary>
+    {% set import_detail = performance_summary.stage_timing.import_detail or {} %}
+    {% if import_detail %}
+    <div class="summary-grid">
+      <div><span>file scan</span><strong>{{ format_seconds(import_detail.file_scan_seconds) }}</strong></div>
+      <div><span>condition hash match</span><strong>{{ format_seconds(import_detail.condition_hash_match_seconds) }}</strong></div>
+      <div><span>duplicate check</span><strong>{{ format_seconds(import_detail.duplicate_check_seconds) }}</strong></div>
+      <div><span>image open / dimension</span><strong>{{ format_seconds(import_detail.image_open_dimension_seconds) }}</strong></div>
+      <div><span>sha256</span><strong>{{ format_seconds(import_detail.sha256_seconds) }}</strong></div>
+      <div><span>DB insert/update</span><strong>{{ format_seconds(import_detail.db_write_seconds) }}</strong></div>
+      <div><span>scanned files</span><strong>{{ import_detail.scanned_files or 0 }}</strong></div>
+      <div><span>image files</span><strong>{{ import_detail.image_files or 0 }}</strong></div>
+      <div><span>duplicates</span><strong>{{ import_detail.duplicates or 0 }}</strong></div>
+      <div><span>inserted</span><strong>{{ import_detail.inserted or 0 }}</strong></div>
+    </div>
+    {% else %}
+    <p class="muted">Import detail timingはまだありません。</p>
+    {% endif %}
+  </details>
+</section>
+{% endif %}

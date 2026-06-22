@@ -74,8 +74,10 @@ from app.services.operation_monitor import (
     validation_generation_monitor,
     validation_pipeline_monitor,
 )
+from app.services.performance_profile import format_seconds, performance_summary
 from app.services.recommendations import create_draft_job_from_recommendation, list_recommendations, regenerate_recommendations, set_recommendation_status, write_recommendation_report
 from app.services.review_candidates import ensure_epoch_candidates, regenerate_epoch_candidates
+from app.services.retry_signal import retry_signal_for_job, retry_signal_for_profile, retry_signal_for_project, retry_signal_for_review_session
 from app.services.step_estimator import calculate_required_repeats, estimate_steps, suggest_target_steps, target_config_from_catalog
 from app.services.review_sessions import (
     create_neighbor_review_session,
@@ -1664,6 +1666,13 @@ def review_session_detail(request: Request, session_id: int) -> HTMLResponse:
         selected_epoch=selected_epoch,
         selected_epoch_in_session=selected_epoch_in_session,
         machine_candidate_summary=review_machine_candidate_summary(session_id),
+        retry_signal=retry_signal_for_review_session(session_id),
+        performance_summary=performance_summary(
+            session,
+            output_dir=str(session["output_dir"] or ""),
+            model_paths=[str(session["base_model_path"] or ""), *[str(row["file_path"] or "") for row in outputs]],
+        ),
+        format_seconds=format_seconds,
         operation_monitor=review_session_operation_monitor(session),
     )
 
@@ -1827,6 +1836,7 @@ def project_detail(request: Request, project_id: int) -> HTMLResponse:
         draft_delete=draft_project_delete_state(delete_preview),
         delete_preview=delete_preview,
         storage_summary=project_storage_summary(project_id),
+        retry_signal=retry_signal_for_project(project_id),
         project_status_labels=PROJECT_STATUS_LABELS,
         status_labels=STATUS_LABELS,
     )
@@ -3337,6 +3347,7 @@ def job_detail(
         standard_preset_id=STANDARD_PRESET_ID,
         action_state=job_action_state(job, selected_output),
         next_action=recommended_next_action(job, selected_output),
+        retry_signal=retry_signal_for_job(job_id),
         status_labels=STATUS_LABELS,
         created=created,
         preflight=preflight,
@@ -4538,6 +4549,12 @@ def validation_run_detail(request: Request, run_id: int, generation_error: str |
         machine_review_scores=scores_for_validation_run(run_id),
         machine_score_map=score_map_for_validation(run_id),
         machine_weight_summary=validation_weight_summary(run_id),
+        performance_summary=performance_summary(
+            bundle["run"],
+            output_dir=str(generation_state["generation"]["output_dir"] if generation_state["generation"] else ""),
+            model_paths=[str(bundle["run"]["base_model"] or ""), str(bundle["profile"]["selected_model_path"] if bundle["profile"] else "")],
+        ),
+        format_seconds=format_seconds,
     )
 
 
@@ -4574,6 +4591,12 @@ def validation_run_export_report(request: Request, run_id: int) -> HTMLResponse:
         machine_review_scores=scores_for_validation_run(run_id),
         machine_score_map=score_map_for_validation(run_id),
         machine_weight_summary=validation_weight_summary(run_id),
+        performance_summary=performance_summary(
+            bundle["run"],
+            output_dir=str(generation_state["generation"]["output_dir"] if generation_state["generation"] else ""),
+            model_paths=[str(bundle["run"]["base_model"] or ""), str(bundle["profile"]["selected_model_path"] if bundle["profile"] else "")],
+        ),
+        format_seconds=format_seconds,
     )
 
 
@@ -4626,6 +4649,12 @@ def validation_run_apply_to_profile(request: Request, run_id: int) -> HTMLRespon
         machine_review_scores=scores_for_validation_run(run_id),
         machine_score_map=score_map_for_validation(run_id),
         machine_weight_summary=validation_weight_summary(run_id),
+        performance_summary=performance_summary(
+            bundle["run"],
+            output_dir=str(generation_state["generation"]["output_dir"] if generation_state["generation"] else ""),
+            model_paths=[str(bundle["run"]["base_model"] or ""), str(bundle["profile"]["selected_model_path"] if bundle["profile"] else "")],
+        ),
+        format_seconds=format_seconds,
     )
 
 
@@ -5368,6 +5397,7 @@ def lora_profile_edit(request: Request, profile_id: int) -> HTMLResponse:
         validation_presets=validation_presets(),
         reference_sets=reference_sets_rows,
         recommendations=recommendations,
+        retry_signal=retry_signal_for_profile(profile_id),
         rubric_options=rubric_options(),
     )
 

@@ -1,0 +1,42 @@
+{% if retry_signal %}
+<section class="notice retry-signal-summary">
+  <h2>Retry Signal Summary</h2>
+  <p class="muted">Training / Review / Weight Calibrationの結果から、リトライ検討の材料を分類します。Draft Job作成やRunは自動実行しません。</p>
+  <div class="summary-grid">
+    <div>
+      <span>retry_signal_label</span>
+      <strong><span class="status-badge">{{ retry_signal.retry_signal_label }}</span></strong>
+    </div>
+    <div>
+      <span>confidence</span>
+      <strong>{{ retry_signal.confidence }}</strong>
+    </div>
+  </div>
+  <div class="two-column">
+    <div>
+      <h3>理由</h3>
+      {% if retry_signal.reasons %}
+      <ul>
+        {% for reason in retry_signal.reasons %}
+        <li>{{ reason }}</li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="muted">判断理由はまだありません。</p>
+      {% endif %}
+    </div>
+    <div>
+      <h3>次に考えること</h3>
+      {% if retry_signal.recommended_next_actions %}
+      <ul>
+        {% for action in retry_signal.recommended_next_actions %}
+        <li>{{ action }}</li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="muted">追加アクションはありません。</p>
+      {% endif %}
+    </div>
+  </div>
+</section>
+{% endif %}

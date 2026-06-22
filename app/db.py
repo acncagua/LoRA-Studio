@@ -341,6 +341,7 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "project_id": "INTEGER",
             "reference_set_id": "INTEGER",
             "reference_set_version_id": "INTEGER",
+            "stage_timing_json": "TEXT",
         },
     )
     conn.execute("UPDATE validation_runs SET validation_run_kind = 'legacy' WHERE validation_run_kind IS NULL OR validation_run_kind = '' OR validation_preset_id IS NULL")
@@ -435,6 +436,7 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "process_id": "INTEGER",
             "return_code": "INTEGER",
             "log_path": "TEXT",
+            "stage_timing_json": "TEXT",
         },
     )
     ensure_columns(
@@ -459,6 +461,7 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "log_path": "TEXT",
             "error_message": "TEXT",
             "elapsed_seconds": "INTEGER",
+            "stage_timing_json": "TEXT",
         },
     )
     ensure_columns(
@@ -2001,7 +2004,7 @@ CREATE TABLE IF NOT EXISTS validation_runs (
     suggested_weight_min REAL, suggested_weight_max REAL,
     suggested_light_weight REAL, suggested_strong_weight REAL,
     suggested_weight_reason TEXT, profile_applied_at TEXT,
-    preset_snapshot_json TEXT,
+    preset_snapshot_json TEXT, stage_timing_json TEXT,
     expected_image_count INTEGER, actual_image_count INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'planned', created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL, memo TEXT
@@ -2037,6 +2040,7 @@ CREATE TABLE IF NOT EXISTS review_sessions (
     machine_assist_summary_json TEXT,
     parent_review_session_id INTEGER,
     started_at TEXT, ended_at TEXT, elapsed_seconds INTEGER,
+    stage_timing_json TEXT,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, memo TEXT
 );
 CREATE TABLE IF NOT EXISTS review_session_conditions (
@@ -2198,7 +2202,8 @@ CREATE TABLE IF NOT EXISTS machine_review_jobs (
     scored_count INTEGER NOT NULL DEFAULT 0, skipped_count INTEGER NOT NULL DEFAULT 0,
     failed_count INTEGER NOT NULL DEFAULT 0, log_path TEXT,
     started_at TEXT, ended_at TEXT, elapsed_seconds INTEGER,
-    error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    error_message TEXT, stage_timing_json TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS machine_review_scores (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -15,6 +15,7 @@
 <p class="notice warning">別の検証画像生成 #{{ running_generation.id }} が実行中です。完了または停止してから、この検証Runの画像生成を開始してください。</p>
 {% endif %}
 {% if condition_warning %}<p class="notice warning">{{ condition_warning }}</p>{% endif %}
+{% include "partials/performance_summary.html" %}
 {% if apply_result %}
 <section class="notice">
   <h2>LoRAプロファイル反映結果</h2>

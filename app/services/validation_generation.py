@@ -14,6 +14,14 @@ from typing import Any
 from app import settings
 from app.db import connect, fetch_all, fetch_one, latest_environment, utc_now
 from app.services.image_store import verify_image_file
+from app.services.performance_profile import (
+    mark_command_end,
+    mark_command_start,
+    mark_stage,
+    refresh_image_mtime_summary,
+    reset_pipeline_timing,
+    update_timing,
+)
 from app.services.training_runner import process_exists, sd_scripts_subprocess_env
 from app.services.validation_runs import (
     ensure_expected_conditions,
@@ -403,6 +411,9 @@ def start_validation_generation(run_id: int) -> int:
     start_time = utc_now()
     log_handle = log_path.open("ab")
     env = sd_scripts_subprocess_env()
+    reset_pipeline_timing("validation_runs", run_id, commands=commands, output_dir=str(generation["output_dir"] or ""))
+    mark_stage("validation_runs", run_id, "generation_start", start_time)
+    mark_command_start("validation_runs", run_id, 0)
     first_process = subprocess.Popen(
         commands[0]["argv"],
         cwd=str(sd_scripts_path),
@@ -710,20 +721,28 @@ def _weight_calibration_pipeline_worker(run_id: int) -> None:
         set_validation_pipeline_status(run_id, "importing_images")
         append_generation_note(log_path, "Stage: importing_images")
         generation = latest_generation_run(run_id)
+        mark_stage("validation_runs", run_id, "import_start")
         imported = import_generated_images(run_id, int(generation["id"])) if generation else import_generated_images(run_id)
+        mark_stage("validation_runs", run_id, "import_end")
         append_generation_note(log_path, f"Imported images: {imported}")
 
         set_validation_pipeline_status(run_id, "embedding_images")
         append_generation_note(log_path, "Stage: embedding_images")
+        mark_stage("validation_runs", run_id, "embedding_start")
         _run_weight_calibration_embeddings(run_id, log_path)
+        mark_stage("validation_runs", run_id, "embedding_end")
 
         set_validation_pipeline_status(run_id, "machine_reviewing")
         append_generation_note(log_path, "Stage: machine_reviewing")
+        mark_stage("validation_runs", run_id, "machine_review_start")
         _run_weight_calibration_machine_review(run_id, log_path)
+        mark_stage("validation_runs", run_id, "machine_review_end")
 
         set_validation_pipeline_status(run_id, "building_matrix")
         append_generation_note(log_path, "Stage: building_matrix")
+        mark_stage("validation_runs", run_id, "matrix_start")
         matrix_path = write_validation_matrix(run_id)
+        mark_stage("validation_runs", run_id, "matrix_end")
         suggestion = _persist_weight_calibration_suggestion(run_id)
         now = utc_now()
         with connect() as conn:
@@ -750,8 +769,10 @@ def _weight_calibration_pipeline_worker(run_id: int) -> None:
             )
         append_generation_note(log_path, f"Matrix: {matrix_path}")
         append_generation_note(log_path, "Weight Calibration Pipeline completed: ready_for_review")
+        mark_stage("validation_runs", run_id, "pipeline_end")
     except Exception as exc:
         append_generation_note(log_path, f"Weight Calibration Pipeline failed: {exc}")
+        mark_stage("validation_runs", run_id, "pipeline_end")
         set_validation_pipeline_status(run_id, "failed", f"Weight Calibration Pipeline failed: {exc}")
 
 
@@ -989,11 +1010,19 @@ def monitor_generation(
     env: dict[str, str],
 ) -> None:
     return_code = process.wait()
+    current_generation = fetch_one("SELECT validation_run_id, output_dir FROM validation_generation_runs WHERE id = ?", (generation_id,))
+    run_id_for_timing = int(current_generation["validation_run_id"]) if current_generation else 0
+    output_dir_for_timing = str(current_generation["output_dir"] or "") if current_generation else ""
+    if run_id_for_timing:
+        mark_command_end("validation_runs", run_id_for_timing, command_index, output_dir=output_dir_for_timing, return_code=return_code)
+        refresh_image_mtime_summary("validation_runs", run_id_for_timing, output_dir_for_timing)
     current = fetch_one("SELECT * FROM validation_generation_runs WHERE id = ?", (generation_id,))
     if current is not None and current["status"] == "stopped":
         log_handle.close()
         return
     if return_code == 0 and command_index + 1 < len(commands):
+        if run_id_for_timing:
+            mark_command_start("validation_runs", run_id_for_timing, command_index + 1)
         next_process = subprocess.Popen(
             commands[command_index + 1]["argv"],
             cwd=str(sd_scripts_path),
@@ -1015,22 +1044,28 @@ def monitor_generation(
     if generation is None:
         return
     run_id = int(generation["validation_run_id"])
-    end_time = utc_now()
-    elapsed = elapsed_seconds(start_time_text, end_time)
+    generation_end_time = utc_now()
+    mark_stage("validation_runs", run_id, "generation_end", generation_end_time)
     status = "completed" if return_code == 0 else "failed"
     error_message = generation["error_message"] or ""
     imported = 0
     generated = count_generated_images(Path(generation["output_dir"]))
     if status == "completed":
         try:
+            mark_stage("validation_runs", run_id, "import_start")
             imported = import_generated_images(int(run_id), generation_id)
+            mark_stage("validation_runs", run_id, "import_end")
             auto_machine_review_after_generation(run_id, log_path)
+            mark_stage("validation_runs", run_id, "matrix_start")
             write_validation_matrix(run_id)
+            mark_stage("validation_runs", run_id, "matrix_end")
         except Exception as exc:
             status = "failed"
             error_message = f"{error_message}\nImport failed: {exc}".strip()
             with log_path.open("a", encoding="utf-8", errors="replace") as handle:
                 handle.write(f"\n[LoRA-Studio] generated image import failed: {exc}\n")
+    final_end_time = utc_now()
+    elapsed = elapsed_seconds(start_time_text, final_end_time)
     with connect() as conn:
         conn.execute(
             """
@@ -1040,9 +1075,10 @@ def monitor_generation(
                 imported_image_count = ?, error_message = ?, updated_at = ?
             WHERE id = ?
             """,
-            (status, return_code, end_time, elapsed, generated, imported, error_message, end_time, generation_id),
+            (status, return_code, final_end_time, elapsed, generated, imported, error_message, final_end_time, generation_id),
         )
     update_validation_run_counts(run_id)
+    mark_stage("validation_runs", run_id, "pipeline_end", final_end_time)
 
 
 def stop_validation_generation(run_id: int) -> None:
@@ -1080,19 +1116,51 @@ def import_generated_images(run_id: int, generation_id: int | None = None) -> in
         raise ValueError(f"Validation Run not found: {run_id}")
     imported = 0
     now = utc_now()
-    for path in sorted(output_dir.rglob("*")):
+    detail = {
+        "file_scan_seconds": 0.0,
+        "duplicate_check_seconds": 0.0,
+        "condition_hash_match_seconds": 0.0,
+        "image_open_dimension_seconds": 0.0,
+        "sha256_seconds": 0.0,
+        "db_write_seconds": 0.0,
+        "scanned_files": 0,
+        "image_files": 0,
+        "duplicates": 0,
+        "matched": 0,
+        "inserted": 0,
+    }
+    scan_started = time.perf_counter()
+    paths = sorted(output_dir.rglob("*")) if output_dir.exists() else []
+    detail["file_scan_seconds"] = round(time.perf_counter() - scan_started, 3)
+    detail["scanned_files"] = len(paths)
+    for path in paths:
         if path.suffix.lower() not in IMAGE_SUFFIXES or not path.is_file():
             continue
+        detail["image_files"] += 1
         try:
             verify_image_file(path)
         except ValueError:
             continue
+        match_started = time.perf_counter()
         condition = condition_for_generated_file(path, conditions, hashes)
+        detail["condition_hash_match_seconds"] += time.perf_counter() - match_started
         if condition is None:
             continue
+        detail["matched"] += 1
+        duplicate_started = time.perf_counter()
         existing = fetch_one("SELECT id FROM validation_images WHERE validation_run_id = ? AND image_path = ?", (run_id, str(path)))
+        detail["duplicate_check_seconds"] += time.perf_counter() - duplicate_started
         if existing is not None:
+            detail["duplicates"] += 1
             continue
+        sha_started = time.perf_counter()
+        # SHA256 is currently implicit for validation images; keep the timer slot for parity with Review Session import.
+        detail["sha256_seconds"] += time.perf_counter() - sha_started
+        dim_started = time.perf_counter()
+        width = condition["width"]
+        height = condition["height"]
+        detail["image_open_dimension_seconds"] += time.perf_counter() - dim_started
+        db_started = time.perf_counter()
         with connect() as conn:
             conn.execute(
                 """
@@ -1124,8 +1192,8 @@ def import_generated_images(run_id: int, generation_id: int | None = None) -> in
                     condition["sampler"],
                     condition["steps"],
                     condition["cfg_scale"],
-                    condition["width"],
-                    condition["height"],
+                    width,
+                    height,
                     condition["hires_enabled"],
                     None,
                     str(condition["lora_weight"]),
@@ -1136,7 +1204,13 @@ def import_generated_images(run_id: int, generation_id: int | None = None) -> in
                     now,
                 ),
             )
+        detail["db_write_seconds"] += time.perf_counter() - db_started
         imported += 1
+        detail["inserted"] += 1
+    for key, value in list(detail.items()):
+        if key.endswith("_seconds"):
+            detail[key] = round(float(value), 3)
+    update_timing("validation_runs", run_id, lambda data: data.__setitem__("import_detail", detail))
     update_validation_run_counts(run_id)
     return imported
 
@@ -1269,12 +1343,16 @@ def auto_machine_review_after_generation(run_id: int, log_path: Path | None = No
             embedding_job = fetch_one("SELECT total_count FROM embedding_jobs WHERE id = ?", (embedding_job_id,))
             total = int(embedding_job["total_count"] or 0) if embedding_job else 0
             if total:
+                mark_stage("validation_runs", run_id, "embedding_start")
                 append_generation_note(log_path, f"Auto embedding: {job_type} #{target_id}, {total} item(s).")
                 run_embedding_job(embedding_job_id)
+                mark_stage("validation_runs", run_id, "embedding_end")
             else:
                 append_generation_note(log_path, f"Auto embedding: {job_type} #{target_id}, no missing item.")
 
+        mark_stage("validation_runs", run_id, "machine_review_start")
         result = run_machine_review("validation_run_images", run_id)
+        mark_stage("validation_runs", run_id, "machine_review_end")
         append_generation_note(log_path, f"Auto machine assist completed: scored={result.get('scored')} failed={result.get('failed')}.")
     except Exception as exc:
         append_generation_note(log_path, f"Machine assist auto step failed: {exc}")

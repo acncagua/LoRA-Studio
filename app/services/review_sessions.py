@@ -21,6 +21,14 @@ from app.services.review_candidates import ensure_epoch_candidates
 from app.services.training_runner import archive_existing_log, decode_log_bytes, elapsed_seconds, process_exists, sd_scripts_subprocess_env
 from app.services.validation_generation import IMAGE_SUFFIXES, common_gen_img_args, count_generated_images, sanitize_filename
 from app.services.validation_generation import matrix_display_controls, matrix_display_script, matrix_display_style, matrix_machine_score
+from app.services.performance_profile import (
+    mark_command_end,
+    mark_command_start,
+    mark_stage,
+    refresh_image_mtime_summary,
+    reset_pipeline_timing,
+    update_timing,
+)
 
 
 PRESET_ID = "candidate_epoch_review_v1"
@@ -438,9 +446,12 @@ def start_review_preparation(session_id: int) -> int:
             """,
             (start_time, start_time, session_id),
         )
+    reset_pipeline_timing("review_sessions", session_id, commands=commands, output_dir=str(session["output_dir"] or ""))
+    mark_stage("review_sessions", session_id, "generation_start", start_time)
     append_log_note(log_path, f"レビュー準備を開始します。commands={len(commands)}")
     append_log_note(log_path, f"First command: {commands[0].get('name') or 'gen_img.py'}")
     log_handle = log_path.open("ab")
+    mark_command_start("review_sessions", session_id, 0)
     try:
         first_process = subprocess.Popen(
             commands[0]["argv"],
@@ -639,11 +650,16 @@ def monitor_review_generation(
     env: dict[str, str],
 ) -> None:
     return_code = process.wait()
+    current_session = fetch_one("SELECT output_dir FROM review_sessions WHERE id = ?", (session_id,))
+    output_dir = str(current_session["output_dir"] or "") if current_session else ""
+    mark_command_end("review_sessions", session_id, command_index, output_dir=output_dir, return_code=return_code)
+    refresh_image_mtime_summary("review_sessions", session_id, output_dir)
     current = fetch_one("SELECT * FROM review_sessions WHERE id = ?", (session_id,))
     if current is not None and current["status"] == "stopped":
         log_handle.close()
         return
     if return_code == 0 and command_index + 1 < len(commands):
+        mark_command_start("review_sessions", session_id, command_index + 1)
         next_process = subprocess.Popen(
             commands[command_index + 1]["argv"],
             cwd=str(sd_scripts_path),
@@ -661,18 +677,27 @@ def monitor_review_generation(
     session = fetch_one("SELECT * FROM review_sessions WHERE id = ?", (session_id,))
     if session is None:
         return
-    end_time = utc_now()
+    generation_end_time = utc_now()
+    mark_stage("review_sessions", session_id, "generation_end", generation_end_time)
     status = "completed" if return_code == 0 else "failed"
     generated = count_generated_images(Path(session["output_dir"]))
     imported = 0
     error_message = session["error_message"] or ""
     if status == "completed":
         try:
+            mark_stage("review_sessions", session_id, "import_start")
             import_review_session_images(session_id)
             imported = int(fetch_one("SELECT COUNT(*) AS count FROM review_session_images WHERE review_session_id = ?", (session_id,))["count"] or 0)
+            mark_stage("review_sessions", session_id, "import_end")
+            mark_stage("review_sessions", session_id, "embedding_start")
             auto_embedding_after_review_generation(session_id, log_path)
+            mark_stage("review_sessions", session_id, "embedding_end")
+            mark_stage("review_sessions", session_id, "machine_review_start")
             scored = auto_machine_review_after_review_generation(session_id, log_path)
+            mark_stage("review_sessions", session_id, "machine_review_end")
+            mark_stage("review_sessions", session_id, "matrix_start")
             matrix_path = write_review_matrix(session_id)
+            mark_stage("review_sessions", session_id, "matrix_end")
         except Exception as exc:
             status = "failed"
             error_message = f"{error_message}\nImport failed: {exc}".strip()
@@ -683,6 +708,7 @@ def monitor_review_generation(
                     "UPDATE review_sessions SET scored_image_count = ?, matrix_path = ?, updated_at = ? WHERE id = ?",
                     (scored, matrix_path, utc_now(), session_id),
                 )
+    final_end_time = utc_now()
     with connect() as conn:
         conn.execute(
             """
@@ -692,8 +718,19 @@ def monitor_review_generation(
                 imported_image_count = ?, error_message = ?, updated_at = ?
             WHERE id = ?
             """,
-            (status, return_code, end_time, elapsed_seconds(start_time_text, end_time), generated, imported, error_message, end_time, session_id),
+            (
+                status,
+                return_code,
+                final_end_time,
+                elapsed_seconds(start_time_text, final_end_time),
+                generated,
+                imported,
+                error_message,
+                final_end_time,
+                session_id,
+            ),
         )
+    mark_stage("review_sessions", session_id, "pipeline_end", final_end_time)
 
 
 def import_review_session_images(session_id: int) -> int:
@@ -705,21 +742,50 @@ def import_review_session_images(session_id: int) -> int:
     hashes = {str(row["condition_hash"]): dict(row) for row in conditions.values()}
     imported = 0
     now = utc_now()
-    for path in sorted(output_dir.rglob("*")):
+    detail = {
+        "file_scan_seconds": 0.0,
+        "duplicate_check_seconds": 0.0,
+        "condition_hash_match_seconds": 0.0,
+        "image_open_dimension_seconds": 0.0,
+        "sha256_seconds": 0.0,
+        "db_write_seconds": 0.0,
+        "scanned_files": 0,
+        "image_files": 0,
+        "duplicates": 0,
+        "matched": 0,
+        "inserted": 0,
+    }
+    scan_started = time.perf_counter()
+    paths = sorted(output_dir.rglob("*")) if output_dir.exists() else []
+    detail["file_scan_seconds"] = round(time.perf_counter() - scan_started, 3)
+    detail["scanned_files"] = len(paths)
+    for path in paths:
         if path.suffix.lower() not in IMAGE_SUFFIXES or not path.is_file():
             continue
+        detail["image_files"] += 1
         try:
             verify_image_file(path)
         except ValueError:
             continue
+        match_started = time.perf_counter()
         condition = condition_for_review_file(path, conditions, hashes)
+        detail["condition_hash_match_seconds"] += time.perf_counter() - match_started
         if condition is None:
             continue
+        detail["matched"] += 1
+        duplicate_started = time.perf_counter()
         existing = fetch_one("SELECT id FROM review_session_images WHERE review_session_id = ? AND image_path = ?", (session_id, str(path)))
+        detail["duplicate_check_seconds"] += time.perf_counter() - duplicate_started
         if existing is not None:
+            detail["duplicates"] += 1
             continue
+        sha_started = time.perf_counter()
         sha256, _metadata_error = safe_sha256_file(path)
+        detail["sha256_seconds"] += time.perf_counter() - sha_started
+        size_started = time.perf_counter()
         width, height = image_size(path)
+        detail["image_open_dimension_seconds"] += time.perf_counter() - size_started
+        db_started = time.perf_counter()
         with connect() as conn:
             cur = conn.execute(
                 """
@@ -758,7 +824,13 @@ def import_review_session_images(session_id: int) -> int:
                 """,
                 (str(path), image_id, now, condition["id"]),
             )
+        detail["db_write_seconds"] += time.perf_counter() - db_started
         imported += 1
+        detail["inserted"] += 1
+    for key, value in list(detail.items()):
+        if key.endswith("_seconds"):
+            detail[key] = round(float(value), 3)
+    update_timing("review_sessions", session_id, lambda data: data.__setitem__("import_detail", detail))
     return imported
 
 

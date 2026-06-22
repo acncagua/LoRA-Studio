@@ -1,0 +1,313 @@
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from app.db import fetch_all, fetch_one
+from app.services.review_sessions import review_machine_candidate_summary
+
+
+ACCEPTABLE = "ACCEPTABLE"
+UNDERTRAINED_STEP_SHORTAGE = "UNDERTRAINED_STEP_SHORTAGE"
+UNDERTRAINED_STILL_IMPROVING = "UNDERTRAINED_STILL_IMPROVING"
+OVERTRAINED = "OVERTRAINED"
+PARAMETER_TOO_WEAK = "PARAMETER_TOO_WEAK"
+PARAMETER_TOO_STRONG = "PARAMETER_TOO_STRONG"
+DATASET_OR_CAPTION_ISSUE = "DATASET_OR_CAPTION_ISSUE"
+NO_CLEAR_WINNER = "NO_CLEAR_WINNER"
+
+
+def retry_signal_for_job(job_id: int) -> dict[str, Any]:
+    job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
+    if job is None:
+        return empty_signal("Job not found")
+    project = fetch_one("SELECT * FROM lora_projects WHERE id = ?", (job["project_id"],)) if job["project_id"] else None
+    profile = fetch_one("SELECT * FROM selected_lora_profiles WHERE job_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1", (job_id,))
+    latest_review = fetch_one("SELECT * FROM review_sessions WHERE job_id = ? ORDER BY id DESC LIMIT 1", (job_id,))
+    latest_validation = fetch_one("SELECT * FROM validation_runs WHERE job_id = ? ORDER BY id DESC LIMIT 1", (job_id,))
+    return build_retry_signal(job=job, project=project, profile=profile, review_session=latest_review, validation_run=latest_validation)
+
+
+def retry_signal_for_project(project_id: int) -> dict[str, Any]:
+    project = fetch_one("SELECT * FROM lora_projects WHERE id = ?", (project_id,))
+    if project is None:
+        return empty_signal("Project not found")
+    job = None
+    if project["selected_job_id"]:
+        job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (project["selected_job_id"],))
+    if job is None:
+        job = fetch_one("SELECT * FROM training_jobs WHERE project_id = ? ORDER BY id DESC LIMIT 1", (project_id,))
+    if job is None:
+        return empty_signal("Project has no Training Job")
+    profile = fetch_one("SELECT * FROM selected_lora_profiles WHERE project_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1", (project_id,))
+    review_session = fetch_one("SELECT * FROM review_sessions WHERE project_id = ? ORDER BY id DESC LIMIT 1", (project_id,))
+    validation_run = fetch_one("SELECT * FROM validation_runs WHERE project_id = ? ORDER BY id DESC LIMIT 1", (project_id,))
+    return build_retry_signal(job=job, project=project, profile=profile, review_session=review_session, validation_run=validation_run)
+
+
+def retry_signal_for_review_session(session_id: int) -> dict[str, Any]:
+    session = fetch_one("SELECT * FROM review_sessions WHERE id = ?", (session_id,))
+    if session is None:
+        return empty_signal("Review Session not found")
+    job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (session["job_id"],)) if session["job_id"] else None
+    project = fetch_one("SELECT * FROM lora_projects WHERE id = ?", (session["project_id"],)) if session["project_id"] else None
+    profile = fetch_one("SELECT * FROM selected_lora_profiles WHERE job_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1", (job["id"],)) if job else None
+    validation_run = fetch_one("SELECT * FROM validation_runs WHERE job_id = ? ORDER BY id DESC LIMIT 1", (job["id"],)) if job else None
+    return build_retry_signal(job=job, project=project, profile=profile, review_session=session, validation_run=validation_run)
+
+
+def retry_signal_for_profile(profile_id: int) -> dict[str, Any]:
+    profile = fetch_one("SELECT * FROM selected_lora_profiles WHERE id = ?", (profile_id,))
+    if profile is None:
+        return empty_signal("LoRA Profile not found")
+    job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (profile["job_id"],))
+    project = fetch_one("SELECT * FROM lora_projects WHERE id = ?", (profile["project_id"],)) if profile["project_id"] else None
+    review_session = fetch_one("SELECT * FROM review_sessions WHERE job_id = ? ORDER BY id DESC LIMIT 1", (profile["job_id"],))
+    validation_run = fetch_one("SELECT * FROM validation_runs WHERE selected_lora_profile_id = ? OR job_id = ? ORDER BY id DESC LIMIT 1", (profile_id, profile["job_id"]))
+    return build_retry_signal(job=job, project=project, profile=profile, review_session=review_session, validation_run=validation_run)
+
+
+def build_retry_signal(
+    *,
+    job: Any | None,
+    project: Any | None = None,
+    profile: Any | None = None,
+    review_session: Any | None = None,
+    validation_run: Any | None = None,
+) -> dict[str, Any]:
+    reasons: list[str] = []
+    actions: list[str] = []
+    confidence = "low"
+    label = ACCEPTABLE
+    evidence: dict[str, Any] = {}
+
+    if job is None:
+        return empty_signal("Training Job context is missing")
+
+    step_status = str(job["step_status_at_creation"] or "")
+    expected_steps = job["expected_total_steps_at_creation"] or job["expected_total_steps"]
+    target_steps = job["target_steps_recommended_at_creation"]
+    evidence["expected_steps"] = expected_steps
+    evidence["target_steps_recommended"] = target_steps
+    if step_status in {"TOO_LOW", "LOW"}:
+        label = UNDERTRAINED_STEP_SHORTAGE
+        confidence = "medium"
+        reasons.append(f"expected steps is {step_status} against target steps.")
+        actions.append("まずrepeats / epochs / batchを見直し、target stepsに近づける案を検討してください。")
+
+    dataset_issue = dataset_or_caption_issue(job, project)
+    if dataset_issue:
+        label = DATASET_OR_CAPTION_ISSUE
+        confidence = "high"
+        reasons.append(dataset_issue)
+        actions.append("Retry条件を触る前にDataset rescan、trigger、caption整合性を確認してください。")
+
+    loss_signal = loss_trend_signal(int(job["id"]))
+    evidence["loss_signal"] = loss_signal
+    if label == ACCEPTABLE and loss_signal["label"]:
+        label = loss_signal["label"]
+        confidence = "medium"
+        reasons.extend(loss_signal["reasons"])
+        actions.extend(loss_signal["actions"])
+
+    candidate_signal = candidate_position_signal(job)
+    evidence["candidate_position"] = candidate_signal
+    if label == ACCEPTABLE and candidate_signal["label"]:
+        label = candidate_signal["label"]
+        confidence = "medium"
+        reasons.extend(candidate_signal["reasons"])
+        actions.extend(candidate_signal["actions"])
+
+    review_signal = review_session_signal(review_session)
+    evidence["review_signal"] = review_signal
+    if review_signal["label"] == NO_CLEAR_WINNER and label == ACCEPTABLE:
+        label = NO_CLEAR_WINNER
+        confidence = "medium"
+        reasons.extend(review_signal["reasons"])
+        actions.extend(review_signal["actions"])
+
+    weight_signal = weight_calibration_signal(int(job["id"]), profile, validation_run)
+    evidence["weight_signal"] = weight_signal
+    if weight_signal["label"] and label != DATASET_OR_CAPTION_ISSUE:
+        label = weight_signal["label"]
+        confidence = "medium" if confidence == "low" else confidence
+        reasons.extend(weight_signal["reasons"])
+        actions.extend(weight_signal["actions"])
+
+    overfit_signal = overfit_risk_signal(int(job["id"]), validation_run)
+    evidence["overfit_signal"] = overfit_signal
+    if overfit_signal and label == ACCEPTABLE:
+        label = OVERTRAINED
+        confidence = "medium"
+        reasons.append(overfit_signal)
+        actions.append("高weightや後半epochを避け、採用epoch短縮または低LR案を検討してください。")
+
+    failure = failure_tag_signal(int(job["id"]))
+    if failure:
+        label = DATASET_OR_CAPTION_ISSUE if label == ACCEPTABLE else label
+        confidence = "medium"
+        reasons.append(failure)
+        actions.append("失敗タグの傾向を確認し、Dataset / prompt / caption修正を優先してください。")
+
+    if not reasons:
+        reasons.append("Step、loss、review、weight calibrationに強いRetryシグナルはありません。")
+        actions.append("現状採用または追加の人間評価を優先し、自動Retryは行いません。")
+        confidence = "medium"
+
+    return {
+        "retry_signal_label": label,
+        "confidence": confidence,
+        "reasons": unique(reasons),
+        "recommended_next_actions": unique(actions),
+        "evidence": evidence,
+        "job_id": int(job["id"]),
+        "project_id": int(project["id"]) if project and project["id"] else job["project_id"],
+        "review_session_id": int(review_session["id"]) if review_session and review_session["id"] else None,
+        "profile_id": int(profile["id"]) if profile and profile["id"] else None,
+        "validation_run_id": int(validation_run["id"]) if validation_run and validation_run["id"] else None,
+    }
+
+
+def empty_signal(reason: str) -> dict[str, Any]:
+    return {
+        "retry_signal_label": "UNKNOWN",
+        "confidence": "low",
+        "reasons": [reason],
+        "recommended_next_actions": ["必要な結果データが揃ってから再確認してください。"],
+        "evidence": {},
+    }
+
+
+def dataset_or_caption_issue(job: Any, project: Any | None) -> str:
+    labels = [job["trigger_consistency_label_at_creation"] if "trigger_consistency_label_at_creation" in job.keys() else None]
+    if project and "trigger_word" in project.keys() and not str(project["trigger_word"] or "").strip():
+        return "Project trigger word is empty."
+    analysis = fetch_one("SELECT trigger_consistency_label FROM dataset_analysis WHERE dataset_id = ?", (job["dataset_id"],))
+    if analysis:
+        labels.append(analysis["trigger_consistency_label"])
+    bad = [label for label in labels if label and label not in {"OK", "UNKNOWN"}]
+    return f"Dataset / caption consistency is {bad[0]}." if bad else ""
+
+
+def loss_trend_signal(job_id: int) -> dict[str, Any]:
+    summary = fetch_one("SELECT * FROM training_metric_summaries WHERE job_id = ?", (job_id,))
+    if summary:
+        trend = str(summary["epoch_trend_label"] or "")
+        health = str(summary["health_label"] or "")
+        if trend in {"STILL_IMPROVING", "IMPROVING"}:
+            return signal(UNDERTRAINED_STILL_IMPROVING, [f"Loss trend is {trend}."], ["少し長めのepochまたはtarget steps増加を検討してください。"])
+        if trend in {"OVERTRAINING", "WORSENING"} or health == "DANGER":
+            return signal(OVERTRAINED, [f"Loss health/trend suggests {health or trend}."], ["採用epoch短縮、低LR、または早めepochの比較を優先してください。"])
+    rows = fetch_all("SELECT epoch, moving_avg_final_loss, avg_loss FROM training_epoch_summaries WHERE job_id = ? AND epoch IS NOT NULL ORDER BY epoch", (job_id,))
+    values = [(int(row["epoch"]), row["moving_avg_final_loss"] if row["moving_avg_final_loss"] is not None else row["avg_loss"]) for row in rows]
+    values = [(epoch, float(value)) for epoch, value in values if value is not None]
+    if len(values) >= 3:
+        last = values[-1][1]
+        prev = values[-2][1]
+        first = values[0][1]
+        if last < prev < first:
+            return signal(UNDERTRAINED_STILL_IMPROVING, ["Loss is still decreasing at the final epoch."], ["終盤epochを候補に含め、必要なら少し長めのRetryを検討してください。"])
+        if last > prev:
+            return signal(OVERTRAINED, ["Loss worsened at the final epoch."], ["後半epochの過学習を疑い、早めepochまたは低LR案を確認してください。"])
+    return signal(None, [], [])
+
+
+def candidate_position_signal(job: Any) -> dict[str, Any]:
+    params = json_loads(job["params_json"], {})
+    max_epoch = int(params.get("max_train_epochs") or 0)
+    selected = int(job["adopted_epoch"] or 0)
+    candidates = fetch_all("SELECT epoch, candidate_label FROM training_epoch_candidate_summaries WHERE job_id = ? ORDER BY candidate_rank", (job["id"],))
+    primary = next((int(row["epoch"]) for row in candidates if row["candidate_label"] == "primary" and row["epoch"] is not None), 0)
+    best = selected or primary
+    if max_epoch and best == max_epoch:
+        return signal(UNDERTRAINED_STILL_IMPROVING, [f"Best candidate epoch is the final epoch {best}."], ["最終epochが最良なら、少し長めのRetryや近隣epoch追加確認を検討してください。"])
+    if max_epoch and best and best <= max(1, max_epoch // 3):
+        return signal(OVERTRAINED, [f"Best candidate epoch {best} is early compared with max epoch {max_epoch}."], ["短縮epoch、低LR、または過学習傾向の確認を優先してください。"])
+    return signal(None, [], [])
+
+
+def review_session_signal(review_session: Any | None) -> dict[str, Any]:
+    if not review_session:
+        return signal(None, [], [])
+    summary = review_machine_candidate_summary(int(review_session["id"]))
+    if summary.get("confidence") == "no_clear_winner":
+        return signal(NO_CLEAR_WINNER, ["Review Session machine assist has no clear winner."], ["Review Matrixで候補群を人間評価し、採用epochを決めてください。"], {"candidate_group": summary.get("candidate_group")})
+    return signal(None, [], [], {"primary_candidate": summary.get("primary_candidate")})
+
+
+def weight_calibration_signal(job_id: int, profile: Any | None, validation_run: Any | None) -> dict[str, Any]:
+    images = fetch_all(
+        """
+        SELECT strength_label, adoption_label, rating_overall, lora_weight, overfit_level
+        FROM validation_images
+        WHERE job_id = ? AND COALESCE(ignored, 0) = 0 AND image_role = 'individual'
+        """,
+        (job_id,),
+    )
+    strengths = [str(row["strength_label"] or "") for row in images]
+    if strengths and strengths.count("too_weak") >= max(1, len(strengths) // 2):
+        return signal(PARAMETER_TOO_WEAK, ["Weight Calibration has many too_weak labels."], ["LR、dim、epoch、または推奨weight上限を見直してください。"])
+    if strengths and sum(1 for item in strengths if item in {"too_strong", "broken"}) >= max(1, len(strengths) // 2):
+        return signal(PARAMETER_TOO_STRONG, ["Weight Calibration has many too_strong/broken labels."], ["低LR、短縮epoch、または推奨weight下げを検討してください。"])
+    min_weight = profile["recommended_weight_min"] if profile and "recommended_weight_min" in profile.keys() else validation_run["recommended_weight_min"] if validation_run else None
+    max_weight = profile["recommended_weight_max"] if profile and "recommended_weight_max" in profile.keys() else validation_run["recommended_weight_max"] if validation_run else None
+    if min_weight is not None and max_weight is not None:
+        try:
+            if float(max_weight) <= 0.4:
+                return signal(PARAMETER_TOO_STRONG, [f"Recommended weight range is low ({float(min_weight):g}-{float(max_weight):g})."], ["LoRAが強すぎる可能性があるため、低LR/短縮epochを検討してください。"])
+            if float(min_weight) >= 0.9:
+                return signal(PARAMETER_TOO_WEAK, [f"Recommended weight range is high ({float(min_weight):g}-{float(max_weight):g})."], ["LoRAが弱い可能性があるため、学習量または表現力を見直してください。"])
+        except (TypeError, ValueError):
+            pass
+    return signal(None, [], [])
+
+
+def overfit_risk_signal(job_id: int, validation_run: Any | None) -> str:
+    score = fetch_one(
+        """
+        SELECT overfit_risk_label, COUNT(*) AS count
+        FROM machine_review_scores
+        WHERE job_id = ? AND overfit_risk_label IN ('high', 'possible_overfit')
+        GROUP BY overfit_risk_label
+        ORDER BY count DESC LIMIT 1
+        """,
+        (job_id,),
+    )
+    if score:
+        return f"Machine Review overfit risk includes {score['overfit_risk_label']} ({score['count']} item(s))."
+    images = fetch_one("SELECT COUNT(*) AS count FROM validation_images WHERE job_id = ? AND overfit_level IN ('moderate','severe')", (job_id,))
+    if images and int(images["count"] or 0) > 0:
+        return f"Human validation marked overfit on {images['count']} image(s)."
+    return ""
+
+
+def failure_tag_signal(job_id: int) -> str:
+    rows = fetch_all("SELECT failure_tags_json FROM sample_images WHERE job_id = ?", (job_id,))
+    tags: list[str] = []
+    for row in rows:
+        tags.extend(json_loads(row["failure_tags_json"], []))
+    if tags:
+        top = sorted(set(str(tag) for tag in tags))[:5]
+        return "Failure tags exist: " + ", ".join(top)
+    return ""
+
+
+def signal(label: str | None, reasons: list[str], actions: list[str], evidence: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {"label": label, "reasons": reasons, "actions": actions, "evidence": evidence or {}}
+
+
+def json_loads(value: Any, default: Any) -> Any:
+    if not value:
+        return default
+    try:
+        return json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return default
+
+
+def unique(items: list[str]) -> list[str]:
+    result: list[str] = []
+    for item in items:
+        if item and item not in result:
+            result.append(item)
+    return result

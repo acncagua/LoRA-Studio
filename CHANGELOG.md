@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased - Phase 11.9.0
+
+LoRA Studio Phase 11.9.0 adds Retry Signal Summary as a read-only decision aid before any automatic retry workflow.
+
+### 主な変更
+
+- Training / Review / Weight Calibrationの結果から `retry_signal_label`、`confidence`、理由、推奨next actionを算出するようにしました。
+- Project詳細、Job詳細、Review Session詳細、LoRA Profile詳細にRetry Signal Summaryを表示します。
+- 分類は `ACCEPTABLE` / `UNDERTRAINED_STEP_SHORTAGE` / `UNDERTRAINED_STILL_IMPROVING` / `OVERTRAINED` / `PARAMETER_TOO_WEAK` / `PARAMETER_TOO_STRONG` / `DATASET_OR_CAPTION_ISSUE` / `NO_CLEAR_WINNER` です。
+- expected steps vs target、loss trend、best candidate epoch位置、Machine Assist、human rating、Weight Calibration推奨weight、overfit risk、failure tagsを判断材料として扱います。
+- Draft Job作成や自動Runは実行せず、人間が次に何を確認するべきかを示すサマリに留めています。
+
+## Unreleased - Phase 11.8.x Performance Optimization
+
+Phase 11.8.x optimizes and profiles the Review Preparation / Weight Calibration pipelines based on real quick_auto and Weight Calibration timing results.
+
+### 主な変更
+
+- Review Preparation / Weight Calibration PipelineにPerformance Summaryを追加し、stage timing、gen_img.py起動回数、画像mtime由来のfirst/last image、OneDrive配下警告を確認できるようにしました。
+- Machine Reviewをtarget/reference/dataset embeddingの一括ロードとnumpy matrix multiplicationへ寄せ、load/similarity/DB writeのperformance logを保存するようにしました。
+- Machine Review score保存を1件ずつのDB接続から一括トランザクションへ変更し、18件の実データでDB writeが約29秒から約2秒前後に短縮されることを確認しました。
+- Embedding Jobのprovider/device/dtype/batch_sizeをログとPerformance Summaryに表示し、ジョブ単位でモデルを初期化していることを確認しやすくしました。
+- Review / Validation import stageのfile scan、condition match、duplicate check、image dimension、sha256、DB writeの詳細計測を追加しました。
+- `runs` / `exports` / `data/embeddings` / model pathがOneDrive配下に見える場合のWARNINGを強化し、README / README_jaにも同期フォルダ外の利用推奨を追記しました。
+
 ## Unreleased - Phase 11.8.1
 
 LoRA Studio Phase 11.8.1 validates the Post-training Review Automation `quick_auto` path with real data.

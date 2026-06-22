@@ -27,6 +27,7 @@ from app.services.embedding_service import (
     validation_image_sources,
 )
 from app.services.training_runner import process_exists
+from app.services.performance_profile import save_timing
 
 
 DEFAULT_REASON = "機械補助判定は参考情報です。最終判断は人間評価を優先してください。"
@@ -237,6 +238,40 @@ def scored_neighbors(
         rows.append({"source": target, "embedding": embedding, "similarity": similarity(source_vec, vec, normalized)})
     rows.sort(key=lambda item: item["similarity"], reverse=True)
     return rows
+
+
+def source_matrix(sources: list[EmbeddingSource], model_id: str) -> tuple[list[EmbeddingSource], list[dict[str, Any]], np.ndarray]:
+    loaded_sources: list[EmbeddingSource] = []
+    embeddings: list[dict[str, Any]] = []
+    vectors: list[np.ndarray] = []
+    expected_shape: tuple[int, ...] | None = None
+    for source in sources:
+        loaded = vector_for_source(source, model_id)
+        if loaded is None:
+            continue
+        vector, embedding = loaded
+        if expected_shape is None:
+            expected_shape = vector.shape
+        if vector.shape != expected_shape:
+            continue
+        loaded_sources.append(source)
+        embeddings.append(embedding)
+        vectors.append(vector)
+    if not vectors:
+        return loaded_sources, embeddings, np.zeros((0, 0), dtype=np.float32)
+    return loaded_sources, embeddings, np.vstack(vectors).astype(np.float32)
+
+
+def similarity_matrix(targets: np.ndarray, neighbors: np.ndarray, normalized: bool) -> np.ndarray:
+    if targets.size == 0 or neighbors.size == 0:
+        return np.zeros((targets.shape[0], 0), dtype=np.float32)
+    if normalized:
+        return targets @ neighbors.T
+    target_norm = np.linalg.norm(targets, axis=1, keepdims=True)
+    neighbor_norm = np.linalg.norm(neighbors, axis=1, keepdims=True).T
+    denom = target_norm * neighbor_norm
+    denom[denom <= 0] = 1.0
+    return (targets @ neighbors.T) / denom
 
 
 def reference_sources(reference_set_version_id: int | None) -> list[EmbeddingSource]:
@@ -497,6 +532,86 @@ def upsert_machine_review_score(values: dict[str, Any]) -> int:
         return int(cur.lastrowid)
 
 
+def upsert_machine_review_scores(values_list: list[dict[str, Any]]) -> list[int]:
+    if not values_list:
+        return []
+    now = utc_now()
+    ids: list[int] = []
+    with connect() as conn:
+        for original in values_list:
+            values = {**original, "created_at": now, "updated_at": now}
+            existing = conn.execute(
+                """
+                SELECT id FROM machine_review_scores
+                WHERE source_type = ? AND source_id = ? AND embedding_model_id = ?
+                  AND COALESCE(reference_set_version_id, 0) = COALESCE(?, 0)
+                  AND COALESCE(dataset_version_id, 0) = COALESCE(?, 0)
+                """,
+                (
+                    values["source_type"],
+                    values["source_id"],
+                    values["embedding_model_id"],
+                    values.get("reference_set_version_id"),
+                    values.get("dataset_version_id"),
+                ),
+            ).fetchone()
+            if existing:
+                values["id"] = existing["id"]
+                conn.execute(
+                    """
+                    UPDATE machine_review_scores SET
+                        project_id = :project_id, job_id = :job_id, validation_run_id = :validation_run_id,
+                        reference_set_id = :reference_set_id, reference_set_version_id = :reference_set_version_id,
+                        dataset_id = :dataset_id, dataset_version_id = :dataset_version_id,
+                        provider = :provider, prompt_key = :prompt_key, prompt_role = :prompt_role,
+                        epoch = :epoch, lora_weight = :lora_weight,
+                        reference_similarity_avg = :reference_similarity_avg,
+                        reference_similarity_max = :reference_similarity_max,
+                        nearest_reference_image_id = :nearest_reference_image_id,
+                        nearest_reference_similarity = :nearest_reference_similarity,
+                        dataset_similarity_avg = :dataset_similarity_avg,
+                        nearest_dataset_image_id = :nearest_dataset_image_id,
+                        nearest_dataset_similarity = :nearest_dataset_similarity,
+                        dataset_top1_margin = :dataset_top1_margin,
+                        overfit_risk_label = :overfit_risk_label,
+                        assist_score = :assist_score, assist_label = :assist_label,
+                        confidence_label = :confidence_label, reason_json = :reason_json,
+                        updated_at = :updated_at
+                    WHERE id = :id
+                    """,
+                    values,
+                )
+                ids.append(int(existing["id"]))
+            else:
+                cur = conn.execute(
+                    """
+                    INSERT INTO machine_review_scores(
+                        source_type, source_id, project_id, job_id, validation_run_id,
+                        reference_set_id, reference_set_version_id, dataset_id, dataset_version_id,
+                        embedding_model_id, provider, prompt_key, prompt_role, epoch, lora_weight,
+                        reference_similarity_avg, reference_similarity_max,
+                        nearest_reference_image_id, nearest_reference_similarity,
+                        dataset_similarity_avg, nearest_dataset_image_id, nearest_dataset_similarity,
+                        dataset_top1_margin, overfit_risk_label, assist_score, assist_label,
+                        confidence_label, reason_json, created_at, updated_at
+                    )
+                    VALUES (
+                        :source_type, :source_id, :project_id, :job_id, :validation_run_id,
+                        :reference_set_id, :reference_set_version_id, :dataset_id, :dataset_version_id,
+                        :embedding_model_id, :provider, :prompt_key, :prompt_role, :epoch, :lora_weight,
+                        :reference_similarity_avg, :reference_similarity_max,
+                        :nearest_reference_image_id, :nearest_reference_similarity,
+                        :dataset_similarity_avg, :nearest_dataset_image_id, :nearest_dataset_similarity,
+                        :dataset_top1_margin, :overfit_risk_label, :assist_score, :assist_label,
+                        :confidence_label, :reason_json, :created_at, :updated_at
+                    )
+                    """,
+                    values,
+                )
+                ids.append(int(cur.lastrowid))
+    return ids
+
+
 def machine_review_context(target_type: str, target_id: int, reference_set_version_id: int | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
     settings = load_machine_review_settings()
     model = active_embedding_model()
@@ -599,6 +714,121 @@ def has_current_machine_review_score(source: EmbeddingSource, context: dict[str,
     return row is not None
 
 
+def score_sources_batch(
+    sources: list[EmbeddingSource],
+    context: dict[str, Any],
+    model: dict[str, Any],
+    settings: dict[str, Any],
+    timings: dict[str, Any],
+) -> dict[str, Any]:
+    model_id = model["id"]
+    provider = model.get("provider") or "mock"
+    started = time.perf_counter()
+    target_sources, target_embeddings, target_matrix = source_matrix(sources, model_id)
+    timings["load_target_embeddings_seconds"] = round(time.perf_counter() - started, 3)
+    skipped = len(sources) - len(target_sources)
+    if target_matrix.size == 0:
+        return {"processed": len(sources), "scored": 0, "skipped": skipped, "failed": 0}
+
+    started = time.perf_counter()
+    refs = reference_sources(context.get("reference_set_version_id"))
+    ref_sources, _ref_embeddings, ref_matrix = source_matrix(refs, model_id)
+    timings["load_reference_embeddings_seconds"] = round(time.perf_counter() - started, 3)
+
+    started = time.perf_counter()
+    dataset_sources: list[EmbeddingSource] = []
+    dataset_matrix = np.zeros((0, target_matrix.shape[1]), dtype=np.float32)
+    if settings.get("include_dataset_nearest_check") and context.get("dataset_version_id"):
+        dataset_sources, _dataset_embeddings, dataset_matrix = source_matrix(dataset_image_sources(int(context["dataset_version_id"])), model_id)
+    timings["load_dataset_embeddings_seconds"] = round(time.perf_counter() - started, 3)
+
+    ref_label = None
+    if context.get("reference_set_version_id"):
+        ver = fetch_one("SELECT completeness_label FROM reference_set_versions WHERE id = ?", (context["reference_set_version_id"],))
+        ref_label = ver["completeness_label"] if ver else None
+    normalized = bool(target_embeddings[0]["normalized"]) if target_embeddings else True
+
+    started = time.perf_counter()
+    ref_sims = similarity_matrix(target_matrix, ref_matrix, normalized)
+    dataset_sims = similarity_matrix(target_matrix, dataset_matrix, normalized)
+    timings["similarity_calculation_seconds"] = round(time.perf_counter() - started, 3)
+
+    reference_mismatch = False
+    if context.get("reference_set_version_id") and context.get("dataset_version_id"):
+        ref_version = fetch_one("SELECT dataset_version_id FROM reference_set_versions WHERE id = ?", (context["reference_set_version_id"],))
+        reference_mismatch = bool(ref_version and ref_version["dataset_version_id"] and ref_version["dataset_version_id"] != context["dataset_version_id"])
+
+    values_list: list[dict[str, Any]] = []
+    for row_index, source in enumerate(target_sources):
+        meta = source_metadata(source.source_type, int(source.source_id or 0))
+        ref_values = ref_sims[row_index] if ref_sims.size else np.array([], dtype=np.float32)
+        ref_avg = float(np.mean(ref_values)) if ref_values.size else None
+        ref_max = float(np.max(ref_values)) if ref_values.size else None
+        nearest_ref_id = None
+        if ref_values.size:
+            nearest_ref_id = ref_sources[int(np.argmax(ref_values))].source_id
+
+        dataset_values = dataset_sims[row_index] if dataset_sims.size else np.array([], dtype=np.float32)
+        dataset_avg = float(np.mean(dataset_values)) if dataset_values.size else None
+        nearest_dataset_similarity = None
+        second_dataset_similarity = None
+        nearest_dataset_id = None
+        if dataset_values.size:
+            order = np.argsort(dataset_values)[::-1]
+            nearest_index = int(order[0])
+            nearest_dataset_similarity = float(dataset_values[nearest_index])
+            nearest_dataset_id = dataset_sources[nearest_index].source_id
+            if len(order) > 1:
+                second_dataset_similarity = float(dataset_values[int(order[1])])
+        margin = (
+            nearest_dataset_similarity - second_dataset_similarity
+            if nearest_dataset_similarity is not None and second_dataset_similarity is not None
+            else None
+        )
+        confidence, reasons = confidence_for(provider, len(ref_sources), settings, ref_label)
+        overfit = overfit_label(nearest_dataset_similarity, margin, provider, settings)
+        label, assist_score = assist_label(ref_max, overfit, confidence, provider, settings)
+        if reference_mismatch:
+            reasons.append("Reference Setと対象学習ジョブのDataset Versionが異なります。")
+        values_list.append(
+            {
+                "source_type": source.source_type,
+                "source_id": source.source_id,
+                "project_id": context.get("project_id"),
+                "job_id": context.get("job_id"),
+                "validation_run_id": context.get("validation_run_id"),
+                "reference_set_id": context.get("reference_set_id"),
+                "reference_set_version_id": context.get("reference_set_version_id"),
+                "dataset_id": context.get("dataset_id"),
+                "dataset_version_id": context.get("dataset_version_id"),
+                "embedding_model_id": model_id,
+                "provider": provider,
+                "prompt_key": meta.get("prompt_key") or meta.get("image_role"),
+                "prompt_role": meta.get("prompt_role") or meta.get("image_role"),
+                "epoch": meta.get("epoch"),
+                "lora_weight": meta.get("lora_weight"),
+                "reference_similarity_avg": ref_avg,
+                "reference_similarity_max": ref_max,
+                "nearest_reference_image_id": nearest_ref_id,
+                "nearest_reference_similarity": ref_max,
+                "dataset_similarity_avg": dataset_avg,
+                "nearest_dataset_image_id": nearest_dataset_id,
+                "nearest_dataset_similarity": nearest_dataset_similarity,
+                "dataset_top1_margin": margin,
+                "overfit_risk_label": overfit,
+                "assist_score": assist_score,
+                "assist_label": label,
+                "confidence_label": confidence,
+                "reason_json": json.dumps({"reasons": reasons, "reference_count": len(ref_sources), "provider": provider}, ensure_ascii=False),
+            }
+        )
+
+    started = time.perf_counter()
+    upsert_machine_review_scores(values_list)
+    timings["db_write_seconds"] = round(time.perf_counter() - started, 3)
+    return {"processed": len(sources), "scored": len(values_list), "skipped": skipped, "failed": 0}
+
+
 def run_machine_review_job(job_id: int) -> dict[str, Any]:
     job = fetch_one("SELECT * FROM machine_review_jobs WHERE id = ?", (job_id,))
     if job is None:
@@ -612,9 +842,15 @@ def run_machine_review_job(job_id: int) -> dict[str, Any]:
         model = dict(model_row)
     settings = load_machine_review_settings()
     sources = sources_for_target(target_type, target_id, context=context, model_id=model_id)
-    vector_cache: VectorCache = {}
     now = utc_now()
     started = time.time()
+    timings: dict[str, Any] = {
+        "pipeline_start": now,
+        "target_type": target_type,
+        "target_id": target_id,
+        "embedding_model_id": model_id,
+        "source_count": len(sources),
+    }
     scored = skipped = failed = processed = 0
     error_message = ""
     with connect() as conn:
@@ -622,22 +858,31 @@ def run_machine_review_job(job_id: int) -> dict[str, Any]:
             "UPDATE machine_review_jobs SET status = 'running', started_at = COALESCE(started_at, ?), updated_at = ? WHERE id = ?",
             (now, now, job_id),
         )
-    for source in sources:
-        processed += 1
-        try:
-            score_source(source, context, model, settings, vector_cache)
-            scored += 1
-            print(f"[{processed}/{len(sources)}] scored {source.source_type}#{source.source_id}", flush=True)
-        except Exception as exc:
-            message = str(exc)
-            if "Embedding is not ready" in message:
-                skipped += 1
-                error_message = message
-                print(f"[{processed}/{len(sources)}] skipped {source.source_type}#{source.source_id}: {message}", flush=True)
-            else:
-                failed += 1
-                error_message = message
-                print(f"[{processed}/{len(sources)}] failed {source.source_type}#{source.source_id}: {message}", flush=True)
+    print(f"Machine Review Job #{job_id} batch mode started: sources={len(sources)} model={model_id}", flush=True)
+    try:
+        result = score_sources_batch(sources, context, model, settings, timings)
+        processed = int(result["processed"])
+        scored = int(result["scored"])
+        skipped = int(result["skipped"])
+        failed = int(result["failed"])
+        if skipped:
+            error_message = f"{skipped} source embedding(s) were not ready or shape-mismatched."
+        print(
+            "Machine Review batch timings: "
+            f"targets={timings.get('load_target_embeddings_seconds')}s "
+            f"refs={timings.get('load_reference_embeddings_seconds')}s "
+            f"dataset={timings.get('load_dataset_embeddings_seconds')}s "
+            f"similarity={timings.get('similarity_calculation_seconds')}s "
+            f"db={timings.get('db_write_seconds')}s",
+            flush=True,
+        )
+    except Exception as exc:
+        failed = len(sources)
+        processed = len(sources)
+        error_message = str(exc)
+        print(f"Machine Review batch failed: {error_message}", flush=True)
+    finally:
+        timings["pipeline_end"] = utc_now()
         with connect() as conn:
             conn.execute(
                 """
@@ -648,9 +893,16 @@ def run_machine_review_job(job_id: int) -> dict[str, Any]:
                 """,
                 (processed, scored, skipped, failed, error_message, utc_now(), job_id),
             )
+            conn.execute(
+                "UPDATE machine_review_jobs SET stage_timing_json = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(timings, ensure_ascii=False), utc_now(), job_id),
+            )
     elapsed = int(time.time() - started)
     ended = utc_now()
     status = "completed" if failed == 0 else "failed"
+    timings["elapsed_seconds"] = elapsed
+    timings["status"] = status
+    save_timing("machine_review_jobs", job_id, timings)
     with connect() as conn:
         conn.execute(
             """

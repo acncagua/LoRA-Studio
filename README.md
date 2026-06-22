@@ -22,7 +22,7 @@ than training itself.
 ## Status
 
 Current release: v0.4.4-beta
-Development phase: Phase 11.8
+Development phase: Phase 11.9
 
 The core workflow is operational and
 actively used for local LoRA production,
@@ -49,6 +49,7 @@ for the entire LoRA lifecycle.
 - Validation Runs
 - Weight Calibration Pipeline
 - Post-training Review Automation
+- Retry Signal Summary
 - Step Estimator / Target Step Assistant
 - Reference Sets
 - Experiment Comparison
@@ -77,6 +78,34 @@ Weight Calibration standard 45-image validation.
 When Machine Assist scores are close, LoRA-Studio shows a candidate group with
 `no_clear_winner` instead of forcing a single winner. This means human visual comparison should decide.
 Machine Assist remains advisory and does not replace human review or apply choices automatically.
+
+## Phase 11.9: Retry Signal Summary
+
+Retry Signal Summary is a read-only checkpoint before retry automation.
+It classifies whether a completed workflow looks acceptable or may need another experiment,
+using training step coverage, loss trend, candidate epoch position, Review Session Machine Assist,
+human ratings, Weight Calibration results, recommended weight range, overfit risk, and failure tags.
+
+The output is shown on Project detail, Job detail, Review Session detail, and LoRA Profile detail:
+
+- `retry_signal_label`
+- `confidence`
+- reasons
+- recommended next actions
+
+Labels include `ACCEPTABLE`, `UNDERTRAINED_STEP_SHORTAGE`,
+`UNDERTRAINED_STILL_IMPROVING`, `OVERTRAINED`, `PARAMETER_TOO_WEAK`,
+`PARAMETER_TOO_STRONG`, `DATASET_OR_CAPTION_ISSUE`, and `NO_CLEAR_WINNER`.
+This feature does not create Draft Jobs and does not start runs automatically.
+
+## Performance Notes
+
+For faster generation and review pipelines, keep large model files, `runs`,
+`exports`, and embedding caches outside OneDrive or other synced folders when possible.
+Cloud sync can add file locking, metadata scans, and upload pressure while sd-scripts,
+Embedding, and Machine Review are reading and writing many large files.
+Performance Summary warns when `runs`, `exports`, `data/embeddings`, or model paths
+look like they are under OneDrive.
 
 ## Phase 11.7: Weight Calibration Pipeline
 

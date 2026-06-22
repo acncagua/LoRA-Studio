@@ -20,6 +20,9 @@
 {% include "partials/active_operation_monitor.html" %}
 </div>
 
+{% include "partials/retry_signal_summary.html" %}
+{% include "partials/performance_summary.html" %}
+
 <section class="status-strip">
   <div class="status-card"><span>状態</span><strong>{{ session.status }}</strong></div>
   <div class="status-card"><span>Project</span><strong>{% if session.project_id %}#{{ session.project_id }} {{ session.project_name or '' }}{% else %}-{% endif %}</strong></div>

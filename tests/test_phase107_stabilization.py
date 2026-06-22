@@ -1670,6 +1670,144 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertEqual(summary["primary_candidate"], None)
         self.assertEqual(summary["candidate_group"], [1, 2])
 
+    def test_retry_signal_detects_step_shortage(self) -> None:
+        from app.services.retry_signal import retry_signal_for_job
+
+        job_id = self.add_review_ready_job(mode="plan_only", epochs=(1, 2, 3))
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE training_jobs
+                SET expected_total_steps_at_creation = 1200,
+                    target_steps_recommended_at_creation = 5000,
+                    step_status_at_creation = 'LOW'
+                WHERE id = ?
+                """,
+                (job_id,),
+            )
+
+        summary = retry_signal_for_job(job_id)
+        self.assertEqual(summary["retry_signal_label"], "UNDERTRAINED_STEP_SHORTAGE")
+        self.assertIn("target steps", " ".join(summary["reasons"]))
+
+    def test_retry_signal_uses_no_clear_winner_review_summary(self) -> None:
+        from app.services.retry_signal import retry_signal_for_review_session
+        from app.services.review_sessions import create_candidate_review_plan
+
+        job_id = self.add_review_ready_job(mode="plan_only", epochs=(1, 2))
+        session = create_candidate_review_plan(job_id, include_neighbor_epochs=False, force=True, max_candidate_epochs=2)
+        now = utc_now()
+        with connect() as conn:
+            for epoch, value in ((1, 0.801), (2, 0.795)):
+                image_path = self.make_png(self.root / "exports" / "review_sessions" / f"retry_signal_{epoch}.png")
+                cur = conn.execute(
+                    """
+                    INSERT INTO review_session_images(review_session_id, job_id, epoch, image_path, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (session["id"], job_id, epoch, str(image_path), now, now),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO machine_review_scores(
+                        source_type, source_id, job_id, embedding_model_id, provider,
+                        epoch, reference_similarity_avg, reference_similarity_max,
+                        overfit_risk_label, assist_score, assist_label, confidence_label,
+                        reason_json, created_at, updated_at
+                    )
+                    VALUES ('review_session_image', ?, ?, 'mock', 'mock', ?, ?, ?, 'unknown', ?, 'candidate', 'medium', '[]', ?, ?)
+                    """,
+                    (int(cur.lastrowid), job_id, epoch, value, value, value, now, now),
+                )
+
+        summary = retry_signal_for_review_session(session["id"])
+        self.assertEqual(summary["retry_signal_label"], "NO_CLEAR_WINNER")
+        self.assertEqual(summary["confidence"], "medium")
+
+    def test_retry_signal_detects_weight_strength_from_profile(self) -> None:
+        from app.services.retry_signal import retry_signal_for_profile
+
+        job_id = self.add_review_ready_job(mode="plan_only", epochs=(1, 2, 3))
+        now = utc_now()
+        with connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO selected_lora_profiles(
+                    job_id, profile_name, selected_model_path,
+                    recommended_weight_min, recommended_weight_max,
+                    created_at, updated_at
+                )
+                VALUES (?, 'test profile', 'D:/models/test.safetensors', 0.2, 0.4, ?, ?)
+                """,
+                (job_id, now, now),
+            )
+            profile_id = int(cur.lastrowid)
+
+        summary = retry_signal_for_profile(profile_id)
+        self.assertEqual(summary["retry_signal_label"], "PARAMETER_TOO_STRONG")
+        self.assertIn("0.4", " ".join(summary["reasons"]))
+
+    def test_performance_profile_records_stage_timing_and_process_count(self) -> None:
+        from app.services.performance_profile import mark_command_end, mark_command_start, mark_stage, performance_summary, reset_pipeline_timing
+        from app.services.review_sessions import create_candidate_review_plan
+
+        job_id = self.add_review_ready_job(mode="plan_only", epochs=(1, 2))
+        session = create_candidate_review_plan(job_id, include_neighbor_epochs=False, force=True, max_candidate_epochs=2)
+        output_dir = self.root / "exports" / "review_sessions" / f"review_session_{session['id']:06d}" / "images"
+        image_path = self.make_png(output_dir / "generated.png")
+        commands = [{"name": "epoch_1", "condition_count": 1, "argv": ["python", "gen_img.py", "--network_weights", "D:/model/lora.safetensors"]}]
+
+        with connect() as conn:
+            conn.execute("UPDATE review_sessions SET output_dir = ? WHERE id = ?", (str(output_dir), session["id"]))
+        reset_pipeline_timing("review_sessions", session["id"], commands=commands, output_dir=str(output_dir))
+        mark_stage("review_sessions", session["id"], "generation_start")
+        mark_command_start("review_sessions", session["id"], 0)
+        mark_command_end("review_sessions", session["id"], 0, output_dir=str(output_dir), return_code=0)
+        mark_stage("review_sessions", session["id"], "generation_end")
+
+        row = fetch_one("SELECT * FROM review_sessions WHERE id = ?", (session["id"],))
+        self.assertTrue(row["stage_timing_json"])
+        summary = performance_summary(row, output_dir=str(output_dir))
+        self.assertEqual(summary["generation_process_count"], 1)
+        self.assertEqual(summary["commands"][0]["output_count"], 1)
+        self.assertEqual(Path(image_path).suffix, ".png")
+
+    def test_performance_profile_handles_missing_timing(self) -> None:
+        from app.services.performance_profile import performance_summary
+        from app.services.review_sessions import create_candidate_review_plan
+
+        job_id = self.add_review_ready_job(mode="plan_only", epochs=(1, 2))
+        session = create_candidate_review_plan(job_id, include_neighbor_epochs=False, force=True, max_candidate_epochs=2)
+        row = fetch_one("SELECT * FROM review_sessions WHERE id = ?", (session["id"],))
+
+        summary = performance_summary(row, output_dir="")
+        self.assertEqual(summary["generation_process_count"], 0)
+        self.assertEqual(summary["commands"], [])
+
+    def test_performance_profile_can_save_validation_run_timing(self) -> None:
+        from app.services.performance_profile import mark_stage, reset_pipeline_timing
+
+        job_id = self.add_review_ready_job(mode="plan_only", epochs=(1, 2))
+        now = utc_now()
+        with connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO validation_runs(
+                    job_id, validation_preset_id, name, expected_image_count,
+                    status, created_at, updated_at
+                )
+                VALUES (?, 'standard_validation_v1', 'timing test', 1, 'planned', ?, ?)
+                """,
+                (job_id, now, now),
+            )
+            run_id = int(cur.lastrowid)
+
+        reset_pipeline_timing("validation_runs", run_id, commands=[{"name": "lora", "condition_count": 1, "argv": []}], output_dir="")
+        mark_stage("validation_runs", run_id, "pipeline_end")
+
+        row = fetch_one("SELECT stage_timing_json FROM validation_runs WHERE id = ?", (run_id,))
+        self.assertIn("pipeline_end", row["stage_timing_json"])
+
     def test_expanded_neighbor_review_session_uses_neighbor_epochs(self) -> None:
         from app.services.review_sessions import create_candidate_review_plan, create_neighbor_review_session
 
@@ -2944,6 +3082,11 @@ class EmbeddingPhase112Tests(IsolatedDbTest):
         self.assertIsNotNone(sample_score["nearest_dataset_similarity"])
         self.assertIsNotNone(sample_score["dataset_top1_margin"])
         self.assertIsNotNone(validation_score["nearest_dataset_image_id"])
+        sample_job = fetch_one("SELECT stage_timing_json FROM machine_review_jobs WHERE id = ?", (sample_result["job_id"],))
+        validation_job = fetch_one("SELECT stage_timing_json FROM machine_review_jobs WHERE id = ?", (validation_result["job_id"],))
+        self.assertIn("load_target_embeddings_seconds", sample_job["stage_timing_json"])
+        self.assertIn("similarity_calculation_seconds", validation_job["stage_timing_json"])
+        self.assertIn("db_write_seconds", validation_job["stage_timing_json"])
 
         coverage = embedding_coverage("reference_set_version", reference["current_version_id"])
         readiness = reference_set_readiness(reference_detail(reference_set_id)["reference_set"], coverage)

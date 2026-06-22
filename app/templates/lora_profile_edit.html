@@ -6,6 +6,8 @@
     {% if profile.project_id %}<a class="button" href="/projects/{{ profile.project_id }}">Projectへ戻る</a>{% endif %}
   </div>
 </header>
+{% include "partials/retry_signal_summary.html" %}
+
 <section>
   <dl>
     <dt>ジョブ</dt><dd><a href="/jobs/{{ profile.job_id }}">#{{ profile.job_id }} {{ profile.job_name or '' }}</a></dd>
