@@ -22,7 +22,7 @@ than training itself.
 ## Status
 
 Current release: v0.4.4-beta
-Development phase: Phase 11.7
+Development phase: Phase 11.8
 
 The core workflow is operational and
 actively used for local LoRA production,
@@ -48,12 +48,35 @@ for the entire LoRA lifecycle.
 - Training Job Management
 - Validation Runs
 - Weight Calibration Pipeline
+- Post-training Review Automation
 - Step Estimator / Target Step Assistant
 - Reference Sets
 - Experiment Comparison
 - LoRA Selection Workflow
 - Machine Review Assist
 - Storage Cleanup Support
+
+## Phase 11.8: Post-training Review Automation
+
+Post-training Review Automation prepares the first candidate epoch review after a Training Job completes.
+It extracts loss candidate epochs, creates a Review Plan, and can optionally start a small Quick Candidate Review before the user creates a Review Session manually.
+
+Automation modes:
+
+- `manual`: keep the previous manual workflow.
+- `plan_only`: create a Review Plan after training completion, but do not generate images automatically. This is the default.
+- `quick_auto`: create and start a compact pre-selection review when safety limits allow it.
+- `standard_auto`: available with a warning because it uses 45 standard conditions per candidate epoch and can consume more runtime and GPU resources. It should normally stop for confirmation when `max_auto_images` is exceeded.
+
+Quick Candidate Review is intentionally lightweight:
+up to 3 candidate epochs, prompts `basic_face` / `full_body` / `expression_pose`,
+seed `111111`, weights `0.6` and `0.8`, no Hires, and at most 18 expected images.
+This is for choosing which epoch deserves adoption. It is not a replacement for the post-adoption
+Weight Calibration standard 45-image validation.
+
+When Machine Assist scores are close, LoRA-Studio shows a candidate group with
+`no_clear_winner` instead of forcing a single winner. This means human visual comparison should decide.
+Machine Assist remains advisory and does not replace human review or apply choices automatically.
 
 ## Phase 11.7: Weight Calibration Pipeline
 
@@ -217,12 +240,22 @@ Model downloads are allowed only when the embedding setting explicitly enables m
 After a training job completes, LoRA-Studio can prepare a small pre-selection review matrix before you choose the final epoch.
 
 The Review Preparation pipeline uses loss candidate epochs and their neighboring epochs, generates a compact set of images with sd-scripts, registers the images, computes embeddings, runs Machine Review Assist, and writes a cross-epoch matrix HTML file.
+With Post-training Review Automation enabled, this preparation can run as soon as a Training Job reaches `completed`.
+The default `plan_only` mode creates the plan and waits for user action.
+`quick_auto` starts the compact review only when no GPU-related task is already running and the expected image count stays within `max_auto_images`.
 
 This is separate from Validation Runs:
 
 - Review Preparation is for choosing a candidate epoch before adoption.
 - Weight Calibration / Validation Runs are for checking LoRA weights after an epoch has been selected.
 - Standard Validation 45-image runs should usually happen after candidate selection, not before every epoch comparison.
+
+If Machine Assist scores are close, the Review Matrix shows a candidate group and `no_clear_winner`.
+Treat this as a prompt to compare images directly and enter human review notes instead of accepting the machine score.
+
+From a Review Session detail page, use Expanded Neighbor Review when the best candidate needs a local check.
+Choose the center epoch and `+/-1` or `+/-2`; LoRA-Studio creates another planned Review Session
+linked to the same Training Job and parent Review Session, using weights `0.6` / `0.8`, seed `111111`, and no Hires.
 
 ## Current Scope
 

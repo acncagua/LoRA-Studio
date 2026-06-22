@@ -44,6 +44,8 @@ PROMPTS: list[dict[str, str]] = [
 ]
 WEIGHTS = [0.6, 0.8]
 SEED = 111111
+STANDARD_AUTO_SEEDS = [111111, 222222, 333333]
+STANDARD_AUTO_WEIGHTS = [0.0, 0.4, 0.6, 0.8, 1.0]
 WIDTH = 1024
 HEIGHT = 1024
 STEPS = 28
@@ -61,6 +63,7 @@ def preset_snapshot() -> dict[str, Any]:
         "epoch_policy": "candidate_epoch_plus_minus_1",
         "prompts": PROMPTS,
         "seed": SEED,
+        "seeds": [SEED],
         "weights": WEIGHTS,
         "hires_enabled": False,
         "width": WIDTH,
@@ -72,8 +75,29 @@ def preset_snapshot() -> dict[str, Any]:
     }
 
 
+def standard_auto_preset_snapshot() -> dict[str, Any]:
+    snapshot = preset_snapshot()
+    snapshot.update(
+        {
+            "name": "標準候補epochレビュー",
+            "purpose": "standard_auto用。候補epochを標準45条件相当で確認するため、max_auto_imagesによる安全制御を前提にします。",
+            "seeds": STANDARD_AUTO_SEEDS,
+            "weights": STANDARD_AUTO_WEIGHTS,
+        }
+    )
+    return snapshot
+
+
 ACTIVE_REVIEW_STATUSES = {"running", "generating_images", "embedding_images", "machine_reviewing", "building_matrix"}
 REVIEW_STALE_GRACE_SECONDS = 180
+POST_TRAINING_REVIEW_MODES = {"manual", "plan_only", "quick_auto", "standard_auto"}
+DEFAULT_POST_TRAINING_REVIEW_SETTINGS = {
+    "post_training_review_mode": "plan_only",
+    "max_auto_images": 18,
+    "max_auto_runtime_minutes": 20,
+    "auto_review_provider": "default",
+    "include_neighbor_epochs": 0,
+}
 
 
 def latest_review_session(job_id: int) -> dict[str, Any] | None:
@@ -873,6 +897,7 @@ def write_review_matrix(session_id: int) -> str:
         f"<h1>候補epochレビューMatrix #{session_id}</h1>",
         f"<p class=\"muted\">Job #{int(session['job_id'])} {html.escape(str(job['name'] if job else ''))}</p>",
         "<p class=\"notice\">採用前の候補epoch比較用Matrixです。機械補助レビューは補助情報であり、最終判断は人間評価を優先してください。</p>",
+        machine_assist_summary_html(review_machine_candidate_summary(session_id)),
         matrix_display_controls(),
         "<div class=\"summary-grid\">",
         summary_card("候補epoch", ", ".join(str(epoch) for epoch in epochs) or "-"),
@@ -944,6 +969,85 @@ def review_session_scores(session_id: int) -> dict[int, dict[str, Any]]:
         if source_id is not None:
             scores.setdefault(int(source_id), dict(row))
     return scores
+
+
+def review_machine_candidate_summary(session_id: int) -> dict[str, Any]:
+    rows = [
+        dict(row)
+        for row in fetch_all(
+            """
+            SELECT rsi.epoch, mrs.reference_similarity_max, mrs.assist_score, mrs.confidence_label
+            FROM review_session_images rsi
+            JOIN machine_review_scores mrs
+              ON mrs.source_type = 'review_session_image'
+             AND mrs.source_id = rsi.id
+            WHERE rsi.review_session_id = ? AND rsi.deleted_at IS NULL
+            """,
+            (session_id,),
+        )
+    ]
+    if not rows:
+        return {
+            "primary_candidate": None,
+            "candidate_group": [],
+            "confidence": "no_clear_winner",
+            "machine_assist_note": "Machine Assistは未実行です。human rating preferred.",
+            "reasons": ["human rating未入力"],
+            "human_rating_preferred": True,
+        }
+    by_epoch: dict[int, list[float]] = {}
+    for row in rows:
+        if row["epoch"] is None or row["reference_similarity_max"] is None:
+            continue
+        by_epoch.setdefault(int(row["epoch"]), []).append(float(row["reference_similarity_max"]))
+    scored = [
+        {"epoch": epoch, "score": sum(values) / len(values), "count": len(values)}
+        for epoch, values in by_epoch.items()
+        if values
+    ]
+    scored.sort(key=lambda item: (-item["score"], item["epoch"]))
+    if not scored:
+        return {
+            "primary_candidate": None,
+            "candidate_group": [],
+            "confidence": "no_clear_winner",
+            "machine_assist_note": "Reference similarityを比較できません。human rating preferred.",
+            "reasons": ["reference similarity差が小さい", "human rating未入力"],
+            "human_rating_preferred": True,
+        }
+    top = scored[0]
+    margin = top["score"] - scored[1]["score"] if len(scored) > 1 else None
+    no_clear = margin is None or margin <= 0.02
+    group = [item for item in scored if top["score"] - item["score"] <= 0.02]
+    reasons = ["human rating未入力"]
+    if no_clear:
+        reasons.insert(0, "reference similarity差が小さい")
+    return {
+        "primary_candidate": None if no_clear else top["epoch"],
+        "candidate_group": [item["epoch"] for item in group],
+        "confidence": "no_clear_winner" if no_clear else "machine_reference",
+        "machine_assist_note": "候補群として表示します。最終判断は人間評価と画像比較を優先してください。" if no_clear else "Machine Assist上の参考候補です。最終判断は人間評価を優先してください。",
+        "reasons": reasons,
+        "human_rating_preferred": True,
+        "scores": scored,
+    }
+
+
+def machine_assist_summary_html(summary: dict[str, Any]) -> str:
+    group = ", ".join(str(epoch) for epoch in summary.get("candidate_group") or []) or "-"
+    primary = summary.get("primary_candidate") or "-"
+    reasons = " / ".join(str(reason) for reason in summary.get("reasons") or [])
+    return (
+        "<section class=\"notice\">"
+        "<h2>Candidate Summary</h2>"
+        f"<p><strong>primary candidate:</strong> {html.escape(str(primary))}</p>"
+        f"<p><strong>candidate group:</strong> {html.escape(group)}</p>"
+        f"<p><strong>confidence:</strong> {html.escape(str(summary.get('confidence') or 'no_clear_winner'))}</p>"
+        "<p><strong>human rating preferred:</strong> yes</p>"
+        f"<p><strong>machine assist note:</strong> {html.escape(str(summary.get('machine_assist_note') or ''))}</p>"
+        f"<p class=\"muted\">{html.escape(reasons)}</p>"
+        "</section>"
+    )
 
 
 def review_image_caption(condition: dict[str, Any], image: dict[str, Any]) -> str:
@@ -1066,6 +1170,19 @@ def review_command_text(payload: dict[str, Any]) -> str:
 
 
 def ensure_candidate_review_plan(job_id: int, *, force: bool = False) -> dict[str, Any] | None:
+    return create_candidate_review_plan(job_id, force=force, include_neighbor_epochs=True, automation_mode=None)
+
+
+def create_candidate_review_plan(
+    job_id: int,
+    *,
+    force: bool = False,
+    include_neighbor_epochs: bool = True,
+    automation_mode: str | None = None,
+    plan_kind: str = "candidate_review",
+    max_candidate_epochs: int | None = None,
+    standard_conditions: bool = False,
+) -> dict[str, Any] | None:
     existing = latest_review_session(job_id)
     if existing and not force:
         return existing
@@ -1078,14 +1195,14 @@ def ensure_candidate_review_plan(job_id: int, *, force: bool = False) -> dict[st
     outputs = model_outputs_by_epoch(job_id)
     if not outputs:
         return None
-    epochs = candidate_review_epochs(job_id, set(outputs.keys()))
+    epochs = candidate_review_epochs(job_id, set(outputs.keys()), include_neighbors=include_neighbor_epochs, max_base_epochs=max_candidate_epochs)
     if not epochs:
         return None
 
     project = project_context(job)
     reference_set_id = project.get("reference_set_id")
     reference_set_version_id = project.get("reference_set_version_id")
-    snapshot = preset_snapshot()
+    snapshot = standard_auto_preset_snapshot() if standard_conditions else preset_snapshot()
     conditions = build_conditions(job, outputs, epochs, snapshot)
     now = utc_now()
     with connect() as conn:
@@ -1095,9 +1212,10 @@ def ensure_candidate_review_plan(job_id: int, *, force: bool = False) -> dict[st
                 job_id, project_id, reference_set_id, reference_set_version_id,
                 dataset_id, dataset_version_id, name, preset_id, preset_snapshot_json,
                 candidate_epochs_json, prompt_keys_json, weights_json, seed,
-                expected_image_count, status, created_at, updated_at, memo
+                expected_image_count, status, review_plan_kind, automation_mode, automation_status,
+                created_at, updated_at, memo
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'planned', ?, ?, '')
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'planned', ?, ?, 'planned', ?, ?, '')
             """,
             (
                 job_id,
@@ -1114,6 +1232,8 @@ def ensure_candidate_review_plan(job_id: int, *, force: bool = False) -> dict[st
                 json.dumps(WEIGHTS, ensure_ascii=False),
                 SEED,
                 len(conditions),
+                plan_kind,
+                automation_mode,
                 now,
                 now,
             ),
@@ -1175,19 +1295,208 @@ def model_outputs_by_epoch(job_id: int) -> dict[int, dict[str, Any]]:
     return outputs
 
 
-def candidate_review_epochs(job_id: int, output_epochs: set[int]) -> list[int]:
+def candidate_review_epochs(job_id: int, output_epochs: set[int], *, include_neighbors: bool = True, max_base_epochs: int | None = None) -> list[int]:
     candidates = ensure_epoch_candidates(job_id)
     base_epochs: set[int] = set()
     for row in candidates:
         if row.get("candidate_label") in {"primary", "secondary", "check"} and row.get("epoch") is not None:
             epoch = int(row["epoch"])
-            base_epochs.update({epoch - 1, epoch, epoch + 1})
+            if include_neighbors:
+                base_epochs.update({epoch - 1, epoch, epoch + 1})
+            else:
+                base_epochs.add(epoch)
+            if max_base_epochs and len(base_epochs) >= max_base_epochs:
+                break
     if not base_epochs:
         job = fetch_one("SELECT adopted_epoch FROM training_jobs WHERE id = ?", (job_id,))
         if job and job["adopted_epoch"] is not None:
             epoch = int(job["adopted_epoch"])
-            base_epochs.update({epoch - 1, epoch, epoch + 1})
+            base_epochs.update({epoch - 1, epoch, epoch + 1} if include_neighbors else {epoch})
     return sorted(epoch for epoch in base_epochs if epoch in output_epochs and epoch > 0)
+
+
+def review_automation_settings_for_job(job_id: int) -> dict[str, Any]:
+    job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
+    if job is None:
+        raise ValueError(f"Job not found: {job_id}")
+    project = fetch_one("SELECT * FROM lora_projects WHERE id = ?", (job["project_id"],)) if job["project_id"] else None
+    result = dict(DEFAULT_POST_TRAINING_REVIEW_SETTINGS)
+    for key in result:
+        if project and key in project.keys() and project[key] not in (None, ""):
+            result[key] = project[key]
+        if key in job.keys() and job[key] not in (None, ""):
+            result[key] = job[key]
+    mode = str(result.get("post_training_review_mode") or "plan_only")
+    result["post_training_review_mode"] = mode if mode in POST_TRAINING_REVIEW_MODES else "plan_only"
+    result["max_auto_images"] = max(1, int(result.get("max_auto_images") or 18))
+    result["max_auto_runtime_minutes"] = max(1, int(result.get("max_auto_runtime_minutes") or 20))
+    result["include_neighbor_epochs"] = 1 if str(result.get("include_neighbor_epochs") or "0") in {"1", "true", "True", "yes"} else 0
+    return result
+
+
+def review_gpu_task_busy() -> bool:
+    checks = [
+        ("training_jobs", "status IN ('running')"),
+        ("review_sessions", "status IN ('running', 'generating_images', 'embedding_images', 'machine_reviewing', 'building_matrix')"),
+        ("validation_runs", "pipeline_status IN ('generating_images', 'importing_images', 'embedding_images', 'machine_reviewing', 'building_matrix')"),
+        ("embedding_jobs", "status IN ('running')"),
+        ("machine_review_jobs", "status IN ('running')"),
+    ]
+    for table, where in checks:
+        try:
+            if fetch_one(f"SELECT id FROM {table} WHERE {where} LIMIT 1"):
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def mark_post_training_review(job_id: int, status: str, message: str) -> None:
+    now = utc_now()
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE training_jobs
+            SET post_training_review_status = ?, post_training_review_message = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (status, message, now, job_id),
+        )
+
+
+def handle_post_training_review_automation(job_id: int) -> dict[str, Any]:
+    settings_row = review_automation_settings_for_job(job_id)
+    mode = settings_row["post_training_review_mode"]
+    if mode == "manual":
+        mark_post_training_review(job_id, "manual", "Post-training Review Automationはmanualです。")
+        return {"status": "manual", "message": "manual mode"}
+
+    include_neighbors = bool(settings_row["include_neighbor_epochs"]) or mode == "standard_auto"
+    session = create_candidate_review_plan(
+        job_id,
+        include_neighbor_epochs=include_neighbors,
+        automation_mode=mode,
+        plan_kind="quick_candidate_review" if mode == "quick_auto" else "standard_candidate_review" if mode == "standard_auto" else "candidate_review_plan",
+        max_candidate_epochs=3 if mode == "quick_auto" else None,
+        standard_conditions=mode == "standard_auto",
+    )
+    if session is None:
+        mark_post_training_review(job_id, "no_plan", "候補epochまたは出力LoRAがないためReview Planを作成できませんでした。")
+        return {"status": "no_plan", "message": "no plan"}
+
+    expected = int(session["expected_image_count"] or 0)
+    if mode == "plan_only":
+        mark_post_training_review(job_id, "planned", f"Review Plan #{session['id']} を作成しました。")
+        return {"status": "planned", "session_id": int(session["id"]), "message": "plan only"}
+
+    if expected > int(settings_row["max_auto_images"]):
+        mark_post_training_review(
+            job_id,
+            "waiting_confirmation",
+            f"Review Plan #{session['id']} は {expected} 枚でmax_auto_imagesを超えたため自動開始しません。",
+        )
+        return {"status": "waiting_confirmation", "session_id": int(session["id"]), "message": "max images exceeded"}
+
+    if review_gpu_task_busy():
+        mark_post_training_review(job_id, "planned_waiting", f"GPUタスク実行中のためReview Plan #{session['id']} はplannedで待機します。")
+        return {"status": "planned_waiting", "session_id": int(session["id"]), "message": "gpu busy"}
+
+    if mode == "standard_auto":
+        with connect() as conn:
+            conn.execute(
+                "UPDATE review_sessions SET memo = ?, automation_status = 'warning_auto_started', updated_at = ? WHERE id = ?",
+                ("standard_autoは生成枚数と実行時間が増える可能性があります。", utc_now(), int(session["id"])),
+            )
+    pid = start_review_preparation(int(session["id"]))
+    review_name = "Quick Candidate Review" if mode == "quick_auto" else "Standard Candidate Review"
+    mark_post_training_review(job_id, "auto_started", f"Review Plan #{session['id']} の{review_name}を開始しました。PID: {pid}")
+    return {"status": "auto_started", "session_id": int(session["id"]), "pid": pid}
+
+
+def create_neighbor_review_session(job_id: int, center_epoch: int, radius: int = 1, parent_review_session_id: int | None = None) -> dict[str, Any] | None:
+    outputs = model_outputs_by_epoch(job_id)
+    if not outputs:
+        return None
+    radius = 2 if int(radius) >= 2 else 1
+    epochs = sorted(epoch for epoch in range(center_epoch - radius, center_epoch + radius + 1) if epoch in outputs and epoch > 0)
+    if not epochs:
+        return None
+    job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
+    if job is None:
+        raise ValueError(f"Job not found: {job_id}")
+    project = project_context(job)
+    snapshot = preset_snapshot()
+    conditions = build_conditions(job, outputs, epochs, snapshot)
+    now = utc_now()
+    with connect() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO review_sessions(
+                job_id, project_id, reference_set_id, reference_set_version_id,
+                dataset_id, dataset_version_id, name, preset_id, preset_snapshot_json,
+                candidate_epochs_json, prompt_keys_json, weights_json, seed,
+                expected_image_count, status, review_plan_kind, automation_mode, automation_status,
+                parent_review_session_id, created_at, updated_at, memo
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'planned', 'expanded_neighbor_review', 'manual', 'planned', ?, ?, ?, ?)
+            """,
+            (
+                job_id,
+                job["project_id"],
+                project.get("reference_set_id"),
+                project.get("reference_set_version_id"),
+                job["dataset_id"],
+                job["dataset_version_id"],
+                f"Job #{job_id} 近隣epoch追加レビュー center {center_epoch} ±{radius}",
+                PRESET_ID,
+                json.dumps(snapshot, ensure_ascii=False),
+                json.dumps(epochs, ensure_ascii=False),
+                json.dumps([prompt["key"] for prompt in PROMPTS], ensure_ascii=False),
+                json.dumps(WEIGHTS, ensure_ascii=False),
+                SEED,
+                len(conditions),
+                parent_review_session_id,
+                now,
+                now,
+                f"Review Session center epoch {center_epoch} ±{radius}",
+            ),
+        )
+        session_id = int(cur.lastrowid)
+        for order, condition in enumerate(conditions, start=1):
+            conn.execute(
+                """
+                INSERT INTO review_session_conditions(
+                    review_session_id, job_id, epoch, output_id, lora_path,
+                    prompt_key, prompt_role, prompt, negative_prompt, seed,
+                    lora_weight, hires_enabled, width, height, sampler, steps,
+                    cfg_scale, condition_hash, expected_order, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session_id,
+                    job_id,
+                    condition["epoch"],
+                    condition["output_id"],
+                    condition["lora_path"],
+                    condition["prompt_key"],
+                    condition["prompt_role"],
+                    condition["prompt"],
+                    condition["negative_prompt"],
+                    condition["seed"],
+                    condition["lora_weight"],
+                    condition["width"],
+                    condition["height"],
+                    condition["sampler"],
+                    condition["steps"],
+                    condition["cfg_scale"],
+                    condition["condition_hash"],
+                    order,
+                    now,
+                    now,
+                ),
+            )
+    return latest_review_session(job_id)
 
 
 def project_context(job: Any) -> dict[str, Any]:
@@ -1220,25 +1529,26 @@ def build_conditions(job: Any, outputs: dict[int, dict[str, Any]], epochs: list[
         output = outputs[epoch]
         for prompt in snapshot["prompts"]:
             prompt_text = prompt["prompt"].format(trigger=trigger).strip(", ")
-            for weight in snapshot["weights"]:
-                condition = {
-                    "epoch": epoch,
-                    "output_id": output["id"],
-                    "lora_path": output["file_path"],
-                    "prompt_key": prompt["key"],
-                    "prompt_role": prompt["role"],
-                    "prompt": prompt_text,
-                    "negative_prompt": snapshot["negative_prompt"],
-                    "seed": snapshot["seed"],
-                    "lora_weight": float(weight),
-                    "width": snapshot["width"],
-                    "height": snapshot["height"],
-                    "sampler": snapshot["sampler"],
-                    "steps": snapshot["steps"],
-                    "cfg_scale": snapshot["cfg_scale"],
-                }
-                condition["condition_hash"] = condition_hash(job["id"], condition)
-                conditions.append(condition)
+            for seed in snapshot.get("seeds") or [snapshot["seed"]]:
+                for weight in snapshot["weights"]:
+                    condition = {
+                        "epoch": epoch,
+                        "output_id": output["id"],
+                        "lora_path": output["file_path"],
+                        "prompt_key": prompt["key"],
+                        "prompt_role": prompt["role"],
+                        "prompt": prompt_text,
+                        "negative_prompt": snapshot["negative_prompt"],
+                        "seed": int(seed),
+                        "lora_weight": float(weight),
+                        "width": snapshot["width"],
+                        "height": snapshot["height"],
+                        "sampler": snapshot["sampler"],
+                        "steps": snapshot["steps"],
+                        "cfg_scale": snapshot["cfg_scale"],
+                    }
+                    condition["condition_hash"] = condition_hash(job["id"], condition)
+                    conditions.append(condition)
     return conditions
 
 

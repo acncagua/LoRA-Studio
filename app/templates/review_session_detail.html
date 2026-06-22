@@ -40,6 +40,16 @@
     <h2>機械補助レビュー概要</h2>
     <p><strong>{{ scores.total or 0 }} / {{ session.expected_image_count or 0 }}</strong></p>
     <p class="muted">機械補助レビューは参考情報です。最終判断は人間評価と画像比較を優先してください。</p>
+    <dl>
+      <dt>primary candidate</dt><dd>{{ machine_candidate_summary.primary_candidate or '-' }}</dd>
+      <dt>candidate group</dt><dd>{{ machine_candidate_summary.candidate_group|join(', ') if machine_candidate_summary.candidate_group else '-' }}</dd>
+      <dt>confidence</dt><dd><span class="label {{ machine_candidate_summary.confidence }}">{{ machine_candidate_summary.confidence }}</span></dd>
+      <dt>human rating preferred</dt><dd>{{ 'yes' if machine_candidate_summary.human_rating_preferred else 'no' }}</dd>
+      <dt>machine assist note</dt><dd>{{ machine_candidate_summary.machine_assist_note }}</dd>
+    </dl>
+    {% if machine_candidate_summary.reasons %}
+    <p class="muted">{{ machine_candidate_summary.reasons|join(' / ') }}</p>
+    {% endif %}
   </div>
   <div>
     <h2>このReview Sessionでの主要操作</h2>
@@ -83,6 +93,27 @@
     <p class="muted">採用操作は、画像生成とレビューMatrix作成後に表示されます。</p>
     {% endif %}
   </div>
+</section>
+
+<section class="notice">
+  <h2>近隣Epochを追加検証</h2>
+  <p class="muted">採用前レビューの追加確認です。中心epochの±1または±2を、weight 0.6 / 0.8、seed 111111、Hiresなしで追加Review Sessionとして作成します。</p>
+  <form method="post" action="/review-sessions/{{ session.id }}/expanded-neighbor" class="form-grid">
+    <label>中心epoch
+      <select name="center_epoch">
+        {% for epoch in candidate_epochs %}
+        <option value="{{ epoch }}">{{ epoch }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>範囲
+      <select name="radius">
+        <option value="1">±1</option>
+        <option value="2">±2</option>
+      </select>
+    </label>
+    <button type="submit" {% if not candidate_epochs %}disabled{% endif %}>近隣EpochのReview Sessionを作成</button>
+  </form>
 </section>
 
 {% if session.status not in ['planned', 'prepared'] %}

@@ -135,6 +135,21 @@
 <section id="review-preparation" class="notice" {% if review_current %}data-review-preparation-session-id="{{ review_current.session_id }}" data-review-preparation-session-status="{{ review_current_status }}"{% endif %}>
   <h2>レビュー準備</h2>
   <p>採用前に候補epochを比較するための準備です。loss候補epochの前後を少数prompt / weightで生成し、横断Matrixで見比べます。採用後の45枚標準検証はweight検証Runとして別に実行します。</p>
+  <div class="summary-grid">
+    <div><span>Project default</span><strong>{{ project.post_training_review_mode if project else 'plan_only' }}</strong></div>
+    <div><span>Job override</span><strong>{{ job.post_training_review_mode or 'inherit' }}</strong></div>
+    <div><span>Post-training Review</span><strong>{{ job.post_training_review_mode or (project.post_training_review_mode if project else 'plan_only') or 'plan_only' }}</strong></div>
+    <div><span>Automation状態</span><strong>{{ job.post_training_review_status or '-' }}</strong></div>
+    <div><span>最大自動画像</span><strong>{{ job.max_auto_images or (project.max_auto_images if project else 18) or 18 }}</strong></div>
+    <div><span>近隣epoch</span><strong>{{ 'include' if (job.include_neighbor_epochs or (project and project.include_neighbor_epochs)) else 'quick only' }}</strong></div>
+  </div>
+  {% if job.post_training_review_message %}
+  <p class="muted">{{ job.post_training_review_message }}</p>
+  {% elif (job.post_training_review_mode or (project.post_training_review_mode if project else 'plan_only')) == 'manual' %}
+  <p class="muted">手動で候補レビューを作成できます。既存のReview Session作成導線を使用してください。</p>
+  {% elif (job.post_training_review_mode or (project.post_training_review_mode if project else 'plan_only')) == 'plan_only' and review_preparation.current %}
+  <p class="muted">Review Plan作成済みです。候補レビューを開始できます。</p>
+  {% endif %}
   {% if review_preparation.current %}
   <h3>現在のレビューセッション #{{ review_preparation.current.session_id }}</h3>
   <p class="muted">この枠の数値はすべてレビューセッション #{{ review_preparation.current.session_id }}だけから取得しています。</p>

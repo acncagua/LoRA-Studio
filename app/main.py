@@ -78,9 +78,11 @@ from app.services.recommendations import create_draft_job_from_recommendation, l
 from app.services.review_candidates import ensure_epoch_candidates, regenerate_epoch_candidates
 from app.services.step_estimator import calculate_required_repeats, estimate_steps, suggest_target_steps, target_config_from_catalog
 from app.services.review_sessions import (
+    create_neighbor_review_session,
     ensure_candidate_review_plan,
     prepare_review_generation,
     reconcile_stale_review_sessions,
+    review_machine_candidate_summary,
     review_session_summary,
     start_review_preparation,
     stop_review_preparation,
@@ -799,9 +801,11 @@ def create_lora_project(data: dict[str, Any]) -> int:
             """
             INSERT INTO lora_projects(
                 name, description, dataset_id, current_dataset_version_id, trigger_word,
-                base_model_path, status, created_at, updated_at, memo
+                base_model_path, status, post_training_review_mode, max_auto_images,
+                max_auto_runtime_minutes, auto_review_provider, include_neighbor_epochs,
+                created_at, updated_at, memo
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 data["name"],
@@ -811,6 +815,11 @@ def create_lora_project(data: dict[str, Any]) -> int:
                 data.get("trigger_word") or "",
                 data.get("base_model_path") or "",
                 data.get("status") or "draft",
+                data.get("post_training_review_mode") or "plan_only",
+                int(data.get("max_auto_images") or 18),
+                int(data.get("max_auto_runtime_minutes") or 20),
+                data.get("auto_review_provider") or "default",
+                1 if data.get("include_neighbor_epochs") else 0,
                 now,
                 now,
                 data.get("memo") or "",
@@ -1654,8 +1663,26 @@ def review_session_detail(request: Request, session_id: int) -> HTMLResponse:
         can_select_epoch=can_select_epoch,
         selected_epoch=selected_epoch,
         selected_epoch_in_session=selected_epoch_in_session,
+        machine_candidate_summary=review_machine_candidate_summary(session_id),
         operation_monitor=review_session_operation_monitor(session),
     )
+
+
+@app.post("/review-sessions/{session_id}/expanded-neighbor")
+def review_session_expanded_neighbor(
+    session_id: int,
+    center_epoch: int = Form(...),
+    radius: int = Form(1),
+) -> RedirectResponse:
+    session = fetch_one("SELECT * FROM review_sessions WHERE id = ?", (session_id,))
+    if session is None:
+        raise HTTPException(status_code=404, detail="Review Session not found")
+    if not session["job_id"]:
+        raise HTTPException(status_code=400, detail="JobがないReview Sessionでは追加検証できません。")
+    created = create_neighbor_review_session(int(session["job_id"]), int(center_epoch), int(radius), parent_review_session_id=session_id)
+    if created is None:
+        return RedirectResponse(f"/review-sessions/{session_id}?message={quote('近隣epochの出力LoRAが見つかりません。')}", status_code=303)
+    return RedirectResponse(f"/review-sessions/{int(created['id'])}", status_code=303)
 
 
 @app.get("/validation-runs", response_class=HTMLResponse)
@@ -1803,6 +1830,48 @@ def project_detail(request: Request, project_id: int) -> HTMLResponse:
         project_status_labels=PROJECT_STATUS_LABELS,
         status_labels=STATUS_LABELS,
     )
+
+
+@app.post("/projects/{project_id}/review-automation")
+def project_review_automation_save(
+    project_id: int,
+    post_training_review_mode: str = Form("plan_only"),
+    max_auto_images: str = Form("18"),
+    max_auto_runtime_minutes: str = Form("20"),
+    auto_review_provider: str = Form("default"),
+    include_neighbor_epochs: str = Form(""),
+) -> RedirectResponse:
+    project = fetch_one("SELECT id FROM lora_projects WHERE id = ?", (project_id,))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    mode = post_training_review_mode if post_training_review_mode in {"manual", "plan_only", "quick_auto", "standard_auto"} else "plan_only"
+
+    def positive_int(raw: str, default: int) -> int:
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return default
+
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE lora_projects
+            SET post_training_review_mode = ?, max_auto_images = ?,
+                max_auto_runtime_minutes = ?, auto_review_provider = ?,
+                include_neighbor_epochs = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                mode,
+                positive_int(max_auto_images, 18),
+                positive_int(max_auto_runtime_minutes, 20),
+                auto_review_provider.strip() or "default",
+                1 if include_neighbor_epochs == "1" else 0,
+                settings_now(),
+                project_id,
+            ),
+        )
+    return RedirectResponse(f"/projects/{project_id}", status_code=303)
 
 
 @app.post("/projects/{project_id}/create-preset-job")
@@ -2879,7 +2948,21 @@ def job_create(
     save_every_n_epochs: str = Form(""),
     sample_every_n_epochs: str = Form(""),
     repeats_auto_calculated: str = Form("0"),
+    post_training_review_mode: str = Form("plan_only"),
+    max_auto_images: str = Form("18"),
+    max_auto_runtime_minutes: str = Form("20"),
+    auto_review_provider: str = Form("default"),
+    include_neighbor_epochs: str = Form(""),
 ) -> RedirectResponse:
+    def normalized_review_mode(raw: str) -> str:
+        return raw if raw in {"manual", "plan_only", "quick_auto", "standard_auto"} else "plan_only"
+
+    def positive_int(raw: str, default: int) -> int:
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return default
+
     def resolve_dataset_version_id(selected_dataset_id: int, raw_version_id: str) -> int | None:
         if raw_version_id.strip():
             version = fetch_one(
@@ -2919,6 +3002,11 @@ def job_create(
                 "base_model_path": base_model_path,
                 "status": "draft",
                 "memo": memo,
+                "post_training_review_mode": normalized_review_mode(post_training_review_mode),
+                "max_auto_images": positive_int(max_auto_images, 18),
+                "max_auto_runtime_minutes": positive_int(max_auto_runtime_minutes, 20),
+                "auto_review_provider": auto_review_provider.strip() or "default",
+                "include_neighbor_epochs": include_neighbor_epochs == "1",
             }
         )
         dataset_version_id = str(resolved_version_id or "")
@@ -2955,6 +3043,11 @@ def job_create(
         "trigger_word": job_trigger_word,
         "params": params,
         "repeats_auto_calculated": repeats_auto_calculated == "1",
+        "post_training_review_mode": normalized_review_mode(post_training_review_mode),
+        "max_auto_images": positive_int(max_auto_images, 18),
+        "max_auto_runtime_minutes": positive_int(max_auto_runtime_minutes, 20),
+        "auto_review_provider": auto_review_provider.strip() or "default",
+        "include_neighbor_epochs": include_neighbor_epochs == "1",
     })
     return RedirectResponse(f"/jobs/{job_id}?created=1", status_code=303)
 
@@ -3548,8 +3641,22 @@ def job_edit_save(
     lr_scheduler: str = Form(""),
     no_metadata: str = Form(""),
     repeats_auto_calculated: str = Form("0"),
+    post_training_review_mode: str = Form("plan_only"),
+    max_auto_images: str = Form("18"),
+    max_auto_runtime_minutes: str = Form("20"),
+    auto_review_provider: str = Form("default"),
+    include_neighbor_epochs: str = Form(""),
     params_json: str = Form("{}"),
 ) -> RedirectResponse:
+    def normalized_review_mode(raw: str) -> str:
+        return raw if raw in {"manual", "plan_only", "quick_auto", "standard_auto"} else "plan_only"
+
+    def positive_int(raw: str, default: int) -> int:
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return default
+
     job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -3614,6 +3721,9 @@ def job_edit_save(
                 target_steps_recommended_at_creation = ?, step_status_at_creation = ?,
                 step_estimate_snapshot_json = ?,
                 repeats_auto_calculated = ?, target_steps_source = ?,
+                post_training_review_mode = ?, max_auto_images = ?,
+                max_auto_runtime_minutes = ?, auto_review_provider = ?,
+                include_neighbor_epochs = ?,
                 updated_at = ?
             WHERE id = ?
             """,
@@ -3643,6 +3753,11 @@ def job_edit_save(
                 json.dumps(step_estimate, ensure_ascii=False),
                 1 if repeats_auto_calculated == "1" else 0,
                 step_estimate["target_source"],
+                normalized_review_mode(post_training_review_mode),
+                positive_int(max_auto_images, 18),
+                positive_int(max_auto_runtime_minutes, 20),
+                auto_review_provider.strip() or "default",
+                1 if include_neighbor_epochs == "1" else 0,
                 now,
                 job_id,
             ),

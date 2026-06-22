@@ -95,6 +95,24 @@
     <label class="checkbox-line"><input type="checkbox" name="no_metadata" value="1" {{ 'checked' if params.no_metadata else '' }}> no_metadata</label>
   </fieldset>
 
+  <fieldset class="form-fieldset">
+    <legend>Post-training Review Automation</legend>
+    <p class="muted">学習完了後の採用前Review Plan作成を自動化します。plan_onlyでは画像生成を自動開始しません。</p>
+    <label>mode
+      <select name="post_training_review_mode">
+        {% set review_mode = job.post_training_review_mode or 'plan_only' %}
+        <option value="manual" {{ 'selected' if review_mode == 'manual' else '' }}>manual</option>
+        <option value="plan_only" {{ 'selected' if review_mode == 'plan_only' else '' }}>plan_only</option>
+        <option value="quick_auto" {{ 'selected' if review_mode == 'quick_auto' else '' }}>quick_auto</option>
+        <option value="standard_auto" {{ 'selected' if review_mode == 'standard_auto' else '' }}>standard_auto</option>
+      </select>
+    </label>
+    <label>max_auto_images<input name="max_auto_images" value="{{ job.max_auto_images or 18 }}"></label>
+    <label>max_auto_runtime_minutes<input name="max_auto_runtime_minutes" value="{{ job.max_auto_runtime_minutes or 20 }}"></label>
+    <label>auto_review_provider<input name="auto_review_provider" value="{{ job.auto_review_provider or 'default' }}"></label>
+    <label class="checkbox-line"><input type="checkbox" name="include_neighbor_epochs" value="1" {{ 'checked' if job.include_neighbor_epochs else '' }}> loss候補の近隣epochも含める</label>
+  </fieldset>
+
   <div class="wide-field">
     <script type="application/json" data-step-presets-json>{{ step_estimator_presets|tojson }}</script>
     <script type="application/json" data-step-dataset-versions-json>{{ dataset_versions_json|tojson }}</script>

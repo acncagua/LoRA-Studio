@@ -81,6 +81,11 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "deleted_at": "TEXT",
             "archive_reason": "TEXT",
             "delete_reason": "TEXT",
+            "post_training_review_mode": "TEXT NOT NULL DEFAULT 'plan_only'",
+            "max_auto_images": "INTEGER NOT NULL DEFAULT 18",
+            "max_auto_runtime_minutes": "INTEGER NOT NULL DEFAULT 20",
+            "auto_review_provider": "TEXT NOT NULL DEFAULT 'default'",
+            "include_neighbor_epochs": "INTEGER NOT NULL DEFAULT 0",
         },
     )
     ensure_columns(
@@ -129,6 +134,13 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "step_estimate_snapshot_json": "TEXT",
             "repeats_auto_calculated": "INTEGER NOT NULL DEFAULT 0",
             "target_steps_source": "TEXT",
+            "post_training_review_mode": "TEXT",
+            "max_auto_images": "INTEGER",
+            "max_auto_runtime_minutes": "INTEGER",
+            "auto_review_provider": "TEXT",
+            "include_neighbor_epochs": "INTEGER",
+            "post_training_review_status": "TEXT",
+            "post_training_review_message": "TEXT",
             "parent_job_id": "INTEGER",
             "sample_prompt_template_id": "TEXT",
             "config_dirty": "INTEGER NOT NULL DEFAULT 0",
@@ -429,6 +441,11 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         conn,
         "review_sessions",
         {
+            "review_plan_kind": "TEXT",
+            "automation_mode": "TEXT",
+            "automation_status": "TEXT",
+            "machine_assist_summary_json": "TEXT",
+            "parent_review_session_id": "INTEGER",
             "project_id": "INTEGER",
             "reference_set_id": "INTEGER",
             "reference_set_version_id": "INTEGER",
@@ -1448,8 +1465,10 @@ def create_job(data: dict[str, Any]) -> int:
                 target_steps_recommended_at_creation, step_status_at_creation,
                 step_estimate_snapshot_json,
                 repeats_auto_calculated, target_steps_source,
-                dataset_version_id
-            ) VALUES (?, ?, ?, ?, NULL, 'draft', ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                dataset_version_id,
+                post_training_review_mode, max_auto_images, max_auto_runtime_minutes,
+                auto_review_provider, include_neighbor_epochs
+            ) VALUES (?, ?, ?, ?, NULL, 'draft', ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 data.get("project_id"), data["name"], int(data["dataset_id"]), data["preset_id"],
@@ -1464,6 +1483,11 @@ def create_job(data: dict[str, Any]) -> int:
                 1 if data.get("repeats_auto_calculated") else 0,
                 step_estimate["target_source"],
                 dataset_version_id,
+                data.get("post_training_review_mode") or None,
+                int(data.get("max_auto_images") or 18),
+                int(data.get("max_auto_runtime_minutes") or 20),
+                data.get("auto_review_provider") or None,
+                1 if data.get("include_neighbor_epochs") else 0,
             ),
         )
         job_id = int(cur.lastrowid)
@@ -1862,6 +1886,11 @@ CREATE TABLE IF NOT EXISTS lora_projects (
     base_model_path TEXT, status TEXT NOT NULL DEFAULT 'draft',
     selected_job_id INTEGER, selected_output_id INTEGER, selected_lora_profile_id INTEGER,
     recommended_weight_min REAL, recommended_weight_max REAL,
+    post_training_review_mode TEXT NOT NULL DEFAULT 'plan_only',
+    max_auto_images INTEGER NOT NULL DEFAULT 18,
+    max_auto_runtime_minutes INTEGER NOT NULL DEFAULT 20,
+    auto_review_provider TEXT NOT NULL DEFAULT 'default',
+    include_neighbor_epochs INTEGER NOT NULL DEFAULT 0,
     archived_at TEXT, deleted_at TEXT, archive_reason TEXT, delete_reason TEXT,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, memo TEXT
 );
@@ -1879,6 +1908,9 @@ CREATE TABLE IF NOT EXISTS training_jobs (
     target_steps_recommended_at_creation INTEGER, step_status_at_creation TEXT,
     step_estimate_snapshot_json TEXT,
     repeats_auto_calculated INTEGER NOT NULL DEFAULT 0, target_steps_source TEXT,
+    post_training_review_mode TEXT, max_auto_images INTEGER, max_auto_runtime_minutes INTEGER,
+    auto_review_provider TEXT, include_neighbor_epochs INTEGER,
+    post_training_review_status TEXT, post_training_review_message TEXT,
     dataset_version_id INTEGER, config_dirty INTEGER NOT NULL DEFAULT 0,
     archived_at TEXT, deleted_at TEXT, archived_reason TEXT, delete_reason TEXT,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -2001,6 +2033,9 @@ CREATE TABLE IF NOT EXISTS review_sessions (
     run_dir TEXT, output_dir TEXT, prompt_file_path TEXT, command_argv_json TEXT,
     generation_process_id INTEGER, return_code INTEGER,
     matrix_path TEXT, log_path TEXT, error_message TEXT,
+    review_plan_kind TEXT, automation_mode TEXT, automation_status TEXT,
+    machine_assist_summary_json TEXT,
+    parent_review_session_id INTEGER,
     started_at TEXT, ended_at TEXT, elapsed_seconds INTEGER,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, memo TEXT
 );

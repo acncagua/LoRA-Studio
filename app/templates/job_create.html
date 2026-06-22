@@ -86,6 +86,23 @@
     <label>sample_every_n_epochs<input name="sample_every_n_epochs"></label>
   </fieldset>
 
+  <fieldset class="form-fieldset">
+    <legend>Post-training Review Automation</legend>
+    <p class="muted">学習完了後の採用前Review Plan作成を自動化します。通常はplan_onlyで、画像生成は人間が開始します。</p>
+    <label>mode
+      <select name="post_training_review_mode">
+        <option value="manual">manual</option>
+        <option value="plan_only" selected>plan_only</option>
+        <option value="quick_auto">quick_auto</option>
+        <option value="standard_auto">standard_auto</option>
+      </select>
+    </label>
+    <label>max_auto_images<input name="max_auto_images" value="18"></label>
+    <label>max_auto_runtime_minutes<input name="max_auto_runtime_minutes" value="20"></label>
+    <label>auto_review_provider<input name="auto_review_provider" value="default"></label>
+    <label class="checkbox-line"><input type="checkbox" name="include_neighbor_epochs" value="1"> loss候補の近隣epochも含める</label>
+  </fieldset>
+
   <div class="wide-field">
     <script type="application/json" data-step-presets-json>{{ step_estimator_presets|tojson }}</script>
     <script type="application/json" data-step-dataset-versions-json>{{ dataset_versions_json|tojson }}</script>

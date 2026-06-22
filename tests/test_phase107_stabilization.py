@@ -757,6 +757,45 @@ class Phase107StabilizationTests(IsolatedDbTest):
             )
             return int(cur.lastrowid)
 
+    def add_review_ready_job(
+        self,
+        mode: str = "plan_only",
+        max_auto_images: int = 18,
+        epochs: tuple[int, ...] = (1, 2, 3),
+    ) -> int:
+        project_id, dataset_id, version_id = self.create_project_fixture()
+        now = utc_now()
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE lora_projects
+                SET post_training_review_mode = ?, max_auto_images = ?, include_neighbor_epochs = 0
+                WHERE id = ?
+                """,
+                (mode, max_auto_images, project_id),
+            )
+        job_id = self.add_completed_job(dataset_id, version_id, "sdxl_2d_face_adamw8bit_standard", project_id=project_id)
+        with connect() as conn:
+            for epoch in epochs:
+                model_path = self.root / "runs" / f"job_{job_id:06d}" / "models" / f"model-{epoch:06d}.safetensors"
+                model_path.parent.mkdir(parents=True, exist_ok=True)
+                model_path.write_text("model", encoding="utf-8")
+                conn.execute(
+                    """
+                    INSERT INTO training_outputs(job_id, epoch, file_path, file_type, selected, created_at)
+                    VALUES (?, ?, ?, 'model', 0, ?)
+                    """,
+                    (job_id, epoch, str(model_path), now),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO training_epoch_summaries(job_id, epoch, avg_loss, moving_avg_final_loss, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (job_id, epoch, 0.2 - epoch * 0.01, 0.2 - epoch * 0.01, now, now),
+                )
+        return job_id
+
     def add_job_with_status(self, status: str, project_id: int | None = None, name: str = "cleanup test") -> int:
         _, dataset_id, version_id = self.create_project_fixture() if project_id is None else (project_id, 1, 1)
         now = utc_now()
@@ -1478,6 +1517,152 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertEqual(result["status"], "started")
         self.assertEqual(run["pipeline_status"], "generating_images")
         thread_mock.return_value.start.assert_called_once()
+
+    def test_post_training_review_plan_only_creates_plan_without_generation(self) -> None:
+        from app.services.review_sessions import handle_post_training_review_automation
+
+        job_id = self.add_review_ready_job(mode="plan_only")
+        with mock.patch("app.services.review_sessions.start_review_preparation") as start_mock:
+            result = handle_post_training_review_automation(job_id)
+
+        session = fetch_one("SELECT * FROM review_sessions WHERE job_id = ?", (job_id,))
+        self.assertEqual(result["status"], "planned")
+        self.assertIsNotNone(session)
+        self.assertEqual(session["status"], "planned")
+        self.assertEqual(session["expected_image_count"], 18)
+        start_mock.assert_not_called()
+
+    def test_post_training_review_manual_mode_does_not_create_plan(self) -> None:
+        from app.services.review_sessions import handle_post_training_review_automation
+
+        job_id = self.add_review_ready_job(mode="manual")
+        result = handle_post_training_review_automation(job_id)
+
+        session = fetch_one("SELECT * FROM review_sessions WHERE job_id = ?", (job_id,))
+        job = fetch_one("SELECT post_training_review_status FROM training_jobs WHERE id = ?", (job_id,))
+        self.assertEqual(result["status"], "manual")
+        self.assertIsNone(session)
+        self.assertEqual(job["post_training_review_status"], "manual")
+
+    def test_post_training_review_plan_only_is_idempotent(self) -> None:
+        from app.services.review_sessions import handle_post_training_review_automation
+
+        job_id = self.add_review_ready_job(mode="plan_only")
+        first = handle_post_training_review_automation(job_id)
+        second = handle_post_training_review_automation(job_id)
+
+        count = fetch_one("SELECT COUNT(*) AS count FROM review_sessions WHERE job_id = ?", (job_id,))
+        self.assertEqual(first["session_id"], second["session_id"])
+        self.assertEqual(count["count"], 1)
+
+    def test_post_training_review_quick_auto_starts_pipeline(self) -> None:
+        from app.services.review_sessions import handle_post_training_review_automation
+
+        job_id = self.add_review_ready_job(mode="quick_auto")
+        with mock.patch("app.services.review_sessions.review_gpu_task_busy", return_value=False), mock.patch(
+            "app.services.review_sessions.start_review_preparation",
+            return_value=4321,
+        ) as start_mock:
+            result = handle_post_training_review_automation(job_id)
+
+        session = fetch_one("SELECT * FROM review_sessions WHERE job_id = ?", (job_id,))
+        job = fetch_one("SELECT post_training_review_status FROM training_jobs WHERE id = ?", (job_id,))
+        self.assertEqual(result["status"], "auto_started")
+        self.assertEqual(session["expected_image_count"], 18)
+        self.assertEqual(job["post_training_review_status"], "auto_started")
+        start_mock.assert_called_once_with(session["id"])
+
+    def test_post_training_review_quick_auto_waits_when_gpu_busy(self) -> None:
+        from app.services.review_sessions import handle_post_training_review_automation
+
+        job_id = self.add_review_ready_job(mode="quick_auto")
+        with mock.patch("app.services.review_sessions.review_gpu_task_busy", return_value=True), mock.patch(
+            "app.services.review_sessions.start_review_preparation",
+        ) as start_mock:
+            result = handle_post_training_review_automation(job_id)
+
+        job = fetch_one("SELECT post_training_review_status FROM training_jobs WHERE id = ?", (job_id,))
+        self.assertEqual(result["status"], "planned_waiting")
+        self.assertEqual(job["post_training_review_status"], "planned_waiting")
+        start_mock.assert_not_called()
+
+    def test_post_training_review_max_auto_images_blocks_auto_start(self) -> None:
+        from app.services.review_sessions import handle_post_training_review_automation
+
+        job_id = self.add_review_ready_job(mode="quick_auto", max_auto_images=12)
+        with mock.patch("app.services.review_sessions.start_review_preparation") as start_mock:
+            result = handle_post_training_review_automation(job_id)
+
+        job = fetch_one("SELECT post_training_review_status FROM training_jobs WHERE id = ?", (job_id,))
+        self.assertEqual(result["status"], "waiting_confirmation")
+        self.assertEqual(job["post_training_review_status"], "waiting_confirmation")
+        start_mock.assert_not_called()
+
+    def test_post_training_review_standard_auto_respects_max_auto_images(self) -> None:
+        from app.services.review_sessions import handle_post_training_review_automation
+
+        job_id = self.add_review_ready_job(mode="standard_auto", max_auto_images=12, epochs=(1, 2, 3))
+        with mock.patch("app.services.review_sessions.start_review_preparation") as start_mock:
+            result = handle_post_training_review_automation(job_id)
+
+        session = fetch_one("SELECT * FROM review_sessions WHERE job_id = ?", (job_id,))
+        self.assertEqual(result["status"], "waiting_confirmation")
+        self.assertEqual(session["review_plan_kind"], "standard_candidate_review")
+        self.assertGreater(session["expected_image_count"], 12)
+        start_mock.assert_not_called()
+
+    def test_machine_assist_no_clear_winner_summary(self) -> None:
+        from app.services.review_sessions import review_machine_candidate_summary
+
+        job_id = self.add_review_ready_job(mode="plan_only", epochs=(1, 2))
+        from app.services.review_sessions import create_candidate_review_plan
+
+        session = create_candidate_review_plan(job_id, include_neighbor_epochs=False, force=True, max_candidate_epochs=2)
+        now = utc_now()
+        with connect() as conn:
+            for epoch, value in ((1, 0.801), (2, 0.795)):
+                image_path = self.make_png(self.root / "exports" / "review_sessions" / f"review_session_{session['id']:06d}" / f"e{epoch}.png")
+                cur = conn.execute(
+                    """
+                    INSERT INTO review_session_images(review_session_id, job_id, epoch, image_path, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (session["id"], job_id, epoch, str(image_path), now, now),
+                )
+                image_id = int(cur.lastrowid)
+                conn.execute(
+                    """
+                    INSERT INTO machine_review_scores(
+                        source_type, source_id, job_id, embedding_model_id, provider,
+                        epoch, reference_similarity_avg, reference_similarity_max,
+                        overfit_risk_label, assist_score, assist_label, confidence_label,
+                        reason_json, created_at, updated_at
+                    )
+                    VALUES ('review_session_image', ?, ?, 'mock', 'mock', ?, ?, ?, 'unknown', ?, 'candidate', 'medium', '[]', ?, ?)
+                    """,
+                    (image_id, job_id, epoch, value, value, value, now, now),
+                )
+
+        summary = review_machine_candidate_summary(session["id"])
+        self.assertEqual(summary["confidence"], "no_clear_winner")
+        self.assertEqual(summary["primary_candidate"], None)
+        self.assertEqual(summary["candidate_group"], [1, 2])
+
+    def test_expanded_neighbor_review_session_uses_neighbor_epochs(self) -> None:
+        from app.services.review_sessions import create_candidate_review_plan, create_neighbor_review_session
+
+        job_id = self.add_review_ready_job(mode="plan_only", epochs=(1, 2, 3))
+        parent = create_candidate_review_plan(job_id, include_neighbor_epochs=False, force=True, max_candidate_epochs=2)
+        session = create_neighbor_review_session(job_id, center_epoch=2, radius=1, parent_review_session_id=parent["id"])
+
+        self.assertIsNotNone(session)
+        self.assertEqual(session["status"], "planned")
+        self.assertEqual(session["review_plan_kind"], "expanded_neighbor_review")
+        self.assertEqual(session["parent_review_session_id"], parent["id"])
+        self.assertEqual(json.loads(session["candidate_epochs_json"]), [1, 2, 3])
+        self.assertEqual(json.loads(session["weights_json"]), [0.6, 0.8])
+        self.assertEqual(session["seed"], 111111)
+        self.assertEqual(session["expected_image_count"], 18)
 
     def test_step_estimator_basic_formula_and_warning(self) -> None:
         from app.services.step_estimator import estimate_steps

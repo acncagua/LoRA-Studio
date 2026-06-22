@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased - Phase 11.8
+
+LoRA Studio Phase 11.8 adds Post-training Review Automation for candidate epoch review planning after training completion.
+
+### 主な変更
+
+- Training Job完了後にloss候補epochを抽出し、採用前Review Planを自動作成できるようにしました。
+- `manual` / `plan_only` / `quick_auto` / `standard_auto` のPost-training Review Automation modeを追加しました。defaultは安全な `plan_only` です。
+- Quick Candidate Reviewは候補epoch最大3件、3 prompts、seed 111111、weight 0.6 / 0.8、Hiresなしの最大18枚で作成します。
+- `standard_auto` は候補epochごとに標準45条件相当でReview Planを作成し、`max_auto_images` 超過時は自動実行せず確認待ちにします。
+- Review Session詳細に「近隣Epochを追加検証」を追加し、中心epochの±1/±2を追加Review Sessionとして作成できるようにしました。
+- Machine Assistが僅差の場合は `no_clear_winner` として候補群を表示し、人間評価優先で判断する導線を追加しました。
+- Training / Validation / Embedding / Machine Review実行中やmax_auto_images超過時は自動実行せず、plannedで待機またはユーザー確認待ちにします。
+
 ## phase11.7.1 / v0.4.4-beta - 2026-06-22
 
 LoRA Studio phase11.7.1 / v0.4.4-beta adds the Weight Calibration Pipeline for adopted LoRA / selected output validation.

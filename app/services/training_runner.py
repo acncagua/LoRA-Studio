@@ -273,6 +273,16 @@ def monitor_process(
             """,
             (status, return_code, end_time, elapsed, end_time, job_id),
         )
+    if status == "completed":
+        try:
+            from app.services.review_sessions import handle_post_training_review_automation
+
+            result = handle_post_training_review_automation(job_id)
+            with log_path.open("a", encoding="utf-8", errors="replace") as handle:
+                handle.write(f"\n[LoRA-Studio] post-training review automation: {result}\n")
+        except Exception as exc:
+            with log_path.open("a", encoding="utf-8", errors="replace") as handle:
+                handle.write(f"\n[LoRA-Studio] post-training review automation failed: {exc}\n")
 
 
 def stop_job(job_id: int) -> None:

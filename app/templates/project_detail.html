@@ -79,6 +79,27 @@
   </div>
 </section>
 
+<section class="notice">
+  <h2>Post-training Review Automation</h2>
+  <p class="muted">Project default設定です。Job側にoverrideがある場合はJob詳細で別文脈として表示します。</p>
+  <form method="post" action="/projects/{{ project.id }}/review-automation" class="form-grid">
+    <label>Project default
+      <select name="post_training_review_mode">
+        {% set project_review_mode = project.post_training_review_mode or 'plan_only' %}
+        <option value="manual" {{ 'selected' if project_review_mode == 'manual' else '' }}>manual</option>
+        <option value="plan_only" {{ 'selected' if project_review_mode == 'plan_only' else '' }}>plan_only</option>
+        <option value="quick_auto" {{ 'selected' if project_review_mode == 'quick_auto' else '' }}>quick_auto</option>
+        <option value="standard_auto" {{ 'selected' if project_review_mode == 'standard_auto' else '' }}>standard_auto</option>
+      </select>
+    </label>
+    <label>max_auto_images<input name="max_auto_images" value="{{ project.max_auto_images or 18 }}"></label>
+    <label>max_auto_runtime_minutes<input name="max_auto_runtime_minutes" value="{{ project.max_auto_runtime_minutes or 20 }}"></label>
+    <label>auto_review_provider<input name="auto_review_provider" value="{{ project.auto_review_provider or 'default' }}"></label>
+    <label class="checkbox-line"><input type="checkbox" name="include_neighbor_epochs" value="1" {{ 'checked' if project.include_neighbor_epochs else '' }}> loss候補の近隣epochも含める</label>
+    <button type="submit">Project defaultを保存</button>
+  </form>
+</section>
+
 <section>
   <h2>軽量確認の実行判定</h2>
   <p><span class="label {{ pilot_guidance.label|lower }}">{{ pilot_guidance.label }}</span></p>
@@ -101,7 +122,7 @@
 <section id="training-jobs">
   <h2>学習ジョブ履歴</h2>
   <table>
-    <thead><tr><th>ID</th><th>学習ジョブ名</th><th>プリセット</th><th>状態</th><th>epoch/step</th><th>採用epoch</th><th>health</th><th>操作</th></tr></thead>
+    <thead><tr><th>ID</th><th>学習ジョブ名</th><th>プリセット</th><th>状態</th><th>epoch/step</th><th>採用epoch</th><th>Review Automation</th><th>health</th><th>操作</th></tr></thead>
     <tbody>
       {% for job in jobs %}
       <tr>
@@ -111,6 +132,10 @@
         <td><span class="label {{ job.status }}">{{ status_labels.get(job.status, job.status) }}</span></td>
         <td>{{ job.max_train_epochs }}</td>
         <td>{{ job.selected_epoch if job.selected_epoch is not none else job.adopted_epoch if job.adopted_epoch is not none else '-' }}</td>
+        <td>
+          Project default: {{ project.post_training_review_mode or 'plan_only' }}<br>
+          Job override: {{ job.post_training_review_mode or 'inherit' }}
+        </td>
         <td>{{ job.health_label or job.loss_health_label or '-' }}</td>
         <td>
           <div class="actions compact-actions">
@@ -120,7 +145,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="8" class="muted">このProjectの学習ジョブはまだありません。</td></tr>
+      <tr><td colspan="9" class="muted">このProjectの学習ジョブはまだありません。</td></tr>
       {% endfor %}
     </tbody>
   </table>
