@@ -21,7 +21,7 @@ than training itself.
 
 ## Status
 
-Current release: v0.4.3
+Current release: v0.4.4-beta
 Development phase: Phase 11.7
 
 The core workflow is operational and
