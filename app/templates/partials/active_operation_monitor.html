@@ -18,10 +18,15 @@
     <div><span>状態</span><strong data-operation-field="status">{{ operation_monitor.status or '-' }}</strong></div>
     <div><span>段階</span><strong data-operation-field="stage">{{ operation_monitor.stage or '-' }}</strong></div>
     <div><span>開始</span><strong data-operation-field="started_at">{{ operation_monitor.started_at or '-' }}</strong></div>
-    <div><span>経過</span><strong data-operation-field="elapsed">{{ operation_monitor.elapsed_label or '-' }}</strong></div>
+    <div><span>全体経過</span><strong data-operation-field="elapsed">{{ operation_monitor.elapsed_label or '-' }}</strong></div>
+    <div><span>段階経過</span><strong data-operation-field="stage_elapsed">{{ operation_monitor.stage_elapsed_label or '-' }}</strong></div>
     <div><span>PID</span><strong data-operation-field="pid">{{ operation_monitor.pid or '-' }}</strong></div>
     <div><span>終了コード</span><strong data-operation-field="return_code">{{ operation_monitor.return_code if operation_monitor.return_code is not none else '-' }}</strong></div>
     <div><span>進捗</span><strong data-operation-field="progress">{{ operation_monitor.progress_label or '-' }}</strong></div>
+    <div><span>推定合計</span><strong data-operation-field="estimated_total">{{ operation_monitor.estimated_total_label or '-' }}</strong></div>
+    <div><span>推定残り</span><strong data-operation-field="estimated_remaining">{{ operation_monitor.estimated_remaining_label or '-' }}</strong></div>
+    <div><span>推定完了</span><strong data-operation-field="completion_eta">{{ operation_monitor.completion_eta_label or '-' }}</strong></div>
+    <div><span>処理速度</span><strong data-operation-field="rate">{{ operation_monitor.rate_label or '-' }}</strong></div>
     <div><span>ログ更新</span><strong data-operation-field="last_log_update">{{ operation_monitor.last_log_update_label or '-' }}</strong></div>
   </div>
   {% if operation_monitor.log_warning %}

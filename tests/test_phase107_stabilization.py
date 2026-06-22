@@ -986,7 +986,7 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertNotIn("sample_every_n_steps", params)
         self.assertEqual(params["network_dim"], 32)
         self.assertEqual(params["network_alpha"], 16)
-        self.assertEqual(params["train_batch_size"], 2)
+        self.assertEqual(params["train_batch_size"], 1)
         self.assertEqual(params["max_train_epochs"], 10)
 
     def test_create_job_resets_smoke_step_limit_for_normal_preset(self) -> None:
@@ -1022,8 +1022,17 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertNotIn("sample_every_n_steps", params)
         self.assertEqual(params["network_dim"], 16)
         self.assertEqual(params["network_alpha"], 8)
-        self.assertEqual(params["train_batch_size"], 2)
+        self.assertEqual(params["train_batch_size"], 1)
         self.assertEqual(params["max_train_epochs"], 8)
+
+    def test_builtin_training_presets_default_to_batch_size_one(self) -> None:
+        import json
+
+        rows = fetch_all("SELECT id, params_json FROM presets")
+        self.assertGreater(len(rows), 0)
+        for row in rows:
+            params = json.loads(row["params_json"] or "{}")
+            self.assertEqual(params.get("train_batch_size"), 1, row["id"])
 
     def test_train_log_tail_decodes_cp932_logs(self) -> None:
         from app.services.training_runner import read_log_tail
@@ -1037,6 +1046,107 @@ class Phase107StabilizationTests(IsolatedDbTest):
 
         self.assertIn("エラー: メモリ不足", tail)
         self.assertIn("RuntimeError: bad allocation", tail)
+
+    def test_training_operation_timing_uses_tqdm_progress(self) -> None:
+        from datetime import datetime, timezone
+
+        from app.services.operation_monitor import operation_timing_summary
+
+        timing = operation_timing_summary(
+            started_at="2026-06-22T21:23:52+00:00",
+            progress_current=None,
+            progress_total=None,
+            log_tail="steps:  20%|██        | 1030/5180 [36:02<2:25:10,  2.10s/it, avr_loss=0.1]",
+            operation_type="training",
+            now=datetime(2026, 6, 22, 22, 12, 28, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(timing["stage_elapsed_seconds"], 2162)
+        self.assertEqual(timing["estimated_remaining_seconds"], 8710)
+        self.assertEqual(timing["estimated_total_seconds"], 10872)
+        self.assertEqual(timing["rate_label"], "2.10s/it")
+        self.assertEqual(timing["elapsed_label"], "48m 36s")
+
+    def test_command_builder_skips_zero_sdxl_text_encoder_lr(self) -> None:
+        from app.services.command_builder import build_command_argv
+
+        now = utc_now()
+        sd_scripts = self.root / "external" / "sd-scripts"
+        sd_scripts.mkdir(parents=True, exist_ok=True)
+        with connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO environments(
+                    name, sd_scripts_path, venv_python_path, mixed_precision,
+                    sd_scripts_commit_hash, status, created_at, updated_at
+                )
+                VALUES ('default', ?, ?, 'bf16', 'test', 'ok', ?, ?)
+                """,
+                (str(sd_scripts), sys.executable, now, now),
+            )
+        job = {
+            "params_json": json.dumps(
+                {
+                    "optimizer_type": "AdamW8bit",
+                    "text_encoder_lr1": 0,
+                    "text_encoder_lr2": 0,
+                    "network_train_unet_only": True,
+                    "cache_text_encoder_outputs": True,
+                    "train_batch_size": 2,
+                    "resolution": [1024, 1024],
+                }
+            ),
+            "training_script": "sdxl_train_network.py",
+            "base_model_path": "D:/models/base.safetensors",
+            "output_dir": str(self.root / "runs" / "job_000001" / "models"),
+            "output_name": "test",
+            "run_dir": str(self.root / "runs" / "job_000001"),
+            "vae_path": None,
+        }
+
+        argv = build_command_argv(job, self.root / "dataset.toml", self.root / "sample.txt")
+
+        self.assertNotIn("--text_encoder_lr", argv)
+
+    def test_command_builder_keeps_active_sdxl_text_encoder_lr(self) -> None:
+        from app.services.command_builder import build_command_argv
+
+        now = utc_now()
+        sd_scripts = self.root / "external" / "sd-scripts"
+        sd_scripts.mkdir(parents=True, exist_ok=True)
+        with connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO environments(
+                    name, sd_scripts_path, venv_python_path, mixed_precision,
+                    sd_scripts_commit_hash, status, created_at, updated_at
+                )
+                VALUES ('default', ?, ?, 'bf16', 'test', 'ok', ?, ?)
+                """,
+                (str(sd_scripts), sys.executable, now, now),
+            )
+        job = {
+            "params_json": json.dumps({"text_encoder_lr1": 0.000005, "text_encoder_lr2": 0.000005}),
+            "training_script": "sdxl_train_network.py",
+            "base_model_path": "D:/models/base.safetensors",
+            "output_dir": str(self.root / "runs" / "job_000001" / "models"),
+            "output_name": "test",
+            "run_dir": str(self.root / "runs" / "job_000001"),
+            "vae_path": None,
+        }
+
+        argv = build_command_argv(job, self.root / "dataset.toml", self.root / "sample.txt")
+
+        index = argv.index("--text_encoder_lr")
+        self.assertEqual(argv[index + 1 : index + 3], ["5e-06", "5e-06"])
+
+    def test_training_failure_diagnosis_explains_access_violation(self) -> None:
+        from app.services.training_runner import training_failure_diagnosis
+
+        diagnosis = training_failure_diagnosis(3221225477)
+
+        self.assertIn("0xC0000005", diagnosis)
+        self.assertIn("access violation", diagnosis)
 
     def test_sd_scripts_subprocess_env_strips_app_pythonpath(self) -> None:
         from app.services.training_runner import sd_scripts_subprocess_env
@@ -2168,10 +2278,10 @@ class Phase107StabilizationTests(IsolatedDbTest):
             (job_id,),
         )
 
-        self.assertEqual(job["steps_per_epoch_at_creation"], 250)
-        self.assertEqual(job["expected_total_steps_at_creation"], 2500)
+        self.assertEqual(job["steps_per_epoch_at_creation"], 500)
+        self.assertEqual(job["expected_total_steps_at_creation"], 5000)
         self.assertEqual(job["target_steps_recommended_at_creation"], 5000)
-        self.assertEqual(job["step_status_at_creation"], "LOW")
+        self.assertEqual(job["step_status_at_creation"], "OK")
         self.assertEqual(job["repeats_auto_calculated"], 0)
         self.assertEqual(job["target_steps_source"], "recipe")
         self.assertIn("total_steps", job["step_estimate_snapshot_json"])

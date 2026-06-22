@@ -1904,6 +1904,12 @@ function initActiveOperationMonitorPolling() {
   const pidText = panel.querySelector('[data-operation-field="pid"]');
   const returnCodeText = panel.querySelector('[data-operation-field="return_code"]');
   const progressText = panel.querySelector('[data-operation-field="progress"]');
+  const elapsedText = panel.querySelector('[data-operation-field="elapsed"]');
+  const stageElapsedText = panel.querySelector('[data-operation-field="stage_elapsed"]');
+  const estimatedTotalText = panel.querySelector('[data-operation-field="estimated_total"]');
+  const estimatedRemainingText = panel.querySelector('[data-operation-field="estimated_remaining"]');
+  const completionEtaText = panel.querySelector('[data-operation-field="completion_eta"]');
+  const rateText = panel.querySelector('[data-operation-field="rate"]');
   const logUpdateText = panel.querySelector('[data-operation-field="last_log_update"]');
   const shortLog = panel.querySelector("[data-operation-log-short]");
   const fullLog = panel.querySelector("[data-operation-log-full]");
@@ -1928,6 +1934,12 @@ function initActiveOperationMonitorPolling() {
       || (current != null && total != null ? `${current} / ${total}` : "")
       || (current != null ? `${current}` : "");
     if (progressText && progress) progressText.textContent = progress;
+    if (elapsedText && payload.elapsed_label !== undefined) elapsedText.textContent = payload.elapsed_label || "-";
+    if (stageElapsedText && payload.stage_elapsed_label !== undefined) stageElapsedText.textContent = payload.stage_elapsed_label || "-";
+    if (estimatedTotalText && payload.estimated_total_label !== undefined) estimatedTotalText.textContent = payload.estimated_total_label || "-";
+    if (estimatedRemainingText && payload.estimated_remaining_label !== undefined) estimatedRemainingText.textContent = payload.estimated_remaining_label || "-";
+    if (completionEtaText && payload.completion_eta_label !== undefined) completionEtaText.textContent = payload.completion_eta_label || "-";
+    if (rateText && payload.rate_label !== undefined) rateText.textContent = payload.rate_label || "-";
     const logTail = payload.log_tail || payload.log_preview || payload.generation_log_tail || "";
     if (shortLog && logTail) shortLog.textContent = logTail;
     if (fullLog && logTail) fullLog.textContent = logTail;
@@ -1944,7 +1956,7 @@ function initActiveOperationMonitorPolling() {
       warning.hidden = true;
       warning.textContent = "";
     }
-    const runningStatuses = new Set(["running", "generating_images", "embedding_images", "machine_reviewing", "building_matrix"]);
+    const runningStatuses = new Set(["starting", "running", "generating_images", "importing_images", "embedding_images", "machine_reviewing", "building_matrix"]);
     const isRunning = runningStatuses.has(payload.status);
     const wasRunning = panel.getAttribute("data-operation-running") === "1";
     panel.setAttribute("data-operation-running", isRunning ? "1" : "0");

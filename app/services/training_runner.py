@@ -247,6 +247,9 @@ def monitor_process(
     end_time = utc_now()
     elapsed = elapsed_seconds(start_time_text, end_time)
     status = "completed" if return_code == 0 else "failed"
+    if return_code != 0:
+        with log_path.open("a", encoding="utf-8", errors="replace") as handle:
+            handle.write(training_failure_diagnosis(return_code))
 
     current = fetch_one("SELECT status FROM training_jobs WHERE id = ?", (job_id,))
     if current is not None and current["status"] == "stopped":
@@ -283,6 +286,23 @@ def monitor_process(
         except Exception as exc:
             with log_path.open("a", encoding="utf-8", errors="replace") as handle:
                 handle.write(f"\n[LoRA-Studio] post-training review automation failed: {exc}\n")
+
+
+def training_failure_diagnosis(return_code: int) -> str:
+    unsigned_code = return_code & 0xFFFFFFFF
+    if unsigned_code == 0xC0000005:
+        return (
+            "\n[LoRA-Studio] Training process exited with Windows status 0xC0000005 (access violation).\n"
+            "[LoRA-Studio] This usually means the sd-scripts / torch / CUDA native process crashed, not a Python exception.\n"
+            "[LoRA-Studio] Likely causes: VRAM/RAM pressure during SDXL model or text encoder loading, CUDA/driver instability, or incompatible native library state.\n"
+            "[LoRA-Studio] Suggested retry: re-run Prepare Files after the latest command-builder fixes, close other GPU users, and if it repeats try batch_size=1 or fp16.\n"
+        )
+    if unsigned_code == 0xC0000409:
+        return (
+            "\n[LoRA-Studio] Training process exited with Windows status 0xC0000409 (stack buffer overrun / native abort).\n"
+            "[LoRA-Studio] This points to a native library crash in sd-scripts / torch / CUDA.\n"
+        )
+    return f"\n[LoRA-Studio] Training process exited with return code {return_code}.\n"
 
 
 def stop_job(job_id: int) -> None:

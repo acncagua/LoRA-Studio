@@ -75,6 +75,7 @@ from app.services.output_collector import collect_job_results
 from app.services.operation_monitor import (
     embedding_monitor,
     machine_review_monitor,
+    operation_timing_summary,
     review_session_monitor,
     running_training_monitor,
     training_progress_from_log,
@@ -3414,6 +3415,13 @@ def job_log_tail_status(job_id: int) -> JSONResponse:
             log_updated_at = ""
     log_tail = read_log_tail(dict(job))
     progress_current, progress_total, progress_label = training_progress_from_log(log_tail)
+    timing = operation_timing_summary(
+        started_at=job["start_time"],
+        progress_current=progress_current,
+        progress_total=progress_total,
+        log_tail=log_tail,
+        operation_type="training",
+    )
     return JSONResponse(
         {
             "job_id": job_id,
@@ -3424,6 +3432,16 @@ def job_log_tail_status(job_id: int) -> JSONResponse:
             "current": progress_current,
             "total": progress_total,
             "progress_label": progress_label,
+            "elapsed_seconds": timing["elapsed_seconds"],
+            "elapsed_label": timing["elapsed_label"],
+            "stage_elapsed_seconds": timing["stage_elapsed_seconds"],
+            "stage_elapsed_label": timing["stage_elapsed_label"],
+            "estimated_remaining_seconds": timing["estimated_remaining_seconds"],
+            "estimated_remaining_label": timing["estimated_remaining_label"],
+            "estimated_total_seconds": timing["estimated_total_seconds"],
+            "estimated_total_label": timing["estimated_total_label"],
+            "completion_eta_label": timing["completion_eta_label"],
+            "rate_label": timing["rate_label"],
             "log_size": log_size,
             "log_updated_at": log_updated_at,
         }

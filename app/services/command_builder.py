@@ -144,7 +144,13 @@ def build_command_argv(job: dict[str, Any], dataset_config: Path, sample_prompts
         args.extend(["--vae", job["vae_path"]])
 
     skip_keys = {"resolution", "repeats", "optimizer_args", "train_batch_size", "text_encoder_lr1", "text_encoder_lr2"}
-    if "text_encoder_lr1" in params or "text_encoder_lr2" in params:
+    text_encoder_lr_values = [params.get("text_encoder_lr1"), params.get("text_encoder_lr2")]
+    active_text_encoder_lrs = [
+        value
+        for value in text_encoder_lr_values
+        if value not in (None, "", 0, 0.0, "0", "0.0")
+    ]
+    if active_text_encoder_lrs:
         args.extend(
             [
                 "--text_encoder_lr",
