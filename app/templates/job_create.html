@@ -130,6 +130,18 @@
           {% endfor %}
         </select>
       </label>
+      <label>Recipe Type
+        <select data-recipe-filter="recipe_type">
+          <option value="">すべて</option>
+          <option value="smoke">smoke</option>
+          <option value="pilot">pilot</option>
+          <option value="balanced">balanced</option>
+          <option value="balanced_long">balanced_long</option>
+          <option value="generalize">generalize</option>
+          <option value="advanced">advanced</option>
+          <option value="experimental">experimental</option>
+        </select>
+      </label>
       <label data-optimizer-filter-field>Optimizer
         <select data-recipe-filter="optimizer_definition_id">
           <option value="">すべて</option>
@@ -164,7 +176,8 @@
           data-purpose-id="{{ recipe.training_purpose_id or '' }}"
           data-optimizer-id="{{ recipe.optimizer_definition_id or '' }}"
           data-profile-id="{{ recipe.optimizer_profile_id or '' }}"
-          data-network-id="{{ recipe.network_type_id or '' }}">
+          data-network-id="{{ recipe.network_type_id or '' }}"
+          data-recipe-type="{{ recipe.recipe_type or '' }}">
           {{ recipe.display_name }} / {{ recipe.purpose_display_name or '-' }} / {{ recipe.optimizer_display_name or '-' }} / {{ recipe.recipe_type }}
         </option>
         {% endfor %}
@@ -203,10 +216,36 @@
       <select name="parent_job_id">
         <option value="">指定なし</option>
         {% for item in recent_jobs %}
-        <option value="{{ item.id }}">#{{ item.id }} {{ item.name }} / {{ item.status }} / {{ item.recipe_v2_id or 'legacy' }}</option>
+        {% set parent_params = json_loads(item.params_json) %}
+        <option value="{{ item.id }}"
+          data-parent-project="{{ item.project_name or '-' }}"
+          data-parent-status="{{ item.status }}"
+          data-parent-recipe="{{ item.recipe_v2_id or 'legacy' }}"
+          data-parent-optimizer="{{ item.optimizer_definition_id or '-' }}"
+          data-parent-purpose="{{ item.training_purpose_id or '-' }}"
+          data-parent-steps="{{ item.expected_total_steps_at_creation or '-' }}"
+          data-parent-step-status="{{ item.step_status_at_creation or '-' }}"
+          data-parent-repeats="{{ parent_params.get('repeats', '-') if parent_params is mapping else '-' }}"
+          data-parent-epochs="{{ parent_params.get('max_train_epochs', '-') if parent_params is mapping else '-' }}"
+          data-parent-batch="{{ parent_params.get('train_batch_size', '-') if parent_params is mapping else '-' }}">
+          #{{ item.id }} {{ item.name }} / {{ item.status }} / {{ item.recipe_v2_id or 'legacy' }}
+        </option>
         {% endfor %}
       </select>
     </label>
+    <div class="notice compact" data-parent-job-summary hidden>
+      <strong>派生元Job概要</strong>
+      <dl>
+        <dt>Project</dt><dd data-parent-summary-field="project">-</dd>
+        <dt>状態</dt><dd data-parent-summary-field="status">-</dd>
+        <dt>Recipe</dt><dd data-parent-summary-field="recipe">-</dd>
+        <dt>Optimizer</dt><dd data-parent-summary-field="optimizer">-</dd>
+        <dt>Purpose</dt><dd data-parent-summary-field="purpose">-</dd>
+        <dt>steps</dt><dd data-parent-summary-field="steps">-</dd>
+        <dt>params概要</dt><dd data-parent-summary-field="params">-</dd>
+      </dl>
+      <p class="muted">派生モード例: 同じRecipeで微調整 / Optimizerだけ変更 / target steps調整 / full custom。差分は下のDiffと差分理由に残します。</p>
+    </div>
     <div class="form-grid compact-grid">
       <label>max_train_epochs<input name="max_train_epochs" data-param-editor-key="max_train_epochs"></label>
       <label>repeats<input name="repeats" data-param-editor-key="repeats"></label>

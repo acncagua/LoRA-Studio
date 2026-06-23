@@ -70,7 +70,7 @@ The `/jobs/new` screen is now a wizard-style single page with clear steps:
 - Review Step Estimate, Target Step Assistant candidates, and Compatibility Check before creating the draft Job.
 
 Parameter Editor v2 separates Basic Params, Advanced Params, Raw Args, Resolved Params, and User Override Diff.
-Job creation stores user overrides as structured `from` / `to` / `reason` records so Job detail can show why a draft differs from the selected Recipe.
+Job creation stores `user_overrides_json` as structured `from` / `to` / `reason` records so Job detail can show why a draft differs from the selected Recipe.
 
 Compatibility Check now has a dedicated section with ERROR / WARNING / NOTE.
 ERROR blocks draft Job creation, while WARNING remains advisory.

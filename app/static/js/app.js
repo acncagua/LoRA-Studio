@@ -571,6 +571,7 @@ function buildRecipeCards(form) {
     button.setAttribute("data-optimizer-id", recipe.optimizer_definition_id || "");
     button.setAttribute("data-profile-id", recipe.optimizer_profile_id || "");
     button.setAttribute("data-network-id", recipe.network_type_id || "");
+    button.setAttribute("data-recipe-type", recipe.recipe_type || "");
     button.innerHTML = `
       <strong>${recipeLabel(recipe)}</strong>
       <span>${recipe.purpose_display_name || recipe.training_purpose_id || "-"} / ${recipe.optimizer_display_name || recipe.optimizer_definition_id || "-"}</span>
@@ -634,6 +635,7 @@ function applyRecipeFilters(form) {
         optimizer_definition_id: "optimizer-id",
         optimizer_profile_id: "profile-id",
         network_type_id: "network-id",
+        recipe_type: "recipe-type",
       }[key];
       return !value || option.getAttribute(`data-${attr}`) === value;
     });
@@ -654,12 +656,40 @@ function applyRecipeFilters(form) {
         optimizer_definition_id: "optimizer-id",
         optimizer_profile_id: "profile-id",
         network_type_id: "network-id",
+        recipe_type: "recipe-type",
       }[key];
       return !value || card.getAttribute(`data-${attr}`) === value;
     });
     card.hidden = !visible;
   });
   updateWizardState(form);
+}
+
+function updateParentJobSummary(form) {
+  const select = form.querySelector("select[name='parent_job_id']");
+  const summary = form.querySelector("[data-parent-job-summary]");
+  if (!select || !summary) {
+    return;
+  }
+  const option = select.options[select.selectedIndex];
+  const hasParent = Boolean(option && option.value);
+  summary.hidden = !hasParent;
+  if (!hasParent) {
+    return;
+  }
+  const setField = (key, value) => {
+    const node = summary.querySelector(`[data-parent-summary-field='${key}']`);
+    if (node) {
+      node.textContent = value || "-";
+    }
+  };
+  setField("project", option.getAttribute("data-parent-project"));
+  setField("status", option.getAttribute("data-parent-status"));
+  setField("recipe", option.getAttribute("data-parent-recipe"));
+  setField("optimizer", option.getAttribute("data-parent-optimizer"));
+  setField("purpose", option.getAttribute("data-parent-purpose"));
+  setField("steps", `${option.getAttribute("data-parent-steps") || "-"} / ${option.getAttribute("data-parent-step-status") || "-"}`);
+  setField("params", `repeats ${option.getAttribute("data-parent-repeats") || "-"} / epochs ${option.getAttribute("data-parent-epochs") || "-"} / batch ${option.getAttribute("data-parent-batch") || "-"}`);
 }
 
 function initRecipeSelectors() {
@@ -703,6 +733,9 @@ function initRecipeSelectors() {
       if (event.target.matches("[data-param-editor-key], [data-param-editor-raw]")) {
         updateWizardState(form);
       }
+      if (event.target.matches("select[name='parent_job_id']")) {
+        updateParentJobSummary(form);
+      }
     });
     form.addEventListener("input", (event) => {
       if (event.target.matches("[data-param-editor-key], [data-param-editor-raw], [data-param-editor-reason]")) {
@@ -716,6 +749,7 @@ function initRecipeSelectors() {
         showPageNotice("Compatibility CheckにERRORがあります。修正してから作成してください。", "warning", form);
       }
     });
+    updateParentJobSummary(form);
   });
 }
 

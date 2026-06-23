@@ -3068,6 +3068,8 @@ def job_delete(job_id: int, delete_reason: str = Form(""), delete_mode: str = Fo
 
 @app.get("/jobs/new", response_class=HTMLResponse)
 def job_new(request: Request, project_id: str = Query(""), mode: str = Query("")) -> HTMLResponse:
+    mode_aliases = {"clone": "derived", "derive": "derived"}
+    initial_mode = mode_aliases.get(mode, mode)
     datasets = fetch_all("SELECT * FROM datasets ORDER BY id DESC")
     presets = preset_option_rows(fetch_all("SELECT * FROM presets ORDER BY model_family DESC, name"))
     recipes_v2 = fetch_all(
@@ -3101,11 +3103,14 @@ def job_new(request: Request, project_id: str = Query(""), mode: str = Query("")
     projects = fetch_all("SELECT * FROM lora_projects WHERE status != 'archived' ORDER BY updated_at DESC, id DESC")
     recent_jobs = fetch_all(
         """
-        SELECT id, name, status, recipe_v2_id, optimizer_definition_id, training_purpose_id,
-               expected_total_steps_at_creation, step_status_at_creation
-        FROM training_jobs
-        WHERE deleted_at IS NULL
-        ORDER BY id DESC
+        SELECT j.id, j.name, j.status, j.recipe_v2_id, j.optimizer_definition_id, j.training_purpose_id,
+               j.expected_total_steps_at_creation, j.step_status_at_creation,
+               p.name AS project_name,
+               j.params_json
+        FROM training_jobs j
+        LEFT JOIN lora_projects p ON p.id = j.project_id
+        WHERE j.deleted_at IS NULL
+        ORDER BY j.id DESC
         LIMIT 40
         """
     )
@@ -3139,7 +3144,7 @@ def job_new(request: Request, project_id: str = Query(""), mode: str = Query("")
         training_purposes=training_purposes,
         network_types=network_types,
         recent_jobs=recent_jobs,
-        initial_job_creation_mode=mode if mode in {"purpose", "optimizer", "derived", "custom"} else "purpose",
+        initial_job_creation_mode=initial_mode if initial_mode in {"purpose", "optimizer", "derived", "custom"} else "purpose",
         projects=projects,
         dataset_versions=dataset_versions,
         dataset_versions_json=dataset_version_dicts,

@@ -19,6 +19,10 @@
 
 <form method="post" action="/jobs/{{ job.id }}/edit" class="form-grid wide">
   <input type="hidden" name="repeats_auto_calculated" value="0" data-repeats-auto-calculated>
+  <section class="notice wide-field">
+    <h2>Parameter Editor v2</h2>
+    <p class="muted">この編集画面ではBasic ParamsとAdvanced Paramsを直接編集できます。Raw Args相当の低レベル指定はAdvanced JSONで確認し、変更差分は保存後のJob詳細で確認してください。</p>
+  </section>
   <label>ジョブ名<input name="name" required value="{{ job.name }}"></label>
   <label>出力名<input name="output_name" required value="{{ job.output_name }}"></label>
   <label>データセット
@@ -77,7 +81,7 @@
   </fieldset>
 
   <fieldset class="form-fieldset">
-    <legend>主要パラメータ</legend>
+    <legend>Basic Params</legend>
     <label>max_train_epochs<input name="max_train_epochs" value="{{ params.max_train_epochs or '' }}"></label>
     <label>repeats<input name="repeats" value="{{ params.repeats or '' }}"></label>
     <label>train_batch_size<input name="train_batch_size" value="{{ params.train_batch_size or '' }}"></label>
@@ -90,9 +94,14 @@
     <label>resolution<input name="resolution" value="{{ params.resolution|join(',') if params.resolution is sequence and params.resolution is not string else params.resolution or '' }}"></label>
     <label>save_every_n_epochs<input name="save_every_n_epochs" value="{{ params.save_every_n_epochs or '' }}"></label>
     <label>sample_every_n_epochs<input name="sample_every_n_epochs" value="{{ params.sample_every_n_epochs or '' }}"></label>
+  </fieldset>
+
+  <fieldset class="form-fieldset">
+    <legend>Advanced Params</legend>
     <label>optimizer_type<input name="optimizer_type" value="{{ params.optimizer_type or '' }}"></label>
     <label>lr_scheduler<input name="lr_scheduler" value="{{ params.lr_scheduler or '' }}"></label>
     <label class="checkbox-line"><input type="checkbox" name="no_metadata" value="1" {{ 'checked' if params.no_metadata else '' }}> no_metadata</label>
+    <p class="muted wide-field">Optimizerやscheduler、metadataなど、Recipe標準から外れる可能性がある項目です。</p>
   </fieldset>
 
   <fieldset class="form-fieldset" data-review-automation-settings>
@@ -125,7 +134,40 @@
   {% if params.max_train_steps %}
   <p class="notice warning wide-field">max_train_stepsが指定されています。epoch-based reviewとは意味が変わる可能性があります。現時点ではrepeats / epochs調整を標準導線として推奨します。</p>
   {% endif %}
-  <label class="wide-field">Advanced JSON<textarea name="params_json" class="mono-textarea">{{ params_json_pretty }}</textarea></label>
+  <section class="notice wide-field">
+    <h2>Resolved Params / Diff</h2>
+    <div class="panel-grid">
+      <div>
+        <h3>Resolved Params</h3>
+        <pre>{{ params_json_pretty }}</pre>
+      </div>
+      <div>
+        <h3>User Overrides Diff</h3>
+        {% set edit_overrides = json_loads(job.user_overrides_json) %}
+        {% if edit_overrides %}
+        <table class="compact-table">
+          <thead><tr><th>key</th><th>from</th><th>to</th><th>reason</th></tr></thead>
+          <tbody>
+            {% for key, value in edit_overrides.items() %}
+            {% if value is mapping and ('to' in value or 'from' in value) %}
+            <tr><td><code>{{ key }}</code></td><td>{{ value.get('from') }}</td><td>{{ value.get('to') }}</td><td>{{ value.get('reason') or '-' }}</td></tr>
+            {% else %}
+            <tr><td><code>{{ key }}</code></td><td>-</td><td>{{ value }}</td><td>-</td></tr>
+            {% endif %}
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p class="muted">保存済みのUser Overrides Diffはありません。</p>
+        {% endif %}
+      </div>
+    </div>
+  </section>
+  <details class="wide-field">
+    <summary>Raw Args / Advanced JSON</summary>
+    <p class="notice warning">Raw Args相当の直接編集はsd-scriptsの挙動に直結します。通常はBasic ParamsとTarget Step Assistantで調整してください。</p>
+    <label class="wide-field">Advanced JSON<textarea name="params_json" class="mono-textarea">{{ params_json_pretty }}</textarea></label>
+  </details>
   <button type="submit">編集内容を保存</button>
 </form>
 {% endif %}
