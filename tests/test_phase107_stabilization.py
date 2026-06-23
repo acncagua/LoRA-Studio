@@ -2394,6 +2394,51 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertIn("Optimizer Master", optimizers_body)
         self.assertIn("Prodigy", optimizers_body)
 
+    def test_phase122_recipe_wizard_pages_render(self) -> None:
+        from app.main import job_new, optimizer_detail, training_recipe_detail
+
+        body = job_new(request=None, project_id="", mode="optimizer").body.decode("utf-8")
+        recipe_body = training_recipe_detail(request=None, recipe_id="sdxl_character_face_adamw8bit_standard_10epoch").body.decode("utf-8")
+        optimizer_body = optimizer_detail(request=None, optimizer_id="Prodigy").body.decode("utf-8")
+
+        self.assertIn("Recipe Wizard UX", body)
+        self.assertIn("Parameter Editor v2", body)
+        self.assertIn("Compatibility Check", body)
+        self.assertIn("SDXL Character Face / AdamW8bit Standard 10 Epoch", recipe_body)
+        self.assertIn("learning_rate=1.0", optimizer_body)
+
+    def test_phase122_structured_user_override_diff_is_saved(self) -> None:
+        from app.db import create_job
+
+        project_id, dataset_id, version_id = self.create_project_fixture()
+        job_id = create_job(
+            {
+                "project_id": project_id,
+                "name": "phase122 override diff",
+                "dataset_id": dataset_id,
+                "dataset_version_id": version_id,
+                "preset_id": "sdxl_2d_face_adamw8bit_standard",
+                "recipe_v2_id": "sdxl_character_face_adamw8bit_standard_10epoch",
+                "base_model_path": "D:/models/base.safetensors",
+                "output_name": "phase122_override_diff",
+                "params": {"repeats": 12, "max_train_epochs": 10, "train_batch_size": 1},
+                "user_overrides": {"repeats": 12},
+                "user_overrides_detail": {
+                    "repeats": {
+                        "from": 10,
+                        "to": 12,
+                        "reason": "target step assistant",
+                    }
+                },
+            }
+        )
+        job = fetch_one("SELECT user_overrides_json FROM training_jobs WHERE id = ?", (job_id,))
+        overrides = json.loads(job["user_overrides_json"])
+
+        self.assertEqual(overrides["repeats"]["from"], 10)
+        self.assertEqual(overrides["repeats"]["to"], 12)
+        self.assertEqual(overrides["repeats"]["reason"], "target step assistant")
+
     def test_weight_calibration_pipeline_start_recreates_missing_conditions(self) -> None:
         from app.services.validation_generation import start_weight_calibration_pipeline
 

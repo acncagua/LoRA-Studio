@@ -2,47 +2,39 @@
 <header class="page-head">
   <h1>Optimizer Master</h1>
   <div class="actions compact-actions">
-    <a class="button" href="/jobs/new">学習ジョブ作成</a>
+    <a class="button" href="/jobs/new?mode=optimizer">OptimizerからJob作成</a>
     <a class="button secondary" href="/training-recipes">Recipe Library</a>
   </div>
 </header>
 
 <section class="notice">
-  <h2>OptimizerとNetwork Type</h2>
-  <p>Optimizerは学習率の意味やtarget stepsを管理します。Network TypeはStandard LoRA / LoCon / LyCORISなどのnetwork module種別で、Phase 12.1ではStandard LoRAのみ実行対象です。</p>
+  <h2>LR semantics</h2>
+  <dl>
+    <dt>normal_lr</dt><dd>AdamW / Lion系の通常learning rateです。1e-4や5e-5のような値を使います。</dd>
+    <dt>relative_step</dt><dd>Adafactor系の相対step運用です。固定LRとは意味が違うためprofileを確認してください。</dd>
+    <dt>auto_lr_multiplier</dt><dd>DAdapt / Prodigy系です。learning_rate=1.0は通常LRではなく、自動推定LRへの倍率として扱います。</dd>
+  </dl>
 </section>
 
 <section>
   <h2>Optimizer Definitions</h2>
-  <div class="table-scroll">
-    <table class="wide-table compact-table">
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>表示名</th>
-          <th>category</th>
-          <th>LR semantics</th>
-          <th>default LR</th>
-          <th>scheduler</th>
-          <th>target steps</th>
-          <th>risk</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for item in optimizers %}
-        <tr>
-          <td><code>{{ item.id }}</code></td>
-          <td><strong>{{ item.display_name }}</strong><br><span class="muted">{{ item.description or '-' }}</span></td>
-          <td><span class="label {{ item.category|replace('/', '-') }}">{{ item.category }}</span></td>
-          <td>{{ item.lr_semantics }}</td>
-          <td>{{ item.default_learning_rate if item.default_learning_rate is not none else '-' }} / {{ item.default_unet_lr if item.default_unet_lr is not none else '-' }} / {{ item.default_text_encoder_lr if item.default_text_encoder_lr is not none else '-' }}</td>
-          <td>{{ item.default_scheduler or '-' }}</td>
-          <td>{{ item.target_steps_min }} / <strong>{{ item.target_steps_recommended }}</strong> / {{ item.target_steps_max }}<br><span class="muted">{{ item.target_steps_confidence }}</span></td>
-          <td>{{ item.risk_note or '-' }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <div class="recipe-card-grid">
+    {% for item in optimizers %}
+    <article class="notice">
+      <h3><a href="/optimizers/{{ item.id }}">{{ item.display_name }}</a></h3>
+      <p>
+        <span class="label {{ item.category|replace('/', '-') }}">{{ item.category }}</span>
+        <span class="label">{{ item.lr_semantics }}</span>
+      </p>
+      <p class="muted">{{ item.description or '-' }}</p>
+      <dl>
+        <dt>default LR</dt><dd>{{ item.default_learning_rate if item.default_learning_rate is not none else '-' }} / {{ item.default_unet_lr if item.default_unet_lr is not none else '-' }} / {{ item.default_text_encoder_lr if item.default_text_encoder_lr is not none else '-' }}</dd>
+        <dt>scheduler</dt><dd>{{ item.default_scheduler or '-' }}</dd>
+        <dt>target steps</dt><dd>{{ item.target_steps_min }} / <strong>{{ item.target_steps_recommended }}</strong> / {{ item.target_steps_max }}</dd>
+        <dt>risk</dt><dd>{{ item.risk_note or '-' }}</dd>
+      </dl>
+    </article>
+    {% endfor %}
   </div>
 </section>
 
@@ -55,7 +47,7 @@
         {% for item in profiles %}
         <tr>
           <td><code>{{ item.id }}</code></td>
-          <td>{{ item.optimizer_display_name }}</td>
+          <td><a href="/optimizers/{{ item.optimizer_definition_id }}">{{ item.optimizer_display_name }}</a></td>
           <td>{{ item.model_family }}</td>
           <td><span class="label {{ item.profile_type }}">{{ item.profile_type }}</span></td>
           <td>{{ item.default_learning_rate if item.default_learning_rate is not none else '-' }} / {{ item.default_unet_lr if item.default_unet_lr is not none else '-' }} / {{ item.default_text_encoder_lr if item.default_text_encoder_lr is not none else '-' }}</td>

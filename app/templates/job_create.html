@@ -1,5 +1,16 @@
 {% extends "base.html" %}{% block content %}
-<header class="page-head"><h1>学習ジョブ作成</h1></header>
+<header class="page-head">
+  <h1>学習ジョブ作成</h1>
+  <div class="actions compact-actions">
+    <a class="button secondary" href="/training-recipes">Recipe Library</a>
+    <a class="button secondary" href="/optimizers">Optimizer Master</a>
+  </div>
+</header>
+
+<section class="notice">
+  <h2>Recipe Wizard UX</h2>
+  <p>用途またはOptimizerからRecipeを選び、必要な差分だけをParameter Editorで上書きします。ERRORがある場合はJob作成を止めます。</p>
+</section>
 
 <section>
   <h2>データセットのトリガー整合性</h2>
@@ -20,11 +31,48 @@
   </table>
 </section>
 
-<form method="post" action="/jobs" class="form-grid wide">
+<form method="post" action="/jobs" class="form-grid wide recipe-wizard" data-recipe-wizard>
   <input type="hidden" name="repeats_auto_calculated" value="0" data-repeats-auto-calculated>
-  <fieldset class="form-fieldset wide-field" data-project-mode-form>
-    <legend>Project（LoRA作成単位）</legend>
-    <p class="muted">Projectは1つのLoRA作成作業です。学習ジョブはProject内の1回の学習実行として保存されます。</p>
+  <script type="application/json" data-recipes-v2-json>{{ recipes_v2_json|tojson }}</script>
+  <script type="application/json" data-step-presets-json>{{ step_estimator_presets|tojson }}</script>
+  <script type="application/json" data-step-dataset-versions-json>{{ dataset_versions_json|tojson }}</script>
+
+  <nav class="wizard-steps" aria-label="作成手順">
+    <a href="#wizard-mode">1. 入口</a>
+    <a href="#wizard-dataset">2. Project / Dataset</a>
+    <a href="#wizard-recipe">3. Recipe</a>
+    <a href="#wizard-params">4. Parameter Editor</a>
+    <a href="#wizard-check">5. Estimate / Check</a>
+    <a href="#wizard-summary">6. 作成</a>
+  </nav>
+
+  <fieldset id="wizard-mode" class="form-fieldset wide-field">
+    <legend>1. 作成方法</legend>
+    <p class="muted">通常は「用途から選ぶ」から始めます。Optimizerを先に比較したい場合だけ「Optimizerから選ぶ」を使います。</p>
+    <input type="hidden" name="job_creation_mode" value="{{ initial_job_creation_mode }}" data-recipe-mode-input>
+    <div class="choice-card-grid" data-mode-cards>
+      <button type="button" class="choice-card" data-mode-card="purpose">
+        <strong>用途から選ぶ</strong>
+        <span>Character Face / Style など目的を先に決め、安定Recipeから選択します。</span>
+      </button>
+      <button type="button" class="choice-card" data-mode-card="optimizer">
+        <strong>Optimizerから選ぶ</strong>
+        <span>AdamW / Prodigy / DAdapt などOptimizer軸でRecipeを絞ります。</span>
+      </button>
+      <button type="button" class="choice-card" data-mode-card="derived">
+        <strong>既存Jobから派生</strong>
+        <span>親Jobを選び、差分理由を残して派生ドラフトを作ります。</span>
+      </button>
+      <button type="button" class="choice-card" data-mode-card="custom">
+        <strong>完全カスタム</strong>
+        <span>Recipeを使わず、旧形式プリセットとParameter Editorで作成します。</span>
+      </button>
+    </div>
+  </fieldset>
+
+  <fieldset id="wizard-dataset" class="form-fieldset wide-field" data-project-mode-form>
+    <legend>2. Project / Dataset</legend>
+    <label>学習ジョブ名<input name="name" required value="{{ (selected_project.name ~ ' 学習ジョブ') if selected_project else '' }}"></label>
     <label class="radio-line"><input type="radio" name="project_mode" value="new" {{ 'checked' if not selected_project else '' }}> 新しいProjectを作成</label>
     <label class="radio-line"><input type="radio" name="project_mode" value="existing" {{ 'checked' if selected_project else '' }}> 既存Projectに追加</label>
     <div data-existing-project-fields>
@@ -40,37 +88,32 @@
     <div data-existing-project-note class="notice compact" hidden>
       既存Projectに追加する場合は、選択したProjectの設定を使います。
       <span data-existing-project-summary></span>
-      Project名やProjectトリガーを変える場合は、新しいProjectとして作成してください。
     </div>
     <div data-new-project-fields>
-      <label>Project名<input name="project_name" placeholder="例: fantasy_knight_v1" data-new-project-field></label>
+      <label>Project名<input name="project_name" placeholder="例: zho_test_v2" data-new-project-field></label>
       <label>Project説明<input name="project_description" data-new-project-field></label>
-      <label>Projectトリガー<input name="project_trigger_word" placeholder="例: knight" data-new-project-field></label>
+      <label>Projectトリガー<input name="project_trigger_word" placeholder="例: zho" data-new-project-field></label>
     </div>
-  </fieldset>
-
-  <label>学習ジョブ名<input name="name" required value="{{ (selected_project.name ~ ' 学習ジョブ') if selected_project else '' }}"></label>
-  <label>データセット<select name="dataset_id" required data-dataset-select>{% for dataset in datasets %}<option value="{{ dataset.id }}">#{{ dataset.id }} {{ dataset.name }}</option>{% endfor %}</select></label>
-  <label>データセットバージョン
-    <select name="dataset_version_id" data-dataset-version-select>
-      <option value="">選択データセットの最新</option>
-      {% for version in dataset_versions %}
-      <option value="{{ version.id }}" data-dataset-id="{{ version.dataset_id }}">dataset #{{ version.dataset_id }} / v{{ version.version_no }} (#{{ version.id }})</option>
-      {% endfor %}
-    </select>
-  </label>
-  <fieldset class="form-fieldset wide-field">
-    <legend>Recipe v2選択</legend>
-    <p class="muted">Phase 12.1では、用途から選ぶ / Optimizerから選ぶ / 既存Jobから派生 / 完全カスタムの入口を用意しています。Recipe v2を選ぶと、作成時点のRecipe / Optimizer / Network Type snapshotをJobに保存します。</p>
-    <script type="application/json" data-recipes-v2-json>{{ recipes_v2_json|tojson }}</script>
-    <label>Job作成モード
-      <select name="job_creation_mode" data-recipe-mode>
-        <option value="purpose">用途から選ぶ</option>
-        <option value="optimizer">Optimizerから選ぶ</option>
-        <option value="derived">既存Jobから派生</option>
-        <option value="custom">完全カスタム</option>
+    <label>データセット
+      <select name="dataset_id" required data-dataset-select>
+        {% for dataset in datasets %}
+        <option value="{{ dataset.id }}" {{ 'selected' if selected_project and selected_project.dataset_id == dataset.id else '' }}>#{{ dataset.id }} {{ dataset.name }}</option>
+        {% endfor %}
       </select>
     </label>
+    <label>データセットバージョン
+      <select name="dataset_version_id" data-dataset-version-select>
+        <option value="">選択データセットの最新</option>
+        {% for version in dataset_versions %}
+        <option value="{{ version.id }}" data-dataset-id="{{ version.dataset_id }}" {{ 'selected' if selected_project and selected_project.current_dataset_version_id == version.id else '' }}>dataset #{{ version.dataset_id }} / v{{ version.version_no }} (#{{ version.id }})</option>
+        {% endfor %}
+      </select>
+    </label>
+  </fieldset>
+
+  <fieldset id="wizard-recipe" class="form-fieldset wide-field">
+    <legend>3. Recipe</legend>
+    <p class="muted">カードを選ぶとTraining Recipe v2がセットされ、Step EstimateとCompatibility Checkが更新されます。</p>
     <div class="form-grid compact-grid" data-recipe-filters>
       <label>Model Family
         <select data-recipe-filter="model_family">
@@ -79,7 +122,7 @@
           <option value="SD15">SD15</option>
         </select>
       </label>
-      <label data-purpose-filter-field>Purpose
+      <label data-purpose-filter-field>用途
         <select data-recipe-filter="training_purpose_id">
           <option value="">すべて</option>
           {% for purpose in training_purposes %}
@@ -91,7 +134,7 @@
         <select data-recipe-filter="optimizer_definition_id">
           <option value="">すべて</option>
           {% for optimizer in optimizers_v2 %}
-          <option value="{{ optimizer.id }}">{{ optimizer.display_name }}</option>
+          <option value="{{ optimizer.id }}">{{ optimizer.display_name }} / {{ optimizer.category }}</option>
           {% endfor %}
         </select>
       </label>
@@ -99,7 +142,7 @@
         <select data-recipe-filter="optimizer_profile_id">
           <option value="">すべて</option>
           {% for profile in optimizer_profiles_v2 %}
-          <option value="{{ profile.id }}" data-optimizer-id="{{ profile.optimizer_definition_id }}">{{ profile.optimizer_definition_id }} / {{ profile.model_family }} / {{ profile.profile_type }}</option>
+          <option value="{{ profile.id }}" data-optimizer-id="{{ profile.optimizer_definition_id }}">{{ profile.display_name }} / {{ profile.profile_type }}</option>
           {% endfor %}
         </select>
       </label>
@@ -114,7 +157,7 @@
     </div>
     <label>Training Recipe v2
       <select name="recipe_v2_id" data-recipe-select>
-        <option value="">旧形式プリセットを使う</option>
+        <option value="">旧形式プリセット / Custom</option>
         {% for recipe in recipes_v2 %}
         <option value="{{ recipe.id }}"
           data-model-family="{{ recipe.model_family }}"
@@ -123,48 +166,121 @@
           data-profile-id="{{ recipe.optimizer_profile_id or '' }}"
           data-network-id="{{ recipe.network_type_id or '' }}">
           {{ recipe.display_name }} / {{ recipe.purpose_display_name or '-' }} / {{ recipe.optimizer_display_name or '-' }} / {{ recipe.recipe_type }}
-          {% if recipe.optimizer_category in ['experimental', 'advanced'] or 'experimental' in (recipe.optimizer_category or '') or 'advanced' in (recipe.optimizer_category or '') %} [advanced]{% endif %}
-          {% if recipe.network_type_availability != 'available' %} [{{ recipe.network_type_availability }}]{% endif %}
         </option>
         {% endfor %}
       </select>
     </label>
-    <div class="notice compact" data-recipe-summary>
-      <strong>Compatibility Check: Recipe未選択</strong>
-      <p class="muted">用途またはOptimizer条件でRecipeを絞り込んでください。</p>
+    <div class="recipe-card-grid" data-recipe-cards></div>
+    <div class="notice compact" data-recipe-detail>
+      <strong>Recipe未選択</strong>
+      <p class="muted">Recipeカードを選択してください。</p>
     </div>
-    <p class="muted">Recipe Library: <a href="/training-recipes">/training-recipes</a> / Optimizer Master: <a href="/optimizers">/optimizers</a></p>
+    <details class="wide-field">
+      <summary>旧形式プリセット（legacy）</summary>
+      <label>学習プリセット
+        <select name="preset_id" required>
+          {% for preset in presets %}
+          <option value="{{ preset.id }}" {{ 'selected' if preset.id == default_preset_id else '' }}>旧形式: {{ preset.option_label.replace(preset.name, display_preset_name(preset)) }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <p class="muted">Recipe v2が選択されている場合も互換用のpresetを保持します。完全カスタム時はこのpresetが初期値になります。</p>
+    </details>
+    <label>サンプルプロンプトテンプレート
+      <select name="sample_prompt_template_id">
+        <option value="">デフォルト生成プロンプト</option>
+        {% for template in sample_prompt_templates %}
+        <option value="{{ template.id }}">{{ template.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
   </fieldset>
-  <label>学習プリセット（旧形式 / legacy）
-    <select name="preset_id" required>
-      {% for preset in presets %}
-      <option value="{{ preset.id }}" {{ 'selected' if preset.id == default_preset_id else '' }}>旧形式: {{ preset.option_label.replace(preset.name, display_preset_name(preset)) }}</option>
-      {% endfor %}
-    </select>
-  </label>
-  <label>サンプルプロンプトテンプレート
-    <select name="sample_prompt_template_id">
-      <option value="">デフォルト生成プロンプト</option>
-      {% for template in sample_prompt_templates %}
-      <option value="{{ template.id }}">{{ template.name }}</option>
-      {% endfor %}
-    </select>
-  </label>
 
-  <fieldset class="form-fieldset">
-    <legend>Step調整</legend>
-    <p class="muted">空欄ならプリセット値を使います。目標stepに合わせる場合はrepeatsを自動計算してここに入力します。</p>
-    <label>max_train_epochs<input name="max_train_epochs"></label>
-    <label>repeats<input name="repeats"></label>
-    <label>train_batch_size<input name="train_batch_size"></label>
-    <label>gradient_accumulation_steps<input name="gradient_accumulation_steps"></label>
-    <label>save_every_n_epochs<input name="save_every_n_epochs"></label>
-    <label>sample_every_n_epochs<input name="sample_every_n_epochs"></label>
+  <fieldset id="wizard-params" class="form-fieldset wide-field">
+    <legend>4. Parameter Editor v2</legend>
+    <p class="muted">通常はBasicだけ調整します。Raw Argsはsd-scriptsに直接影響するためAdvanced扱いです。</p>
+    <label data-derived-parent-field>派生元Job
+      <select name="parent_job_id">
+        <option value="">指定なし</option>
+        {% for item in recent_jobs %}
+        <option value="{{ item.id }}">#{{ item.id }} {{ item.name }} / {{ item.status }} / {{ item.recipe_v2_id or 'legacy' }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="form-grid compact-grid">
+      <label>max_train_epochs<input name="max_train_epochs" data-param-editor-key="max_train_epochs"></label>
+      <label>repeats<input name="repeats" data-param-editor-key="repeats"></label>
+      <label>train_batch_size<input name="train_batch_size" data-param-editor-key="train_batch_size"></label>
+      <label>gradient_accumulation_steps<input name="gradient_accumulation_steps" data-param-editor-key="gradient_accumulation_steps"></label>
+      <label>save_every_n_epochs<input name="save_every_n_epochs" data-param-editor-key="save_every_n_epochs"></label>
+      <label>sample_every_n_epochs<input name="sample_every_n_epochs" data-param-editor-key="sample_every_n_epochs"></label>
+    </div>
+    <details>
+      <summary>Advanced Params</summary>
+      <div class="form-grid compact-grid">
+        <label>learning_rate<input name="learning_rate" data-param-editor-key="learning_rate"></label>
+        <label>unet_lr<input name="unet_lr" data-param-editor-key="unet_lr"></label>
+        <label>text_encoder_lr1<input name="text_encoder_lr1" data-param-editor-key="text_encoder_lr1"></label>
+        <label>text_encoder_lr2<input name="text_encoder_lr2" data-param-editor-key="text_encoder_lr2"></label>
+        <label>network_dim<input name="network_dim" data-param-editor-key="network_dim"></label>
+        <label>network_alpha<input name="network_alpha" data-param-editor-key="network_alpha"></label>
+        <label>optimizer_type<input name="optimizer_type" data-param-editor-key="optimizer_type"></label>
+        <label>lr_scheduler<input name="lr_scheduler" data-param-editor-key="lr_scheduler"></label>
+      </div>
+      <div class="form-grid compact-grid">
+        <label>cache_latents
+          <select name="cache_latents" data-param-editor-key="cache_latents"><option value="">Recipe標準</option><option value="1">有効</option><option value="0">無効</option></select>
+        </label>
+        <label>cache_text_encoder_outputs
+          <select name="cache_text_encoder_outputs" data-param-editor-key="cache_text_encoder_outputs"><option value="">Recipe標準</option><option value="1">有効</option><option value="0">無効</option></select>
+        </label>
+        <label>network_train_unet_only
+          <select name="network_train_unet_only" data-param-editor-key="network_train_unet_only"><option value="">Recipe標準</option><option value="1">有効</option><option value="0">無効</option></select>
+        </label>
+      </div>
+    </details>
+    <details>
+      <summary>Raw Args</summary>
+      <p class="notice warning">Raw ArgsはRecipeの互換性チェックをすり抜ける可能性があります。sd-scriptsの仕様を確認してから使ってください。</p>
+      <label class="wide-field">raw_args_json<textarea name="raw_args_text" class="mono-textarea" data-param-editor-raw placeholder='{"min_snr_gamma": 5}'></textarea></label>
+    </details>
+    <label class="wide-field">差分理由<input name="override_reason" data-param-editor-reason placeholder="例: 5000stepに合わせるためrepeatsを調整"></label>
+    <section class="notice wide-field">
+      <h3>Resolved Params / Diff</h3>
+      <div class="panel-grid">
+        <div>
+          <h4>Resolved Params</h4>
+          <pre data-resolved-params-preview>{}</pre>
+        </div>
+        <div>
+          <h4>User Overrides Diff</h4>
+          <div data-param-diff-preview class="table-scroll muted">差分はまだありません。</div>
+        </div>
+      </div>
+    </section>
   </fieldset>
+
+  <section id="wizard-check" class="wide-field">
+    {% set step_estimator_interactive = true %}
+    {% include "partials/step_estimate_panel.html" %}
+    <div class="notice compatibility-panel" data-compatibility-panel>
+      <h2>Compatibility Check</h2>
+      <p class="muted">ERRORがある場合はJobを作成できません。WARNINGは確認した上で作成できます。</p>
+      <div class="summary-grid">
+        <div><span>ERROR</span><strong data-compat-error-count>0</strong></div>
+        <div><span>WARNING</span><strong data-compat-warning-count>0</strong></div>
+        <div><span>NOTE</span><strong data-compat-note-count>0</strong></div>
+      </div>
+      <div class="panel-grid">
+        <div><h3>ERROR</h3><ul data-compat-errors></ul></div>
+        <div><h3>WARNING / NOTE</h3><ul data-compat-warnings></ul><ul data-compat-notes></ul></div>
+      </div>
+    </div>
+  </section>
 
   <fieldset class="form-fieldset" data-review-automation-settings>
     <legend>学習後レビュー自動化</legend>
-    <p class="muted">学習完了後の採用前Review Plan作成を自動化します。通常は「計画のみ」で、画像生成は人間が開始します。</p>
+    <p class="muted">学習完了後の採用前Review Plan作成を自動化します。通常は「計画のみ」です。</p>
     <label>モード
       <select name="post_training_review_mode" data-review-automation-mode>
         <option value="manual">手動</option>
@@ -180,16 +296,8 @@
     <label class="checkbox-line"><input type="checkbox" name="include_neighbor_epochs" value="1"> loss候補の近隣epochも含める</label>
   </fieldset>
 
-  <div class="wide-field">
-    <script type="application/json" data-step-presets-json>{{ step_estimator_presets|tojson }}</script>
-    <script type="application/json" data-step-dataset-versions-json>{{ dataset_versions_json|tojson }}</script>
-    {% set step_estimator_interactive = true %}
-    {% include "partials/step_estimate_panel.html" %}
-  </div>
-
   <fieldset class="form-fieldset">
     <legend>使用モデル</legend>
-    <p class="muted">学習に使うStable Diffusionのbase modelを指定します。modelsフォルダ内の候補を選ぶか、参照ボタンで .safetensors / .ckpt を選択してください。</p>
     <label>modelsフォルダ内のモデル
       <select data-fill-target="#base-model-path">
         <option value="">候補から選択</option>
@@ -213,7 +321,18 @@
     </span>
   </label>
   <label>出力名<input name="output_name"></label>
-  <label>メモ<textarea name="memo"></textarea></label>
-  <button type="submit">学習ジョブの下書きを作成</button>
+  <label class="wide-field">メモ<textarea name="memo"></textarea></label>
+
+  <section id="wizard-summary" class="notice wide-field">
+    <h2>6. 作成前サマリ</h2>
+    <div class="summary-grid">
+      <div><span>作成方法</span><strong data-summary-mode>-</strong></div>
+      <div><span>Recipe</span><strong data-summary-recipe>-</strong></div>
+      <div><span>Compatibility</span><strong data-summary-compat>-</strong></div>
+      <div><span>差分</span><strong data-summary-diff>-</strong></div>
+    </div>
+    <p class="muted">作成後はJob詳細でRecipe Snapshot、Resolved Params、User Overrides Diffを確認できます。</p>
+    <button type="submit" data-wizard-submit>学習ジョブの下書きを作成</button>
+  </section>
 </form>
 {% endblock %}

@@ -126,6 +126,7 @@ button, .button { border: 0; border-radius: 6px; background: var(--accent); colo
 button.active, .button.active { background: var(--ink); color: white; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(240px, 1fr)); gap: 14px; }
 .form-grid.wide { max-width: 980px; }
+.form-grid.recipe-wizard { max-width: 1320px; }
 .wide-field { grid-column: 1 / -1; }
 label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; }
 input, select, textarea { border: 1px solid var(--line); border-radius: 6px; padding: 9px 10px; font: inherit; color: var(--ink); background: white; min-width: 0; max-width: 100%; }
@@ -570,6 +571,87 @@ tr.reference-candidate-added td {
 .loss-chart .raw { stroke: #2f6f63; opacity: .7; }
 .loss-chart .avg { stroke: #8b4f39; }
 .notice { background: #eef2eb; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.wizard-steps {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: rgba(246, 247, 244, .96);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+}
+.wizard-steps a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  font-weight: 700;
+}
+.choice-card-grid,
+.recipe-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+.choice-card,
+.recipe-choice-card {
+  display: grid;
+  gap: 6px;
+  min-height: 120px;
+  text-align: left;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 13px;
+}
+.choice-card strong,
+.recipe-choice-card strong {
+  font-size: 16px;
+}
+.choice-card span,
+.recipe-choice-card span,
+.recipe-choice-card small {
+  color: var(--muted);
+  line-height: 1.45;
+}
+.choice-card.active,
+.recipe-choice-card.active {
+  outline: 3px solid rgba(47, 120, 104, .24);
+  border-color: var(--accent);
+  background: #eff8f3;
+}
+.compatibility-panel.warning {
+  background: #fbf4e8;
+  border-color: #e2c18a;
+}
+.compact-grid {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+.compact-checkboxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 8px;
+}
+.compact-checkboxes label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink);
+}
+.mono-textarea {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  min-height: 140px;
+}
 code { background: #eef2eb; border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; overflow-wrap: anywhere; }
 .validation-action-panel { position: static; }
 .validation-tabs {

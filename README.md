@@ -22,7 +22,7 @@ than training itself.
 ## Status
 
 Current release: v0.4.9-beta
-Development phase: Phase 12.1
+Development phase: Phase 12.2
 
 The core workflow is operational and
 actively used for local LoRA production,
@@ -57,6 +57,27 @@ for the entire LoRA lifecycle.
 - LoRA Selection Workflow
 - Machine Review Assist
 - Storage Cleanup Support
+
+## Phase 12.2: Recipe Wizard UX
+
+Phase 12.2 improves the Job creation flow on top of Recipe v2.
+The `/jobs/new` screen is now a wizard-style single page with clear steps:
+
+- Choose the entry point: purpose first, optimizer first, derived from an existing Job, or fully custom.
+- Select Project / Dataset.
+- Pick a Recipe card with purpose, optimizer, network type, risk, and target step context visible.
+- Edit only the necessary parameters in Parameter Editor v2.
+- Review Step Estimate, Target Step Assistant candidates, and Compatibility Check before creating the draft Job.
+
+Parameter Editor v2 separates Basic Params, Advanced Params, Raw Args, Resolved Params, and User Override Diff.
+Job creation stores user overrides as structured `from` / `to` / `reason` records so Job detail can show why a draft differs from the selected Recipe.
+
+Compatibility Check now has a dedicated section with ERROR / WARNING / NOTE.
+ERROR blocks draft Job creation, while WARNING remains advisory.
+Legacy presets are still available under a collapsed legacy section, and existing Jobs continue to open unchanged.
+
+Recipe Library and Optimizer Master also gained card-style browsing and detail pages.
+Jobs can be saved back as a Custom Recipe for later reuse.
 
 ## Phase 12.1: Training Recipe / Optimizer Master v2
 

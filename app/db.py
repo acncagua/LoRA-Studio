@@ -1596,6 +1596,11 @@ def create_job(data: dict[str, Any]) -> int:
     dataset = fetch_one("SELECT * FROM datasets WHERE id = ?", (int(data["dataset_id"]),))
     analysis = fetch_one("SELECT * FROM dataset_analysis WHERE dataset_id = ?", (int(data["dataset_id"]),))
     user_overrides = data.get("user_overrides") if isinstance(data.get("user_overrides"), dict) else {}
+    user_overrides_detail = (
+        data.get("user_overrides_detail")
+        if isinstance(data.get("user_overrides_detail"), dict)
+        else user_overrides
+    )
     recipe_v2 = None
     recipe_v2_version = None
     optimizer_definition_v2 = None
@@ -1732,7 +1737,7 @@ def create_job(data: dict[str, Any]) -> int:
                 training_purpose["id"] if training_purpose else None,
                 json.dumps(recipe_snapshot, ensure_ascii=False, indent=2) if recipe_snapshot else None,
                 json.dumps(params, ensure_ascii=False, indent=2),
-                json.dumps(user_overrides, ensure_ascii=False, indent=2),
+                json.dumps(user_overrides_detail, ensure_ascii=False, indent=2),
             ),
         )
         job_id = int(cur.lastrowid)

@@ -1,0 +1,84 @@
+{% extends "base.html" %}{% block content %}
+<nav class="breadcrumbs"><a href="/optimizers">Optimizer Master</a><span>{{ optimizer.display_name }}</span></nav>
+<header class="page-head">
+  <h1>{{ optimizer.display_name }}</h1>
+  <div class="actions compact-actions">
+    <a class="button" href="/jobs/new?mode=optimizer">このOptimizerからJob作成</a>
+    <a class="button secondary" href="/training-recipes?optimizer={{ optimizer.id }}">関連Recipe</a>
+  </div>
+</header>
+
+<section class="notice">
+  <h2>Optimizer概要</h2>
+  <div class="summary-grid">
+    <div><span>ID</span><strong>{{ optimizer.id }}</strong></div>
+    <div><span>category</span><strong>{{ optimizer.category }}</strong></div>
+    <div><span>LR semantics</span><strong>{{ optimizer.lr_semantics }}</strong></div>
+    <div><span>default scheduler</span><strong>{{ optimizer.default_scheduler or '-' }}</strong></div>
+    <div><span>target steps</span><strong>{{ optimizer.target_steps_min }} / {{ optimizer.target_steps_recommended }} / {{ optimizer.target_steps_max }}</strong></div>
+    <div><span>confidence</span><strong>{{ optimizer.target_steps_confidence }}</strong></div>
+  </div>
+  <p>{{ optimizer.description or '-' }}</p>
+  {% if optimizer.lr_semantics == 'auto_lr_multiplier' %}
+  <p class="notice warning">learning_rate=1.0は通常LRではなく、自動推定LRへの倍率です。AdamWの1e-4とは意味が違います。</p>
+  {% elif optimizer.lr_semantics == 'relative_step' %}
+  <p class="notice warning">relative_step系は固定LRと意味が違います。profileのoptimizer_argsを確認してください。</p>
+  {% endif %}
+  {% if optimizer.risk_note %}<p class="warning">{{ optimizer.risk_note }}</p>{% endif %}
+</section>
+
+<section class="panel-grid">
+  <div>
+    <h2>互換性メモ</h2>
+    <ul>
+      {% for note in notes %}<li>{{ note }}</li>{% else %}<li>追加メモはありません。</li>{% endfor %}
+    </ul>
+    <h3>allowed schedulers</h3>
+    <p>{{ allowed_schedulers|join(', ') if allowed_schedulers else '-' }}</p>
+  </div>
+  <div>
+    <h2>optimizer args schema</h2>
+    <pre>{{ args_schema }}</pre>
+  </div>
+</section>
+
+<section>
+  <h2>Profiles</h2>
+  <table class="wide-table compact-table">
+    <thead><tr><th>ID</th><th>model</th><th>profile</th><th>LR</th><th>scheduler</th><th>target</th><th>説明</th></tr></thead>
+    <tbody>
+      {% for item in profiles %}
+      <tr>
+        <td><code>{{ item.id }}</code></td>
+        <td>{{ item.model_family }}</td>
+        <td><span class="label {{ item.profile_type }}">{{ item.profile_type }}</span></td>
+        <td>{{ item.default_learning_rate if item.default_learning_rate is not none else '-' }} / {{ item.default_unet_lr if item.default_unet_lr is not none else '-' }} / {{ item.default_text_encoder_lr if item.default_text_encoder_lr is not none else '-' }}</td>
+        <td>{{ item.default_scheduler or '-' }}</td>
+        <td>{{ item.target_steps_min }} / {{ item.target_steps_recommended }} / {{ item.target_steps_max }}</td>
+        <td>{{ item.description or '-' }}{% if item.risk_note %}<br><span class="warning">{{ item.risk_note }}</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>関連Recipe</h2>
+  <table class="wide-table compact-table">
+    <thead><tr><th>Recipe</th><th>用途</th><th>Network</th><th>type</th><th>target</th></tr></thead>
+    <tbody>
+      {% for recipe in recipes %}
+      <tr>
+        <td><a href="/training-recipes/{{ recipe.id }}">{{ recipe.display_name }}</a></td>
+        <td>{{ recipe.purpose_display_name or recipe.training_purpose_id or '-' }}</td>
+        <td>{{ recipe.network_type_display_name or recipe.network_type_id or '-' }}</td>
+        <td><span class="label {{ recipe.recipe_type }}">{{ recipe.recipe_type }}</span></td>
+        <td>{{ recipe.target_steps_min }} / {{ recipe.target_steps_recommended }} / {{ recipe.target_steps_max }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">関連Recipeはありません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

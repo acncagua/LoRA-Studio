@@ -156,15 +156,49 @@ function stepEstimatorParams(form) {
     "gradient_accumulation_steps",
     "save_every_n_epochs",
     "sample_every_n_epochs",
+    "learning_rate",
+    "unet_lr",
+    "text_encoder_lr1",
+    "text_encoder_lr2",
+    "network_dim",
+    "network_alpha",
+    "optimizer_type",
+    "lr_scheduler",
   ].forEach((name) => {
     const input = form.querySelector(`[name='${name}']`);
     if (input && input.value !== "") {
       const value = Number(input.value);
       if (Number.isFinite(value)) {
         params[name] = value;
+      } else {
+        params[name] = input.value;
       }
     }
   });
+  ["cache_latents", "cache_text_encoder_outputs", "network_train_unet_only"].forEach((name) => {
+    const input = form.querySelector(`[name='${name}']`);
+    if (!input) {
+      return;
+    }
+    if (input.type === "checkbox" && input.checked) {
+      params[name] = true;
+    } else if (input.value === "1") {
+      params[name] = true;
+    } else if (input.value === "0") {
+      params[name] = false;
+    }
+  });
+  const raw = form.querySelector("[data-param-editor-raw]");
+  if (raw && raw.value.trim()) {
+    try {
+      const rawParams = JSON.parse(raw.value);
+      if (rawParams && typeof rawParams === "object" && !Array.isArray(rawParams)) {
+        Object.assign(params, rawParams);
+      }
+    } catch (_error) {
+      // Compatibility panel reports invalid JSON; Step Estimate can keep the parsed params.
+    }
+  }
   return params;
 }
 
@@ -306,7 +340,7 @@ function initStepEstimators() {
       return;
     }
     form.addEventListener("input", (event) => {
-      if (event.target.matches("[name='repeats'], [name='max_train_epochs'], [name='train_batch_size'], [name='gradient_accumulation_steps'], [name='save_every_n_epochs'], [name='sample_every_n_epochs']")) {
+      if (event.target.matches("[name='repeats'], [name='max_train_epochs'], [name='train_batch_size'], [name='gradient_accumulation_steps'], [name='save_every_n_epochs'], [name='sample_every_n_epochs'], [name='learning_rate'], [name='unet_lr'], [name='text_encoder_lr1'], [name='text_encoder_lr2'], [name='network_dim'], [name='network_alpha'], [name='optimizer_type'], [name='lr_scheduler'], [data-param-editor-raw]")) {
         if (event.target.matches("[name='repeats']")) {
           const autoFlag = form.querySelector("[data-repeats-auto-calculated]");
           if (autoFlag) {
@@ -317,7 +351,7 @@ function initStepEstimators() {
       }
     });
     form.addEventListener("change", (event) => {
-      if (event.target.matches("[name='dataset_id'], [name='dataset_version_id'], [name='preset_id'], [name='recipe_v2_id']")) {
+      if (event.target.matches("[name='dataset_id'], [name='dataset_version_id'], [name='preset_id'], [name='recipe_v2_id'], [name='cache_latents'], [name='cache_text_encoder_outputs'], [name='network_train_unet_only']")) {
         const targetInput = form.querySelector("[data-step-target]");
         if (targetInput && event.target.matches("[name='preset_id'], [name='recipe_v2_id']")) {
           targetInput.dataset.manualTarget = "false";
@@ -340,58 +374,221 @@ function recipeLabel(recipe) {
   return recipe.display_name || recipe.name || recipe.id;
 }
 
-function recipeCompatibilityLines(recipe) {
-  if (!recipe) {
-    return ["Recipe v2を選ぶとBasic Params / Step Estimate / Compatibility Checkを確認できます。"];
-  }
-  const lines = [
-    `Model: ${recipe.model_family || "-"}`,
-    `Purpose: ${recipe.purpose_display_name || recipe.training_purpose_id || "-"}`,
-    `Optimizer: ${recipe.optimizer_display_name || recipe.optimizer_definition_id || "-"}`,
-    `Network: ${recipe.network_type_display_name || recipe.network_type_id || "-"}`,
-    `Target steps: ${recipe.target_steps_min ?? "-"} / ${recipe.target_steps_recommended ?? "-"} / ${recipe.target_steps_max ?? "-"}`,
-  ];
-  const warnings = [];
-  const category = String(recipe.optimizer_category || "");
-  if (category.includes("advanced") || category.includes("experimental")) {
-    warnings.push(`注意: ${category} optimizerです。`);
-  }
-  if (recipe.optimizer_lr_semantics && recipe.optimizer_lr_semantics !== "normal_lr") {
-    warnings.push(`LR意味: ${recipe.optimizer_lr_semantics}`);
-  }
-  if (recipe.network_type_availability && recipe.network_type_availability !== "available") {
-    warnings.push(`ERROR: Network Typeは${recipe.network_type_availability}です。Phase 12.1では実行できません。`);
-  }
-  if (recipe.risk_note) {
-    warnings.push(recipe.risk_note);
-  }
-  return [...lines, ...warnings];
-}
-
-function updateRecipeSummary(form) {
+function currentRecipe(form) {
   const recipes = parseJsonScript("[data-recipes-v2-json]", form);
   const select = form.querySelector("[data-recipe-select]");
-  const summary = form.querySelector("[data-recipe-summary]");
-  if (!select || !summary) {
-    return;
-  }
-  const recipe = recipes.find((item) => item.id === select.value) || null;
-  const lines = recipeCompatibilityLines(recipe);
-  summary.innerHTML = "";
-  const title = document.createElement("strong");
-  title.textContent = `Compatibility Check: ${recipeLabel(recipe)}`;
-  summary.appendChild(title);
-  const list = document.createElement("ul");
-  lines.forEach((line) => {
+  return recipes.find((item) => item.id === select?.value) || null;
+}
+
+function paramsEqual(a, b) {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
+
+function formatParamValue(value) {
+  if (value === undefined) return "-";
+  if (value === null) return "null";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function resolveWizardParams(form) {
+  return stepEstimatorParams(form);
+}
+
+function setListItems(list, items) {
+  if (!list) return;
+  list.innerHTML = "";
+  items.forEach((item) => {
     const li = document.createElement("li");
-    li.textContent = line;
+    li.textContent = item;
     list.appendChild(li);
   });
-  summary.appendChild(list);
+}
+
+function wizardCompatibility(recipe, params, rawText = "") {
+  const errors = [];
+  const warnings = [];
+  const notes = [];
+  if (!recipe) {
+    notes.push("Recipe v2未選択です。旧形式プリセットまたはCustom扱いで作成します。");
+  } else {
+    notes.push(`Recipe: ${recipeLabel(recipe)}`);
+    notes.push(`Target steps: ${recipe.target_steps_min ?? "-"} / ${recipe.target_steps_recommended ?? "-"} / ${recipe.target_steps_max ?? "-"}`);
+    if (recipe.optimizer_lr_semantics && recipe.optimizer_lr_semantics !== "normal_lr") {
+      notes.push(`LR意味: ${recipe.optimizer_lr_semantics}`);
+    }
+    if (recipe.risk_note) {
+      notes.push(recipe.risk_note);
+    }
+    const category = String(recipe.optimizer_category || "");
+    if (category.includes("advanced") || category.includes("experimental")) {
+      warnings.push(`${category} optimizerです。比較用または上級者向けとして扱ってください。`);
+    }
+    if (recipe.network_type_availability && recipe.network_type_availability !== "available") {
+      errors.push(`Network Typeは${recipe.network_type_availability}です。現在の実行対象ではありません。`);
+    }
+  }
+  const te1 = Number(params.text_encoder_lr1 ?? params.text_encoder_lr ?? 0) || 0;
+  const te2 = Number(params.text_encoder_lr2 ?? 0) || 0;
+  if (params.cache_text_encoder_outputs && (te1 > 0 || te2 > 0)) {
+    errors.push("cache_text_encoder_outputs=true で text_encoder_lr が有効です。TEを学習する場合はcacheを外してください。");
+  }
+  if (params.network_train_unet_only && (te1 > 0 || te2 > 0)) {
+    errors.push("network_train_unet_only=true で text_encoder_lr が有効です。UNetのみ学習かTE学習のどちらかに揃えてください。");
+  }
+  const optimizer = String(params.optimizer_type || recipe?.optimizer_definition_id || "");
+  const scheduler = String(params.lr_scheduler || "");
+  if ((optimizer.includes("DAdapt") || optimizer === "Prodigy") && scheduler && scheduler !== "constant") {
+    warnings.push("DAdapt / Prodigyではscheduler=constantを推奨します。");
+  }
+  if (optimizer === "Adafactor" || recipe?.optimizer_lr_semantics === "relative_step") {
+    notes.push("Adafactor relative_step系は通常LRと意味が異なります。profile説明を確認してください。");
+  }
+  if (rawText.trim()) {
+    try {
+      const raw = JSON.parse(rawText);
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        errors.push("Raw Args JSONはオブジェクトで入力してください。");
+      } else {
+        warnings.push("Raw Argsが指定されています。Recipeの標準互換性チェック外の項目を含む可能性があります。");
+      }
+    } catch (error) {
+      errors.push(`Raw Args JSONを読めません: ${error.message}`);
+    }
+  }
+  return { errors, warnings, notes };
+}
+
+function updateRecipeDetail(form) {
+  const detail = form.querySelector("[data-recipe-detail]");
+  const recipe = currentRecipe(form);
+  if (!detail) return;
+  if (!recipe) {
+    detail.innerHTML = "<strong>Recipe未選択</strong><p class=\"muted\">旧形式プリセットまたは完全カスタムとして作成します。</p>";
+    return;
+  }
+  detail.innerHTML = `
+    <strong>${recipeLabel(recipe)}</strong>
+    <dl>
+      <dt>用途</dt><dd>${recipe.purpose_display_name || recipe.training_purpose_id || "-"}</dd>
+      <dt>Optimizer</dt><dd>${recipe.optimizer_display_name || recipe.optimizer_definition_id || "-"} / ${recipe.optimizer_category || "-"}</dd>
+      <dt>Profile</dt><dd>${recipe.optimizer_profile_display_name || recipe.optimizer_profile_id || "-"}</dd>
+      <dt>Network</dt><dd>${recipe.network_type_display_name || recipe.network_type_id || "-"} / ${recipe.network_type_availability || "-"}</dd>
+      <dt>Target steps</dt><dd>${recipe.target_steps_min ?? "-"} / <strong>${recipe.target_steps_recommended ?? "-"}</strong> / ${recipe.target_steps_max ?? "-"}</dd>
+      <dt>期待する挙動</dt><dd>${recipe.expected_behavior || "-"}</dd>
+      <dt>注意</dt><dd>${recipe.risk_note || recipe.optimizer_risk_note || "-"}</dd>
+    </dl>
+    <p><a href="/training-recipes/${encodeURIComponent(recipe.id)}">Recipe詳細を開く</a> / <a href="/optimizers/${encodeURIComponent(recipe.optimizer_definition_id || "")}">Optimizer詳細を開く</a></p>
+  `;
+}
+
+function updateParamDiff(form) {
+  const recipe = currentRecipe(form);
+  const base = (recipe && recipe.params) || {};
+  const resolved = resolveWizardParams(form);
+  const preview = form.querySelector("[data-resolved-params-preview]");
+  if (preview) {
+    preview.textContent = JSON.stringify(resolved, null, 2);
+  }
+  const changed = Object.keys(resolved)
+    .filter((key) => !paramsEqual(base[key], resolved[key]))
+    .sort();
+  const diff = form.querySelector("[data-param-diff-preview]");
+  if (diff) {
+    if (!changed.length) {
+      diff.textContent = "差分はありません。Recipe標準値のままです。";
+    } else {
+      const rows = changed.map((key) => `<tr><td><code>${key}</code></td><td>${formatParamValue(base[key])}</td><td>${formatParamValue(resolved[key])}</td></tr>`).join("");
+      diff.innerHTML = `<table class="compact-table"><thead><tr><th>key</th><th>Recipe</th><th>作成値</th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+  }
+  const summaryDiff = form.querySelector("[data-summary-diff]");
+  if (summaryDiff) summaryDiff.textContent = `${changed.length} 件`;
+  return changed.length;
+}
+
+function updateCompatibilityPanel(form) {
+  const recipe = currentRecipe(form);
+  const params = resolveWizardParams(form);
+  const rawText = form.querySelector("[data-param-editor-raw]")?.value || "";
+  const result = wizardCompatibility(recipe, params, rawText);
+  const panel = form.querySelector("[data-compatibility-panel]");
+  if (!panel) return result;
+  panel.classList.toggle("warning", result.errors.length > 0 || result.warnings.length > 0);
+  const errorCount = panel.querySelector("[data-compat-error-count]");
+  const warningCount = panel.querySelector("[data-compat-warning-count]");
+  const noteCount = panel.querySelector("[data-compat-note-count]");
+  if (errorCount) errorCount.textContent = result.errors.length;
+  if (warningCount) warningCount.textContent = result.warnings.length;
+  if (noteCount) noteCount.textContent = result.notes.length;
+  setListItems(panel.querySelector("[data-compat-errors]"), result.errors.length ? result.errors : ["ERRORはありません。"]);
+  setListItems(panel.querySelector("[data-compat-warnings]"), result.warnings.length ? result.warnings : ["WARNINGはありません。"]);
+  setListItems(panel.querySelector("[data-compat-notes]"), result.notes);
+  const submit = form.querySelector("[data-wizard-submit]");
+  if (submit) {
+    submit.disabled = result.errors.length > 0;
+  }
+  const compat = form.querySelector("[data-summary-compat]");
+  if (compat) {
+    compat.textContent = result.errors.length ? `ERROR ${result.errors.length}` : (result.warnings.length ? `WARNING ${result.warnings.length}` : "OK");
+  }
+  return result;
+}
+
+function updateWizardSummary(form) {
+  const mode = form.querySelector("[data-recipe-mode-input]")?.value || "purpose";
+  const modeLabels = {
+    purpose: "用途から選ぶ",
+    optimizer: "Optimizerから選ぶ",
+    derived: "既存Jobから派生",
+    custom: "完全カスタム",
+  };
+  const modeNode = form.querySelector("[data-summary-mode]");
+  if (modeNode) modeNode.textContent = modeLabels[mode] || mode;
+  const recipeNode = form.querySelector("[data-summary-recipe]");
+  if (recipeNode) recipeNode.textContent = recipeLabel(currentRecipe(form));
+}
+
+function updateWizardState(form) {
+  updateRecipeDetail(form);
+  updateParamDiff(form);
+  updateCompatibilityPanel(form);
+  updateWizardSummary(form);
+}
+
+function buildRecipeCards(form) {
+  const grid = form.querySelector("[data-recipe-cards]");
+  if (!grid) return;
+  const recipes = parseJsonScript("[data-recipes-v2-json]", form);
+  grid.innerHTML = "";
+  recipes.forEach((recipe) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "recipe-choice-card";
+    button.setAttribute("data-recipe-card", recipe.id);
+    button.setAttribute("data-model-family", recipe.model_family || "");
+    button.setAttribute("data-purpose-id", recipe.training_purpose_id || "");
+    button.setAttribute("data-optimizer-id", recipe.optimizer_definition_id || "");
+    button.setAttribute("data-profile-id", recipe.optimizer_profile_id || "");
+    button.setAttribute("data-network-id", recipe.network_type_id || "");
+    button.innerHTML = `
+      <strong>${recipeLabel(recipe)}</strong>
+      <span>${recipe.purpose_display_name || recipe.training_purpose_id || "-"} / ${recipe.optimizer_display_name || recipe.optimizer_definition_id || "-"}</span>
+      <small>${recipe.recipe_type || "-"} / ${recipe.optimizer_category || "-"} / target ${recipe.target_steps_recommended ?? "-"}</small>
+    `;
+    button.addEventListener("click", () => {
+      const select = form.querySelector("[data-recipe-select]");
+      if (select) {
+        select.value = recipe.id;
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    });
+    grid.appendChild(button);
+  });
 }
 
 function applyRecipeFilters(form) {
-  const mode = form.querySelector("[data-recipe-mode]")?.value || "purpose";
+  const mode = form.querySelector("[data-recipe-mode-input]")?.value || "purpose";
   const recipeSelect = form.querySelector("[data-recipe-select]");
   if (!recipeSelect) {
     return;
@@ -404,6 +601,8 @@ function applyRecipeFilters(form) {
   if (optimizerField) optimizerField.hidden = mode === "purpose";
   if (profileField) profileField.hidden = mode !== "optimizer";
   if (networkField) networkField.hidden = mode !== "optimizer";
+  const parentField = form.querySelector("[data-derived-parent-field]");
+  if (parentField) parentField.hidden = mode !== "derived";
 
   const filters = {};
   form.querySelectorAll("[data-recipe-filter]").forEach((filter) => {
@@ -447,7 +646,20 @@ function applyRecipeFilters(form) {
   if (!selectedVisible && recipeSelect.value) {
     recipeSelect.value = "";
   }
-  updateRecipeSummary(form);
+  form.querySelectorAll("[data-recipe-card]").forEach((card) => {
+    const visible = Object.entries(filters).every(([key, value]) => {
+      const attr = {
+        model_family: "model-family",
+        training_purpose_id: "purpose-id",
+        optimizer_definition_id: "optimizer-id",
+        optimizer_profile_id: "profile-id",
+        network_type_id: "network-id",
+      }[key];
+      return !value || card.getAttribute(`data-${attr}`) === value;
+    });
+    card.hidden = !visible;
+  });
+  updateWizardState(form);
 }
 
 function initRecipeSelectors() {
@@ -455,15 +667,53 @@ function initRecipeSelectors() {
     if (!form.querySelector("[data-recipe-select]")) {
       return;
     }
+    buildRecipeCards(form);
+    form.querySelectorAll("[data-mode-card]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const mode = button.getAttribute("data-mode-card") || "purpose";
+        const input = form.querySelector("[data-recipe-mode-input]");
+        if (input) input.value = mode;
+        form.querySelectorAll("[data-mode-card]").forEach((card) => card.classList.toggle("active", card === button));
+        if (mode === "custom") {
+          const select = form.querySelector("[data-recipe-select]");
+          if (select) {
+            select.value = "";
+            select.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+        }
+        applyRecipeFilters(form);
+        refreshStepEstimate(form);
+      });
+    });
+    const currentMode = form.querySelector("[data-recipe-mode-input]")?.value || "purpose";
+    form.querySelector(`[data-mode-card='${currentMode}']`)?.classList.add("active");
     applyRecipeFilters(form);
-    updateRecipeSummary(form);
+    updateWizardState(form);
     form.addEventListener("change", (event) => {
-      if (event.target.matches("[data-recipe-mode], [data-recipe-filter]")) {
+      if (event.target.matches("[data-recipe-filter]")) {
         applyRecipeFilters(form);
         refreshStepEstimate(form);
       }
       if (event.target.matches("[data-recipe-select]")) {
-        updateRecipeSummary(form);
+        const selectedId = event.target.value;
+        form.querySelectorAll("[data-recipe-card]").forEach((card) => card.classList.toggle("active", card.getAttribute("data-recipe-card") === selectedId));
+        updateWizardState(form);
+        refreshStepEstimate(form);
+      }
+      if (event.target.matches("[data-param-editor-key], [data-param-editor-raw]")) {
+        updateWizardState(form);
+      }
+    });
+    form.addEventListener("input", (event) => {
+      if (event.target.matches("[data-param-editor-key], [data-param-editor-raw], [data-param-editor-reason]")) {
+        updateWizardState(form);
+      }
+    });
+    form.addEventListener("submit", (event) => {
+      const result = updateCompatibilityPanel(form);
+      if (result.errors.length) {
+        event.preventDefault();
+        showPageNotice("Compatibility CheckにERRORがあります。修正してから作成してください。", "warning", form);
       }
     });
   });

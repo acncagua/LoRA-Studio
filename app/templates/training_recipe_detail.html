@@ -1,0 +1,62 @@
+{% extends "base.html" %}{% block content %}
+<nav class="breadcrumbs"><a href="/training-recipes">Recipe Library</a><span>{{ recipe.display_name }}</span></nav>
+<header class="page-head">
+  <h1>{{ recipe.display_name }}</h1>
+  <div class="actions compact-actions">
+    <a class="button" href="/jobs/new?mode=purpose">このRecipeを使う</a>
+    <a class="button secondary" href="/optimizers/{{ recipe.optimizer_definition_id }}">Optimizer詳細</a>
+  </div>
+</header>
+
+<section class="notice">
+  <h2>Recipe概要</h2>
+  <div class="summary-grid">
+    <div><span>ID</span><strong>{{ recipe.id }}</strong></div>
+    <div><span>model</span><strong>{{ recipe.model_family }}</strong></div>
+    <div><span>用途</span><strong>{{ recipe.purpose_display_name or recipe.training_purpose_id or '-' }}</strong></div>
+    <div><span>Optimizer</span><strong>{{ recipe.optimizer_display_name or recipe.optimizer_definition_id or '-' }}</strong></div>
+    <div><span>Profile</span><strong>{{ recipe.optimizer_profile_display_name or recipe.optimizer_profile_id or '-' }}</strong></div>
+    <div><span>Network</span><strong>{{ recipe.network_type_display_name or recipe.network_type_id or '-' }}</strong></div>
+    <div><span>type</span><strong>{{ recipe.recipe_type }}</strong></div>
+    <div><span>target steps</span><strong>{{ recipe.target_steps_min }} / {{ recipe.target_steps_recommended }} / {{ recipe.target_steps_max }}</strong></div>
+  </div>
+  <p>{{ recipe.expected_behavior or '-' }}</p>
+  {% if recipe.risk_note %}<p class="warning">{{ recipe.risk_note }}</p>{% endif %}
+</section>
+
+<section class="panel-grid">
+  <div>
+    <h2>Basic Params</h2>
+    <pre>{{ basic_pretty }}</pre>
+  </div>
+  <div>
+    <h2>Advanced Params</h2>
+    <pre>{{ advanced_pretty }}</pre>
+  </div>
+</section>
+
+<section class="panel-grid">
+  <div>
+    <h2>Raw Args</h2>
+    <pre>{{ raw_pretty }}</pre>
+  </div>
+  <div>
+    <h2>Resolved Params</h2>
+    <pre>{{ params_pretty }}</pre>
+  </div>
+</section>
+
+<section>
+  <h2>このRecipeを使ったJob</h2>
+  <table class="wide-table compact-table">
+    <thead><tr><th>ID</th><th>Job</th><th>状態</th><th>作成</th></tr></thead>
+    <tbody>
+      {% for job in jobs %}
+      <tr><td>#{{ job.id }}</td><td><a href="/jobs/{{ job.id }}">{{ job.name }}</a></td><td>{{ display_status_text(job.status) }}</td><td>{{ job.created_at }}</td></tr>
+      {% else %}
+      <tr><td colspan="4" class="muted">まだ使用Jobはありません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

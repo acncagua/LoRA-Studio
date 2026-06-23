@@ -290,7 +290,19 @@ def render(request: Request, template: str, **context: Any) -> HTMLResponse:
     context.setdefault("display_status_text", display_status_text)
     context.setdefault("display_machine_label", display_machine_label)
     context.setdefault("static_asset_version", static_asset_version())
+    context.setdefault("json_loads", safe_json_loads)
     return HTMLResponse(tpl.render(**context))
+
+
+def safe_json_loads(value: Any, default: Any | None = None) -> Any:
+    if value in (None, ""):
+        return {} if default is None else default
+    if isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(str(value))
+    except (TypeError, json.JSONDecodeError):
+        return {} if default is None else default
 
 
 def static_asset_version() -> str:
@@ -3055,20 +3067,28 @@ def job_delete(job_id: int, delete_reason: str = Form(""), delete_mode: str = Fo
 
 
 @app.get("/jobs/new", response_class=HTMLResponse)
-def job_new(request: Request, project_id: str = Query("")) -> HTMLResponse:
+def job_new(request: Request, project_id: str = Query(""), mode: str = Query("")) -> HTMLResponse:
     datasets = fetch_all("SELECT * FROM datasets ORDER BY id DESC")
     presets = preset_option_rows(fetch_all("SELECT * FROM presets ORDER BY model_family DESC, name"))
     recipes_v2 = fetch_all(
         """
         SELECT r.*, p.display_name AS purpose_display_name,
+               p.description AS purpose_description,
                od.display_name AS optimizer_display_name,
                od.category AS optimizer_category,
                od.lr_semantics AS optimizer_lr_semantics,
+               od.description AS optimizer_description,
+               od.risk_note AS optimizer_risk_note,
+               op.display_name AS optimizer_profile_display_name,
+               op.profile_type AS optimizer_profile_type,
+               op.description AS optimizer_profile_description,
                nt.display_name AS network_type_display_name,
-               nt.availability AS network_type_availability
+               nt.availability AS network_type_availability,
+               nt.description AS network_type_description
         FROM training_recipes_v2 r
         LEFT JOIN training_purposes p ON p.id = r.training_purpose_id
         LEFT JOIN optimizer_definitions_v2 od ON od.id = r.optimizer_definition_id
+        LEFT JOIN optimizer_profiles_v2 op ON op.id = r.optimizer_profile_id
         LEFT JOIN network_type_definitions nt ON nt.id = r.network_type_id
         WHERE r.is_active = 1
         ORDER BY r.model_family DESC, p.sort_order, r.sort_order, r.display_name
@@ -3079,6 +3099,16 @@ def job_new(request: Request, project_id: str = Query("")) -> HTMLResponse:
     training_purposes = fetch_all("SELECT * FROM training_purposes WHERE is_active = 1 ORDER BY sort_order, display_name")
     network_types = fetch_all("SELECT * FROM network_type_definitions WHERE is_active = 1 ORDER BY display_name")
     projects = fetch_all("SELECT * FROM lora_projects WHERE status != 'archived' ORDER BY updated_at DESC, id DESC")
+    recent_jobs = fetch_all(
+        """
+        SELECT id, name, status, recipe_v2_id, optimizer_definition_id, training_purpose_id,
+               expected_total_steps_at_creation, step_status_at_creation
+        FROM training_jobs
+        WHERE deleted_at IS NULL
+        ORDER BY id DESC
+        LIMIT 40
+        """
+    )
     dataset_versions = fetch_all("SELECT * FROM dataset_versions ORDER BY dataset_id, version_no DESC")
     dataset_version_dicts = [dict(row) for row in dataset_versions]
     sample_prompt_templates = fetch_all("SELECT * FROM sample_prompt_templates ORDER BY is_builtin DESC, name")
@@ -3094,11 +3124,22 @@ def job_new(request: Request, project_id: str = Query("")) -> HTMLResponse:
         datasets=datasets,
         presets=presets,
         recipes_v2=recipes_v2,
-        recipes_v2_json=[{**dict(row), "params": json.loads(row["params_json"] or "{}")} for row in recipes_v2],
+        recipes_v2_json=[
+            {
+                **dict(row),
+                "params": safe_json_loads(row["params_json"], {}),
+                "basic_params": safe_json_loads(row["basic_params_json"], {}),
+                "advanced_params": safe_json_loads(row["advanced_params_json"], {}),
+                "raw_args": safe_json_loads(row["raw_args_json"], {}),
+            }
+            for row in recipes_v2
+        ],
         optimizers_v2=optimizers_v2,
         optimizer_profiles_v2=optimizer_profiles_v2,
         training_purposes=training_purposes,
         network_types=network_types,
+        recent_jobs=recent_jobs,
+        initial_job_creation_mode=mode if mode in {"purpose", "optimizer", "derived", "custom"} else "purpose",
         projects=projects,
         dataset_versions=dataset_versions,
         dataset_versions_json=dataset_version_dicts,
@@ -3121,8 +3162,14 @@ def training_recipes_library(
     model_family: str = Query(""),
     purpose: str = Query(""),
     optimizer: str = Query(""),
+    optimizer_category: str = Query(""),
+    network_type: str = Query(""),
+    source: str = Query(""),
     recipe_type: str = Query(""),
 ) -> HTMLResponse:
+    optimizer_category = optimizer_category if isinstance(optimizer_category, str) else ""
+    network_type = network_type if isinstance(network_type, str) else ""
+    source = source if isinstance(source, str) else ""
     where = ["r.is_active = 1"]
     params: list[Any] = []
     if model_family:
@@ -3134,6 +3181,16 @@ def training_recipes_library(
     if optimizer:
         where.append("r.optimizer_definition_id = ?")
         params.append(optimizer)
+    if optimizer_category:
+        where.append("od.category LIKE ?")
+        params.append(f"%{optimizer_category}%")
+    if network_type:
+        where.append("r.network_type_id = ?")
+        params.append(network_type)
+    if source == "builtin":
+        where.append("r.is_builtin = 1")
+    elif source == "custom":
+        where.append("r.is_builtin = 0")
     if recipe_type:
         where.append("r.recipe_type = ?")
         params.append(recipe_type)
@@ -3160,10 +3217,53 @@ def training_recipes_library(
         recipes=recipes,
         purposes=fetch_all("SELECT * FROM training_purposes WHERE is_active = 1 ORDER BY sort_order, display_name"),
         optimizers=fetch_all("SELECT * FROM optimizer_definitions_v2 WHERE is_active = 1 ORDER BY display_name"),
+        network_types=fetch_all("SELECT * FROM network_type_definitions WHERE is_active = 1 ORDER BY display_name"),
         model_family=model_family,
         purpose=purpose,
         optimizer=optimizer,
+        optimizer_category=optimizer_category,
+        network_type=network_type,
+        source=source,
         recipe_type=recipe_type,
+    )
+
+
+@app.get("/training-recipes/{recipe_id}", response_class=HTMLResponse)
+def training_recipe_detail(request: Request, recipe_id: str) -> HTMLResponse:
+    recipe = fetch_one(
+        """
+        SELECT r.*, p.display_name AS purpose_display_name,
+               od.display_name AS optimizer_display_name,
+               od.category AS optimizer_category,
+               od.lr_semantics AS optimizer_lr_semantics,
+               op.display_name AS optimizer_profile_display_name,
+               op.profile_type AS optimizer_profile_type,
+               nt.display_name AS network_type_display_name,
+               nt.availability AS network_type_availability
+        FROM training_recipes_v2 r
+        LEFT JOIN training_purposes p ON p.id = r.training_purpose_id
+        LEFT JOIN optimizer_definitions_v2 od ON od.id = r.optimizer_definition_id
+        LEFT JOIN optimizer_profiles_v2 op ON op.id = r.optimizer_profile_id
+        LEFT JOIN network_type_definitions nt ON nt.id = r.network_type_id
+        WHERE r.id = ?
+        """,
+        (recipe_id,),
+    )
+    if recipe is None:
+        raise HTTPException(status_code=404, detail="Recipe not found")
+    jobs = fetch_all(
+        "SELECT id, name, status, created_at FROM training_jobs WHERE recipe_v2_id = ? ORDER BY id DESC LIMIT 20",
+        (recipe_id,),
+    )
+    return render(
+        request,
+        "training_recipe_detail.html",
+        recipe=recipe,
+        params_pretty=json.dumps(safe_json_loads(recipe["params_json"], {}), ensure_ascii=False, indent=2),
+        basic_pretty=json.dumps(safe_json_loads(recipe["basic_params_json"], {}), ensure_ascii=False, indent=2),
+        advanced_pretty=json.dumps(safe_json_loads(recipe["advanced_params_json"], {}), ensure_ascii=False, indent=2),
+        raw_pretty=json.dumps(safe_json_loads(recipe["raw_args_json"], {}), ensure_ascii=False, indent=2),
+        jobs=jobs,
     )
 
 
@@ -3181,6 +3281,38 @@ def optimizers_library(request: Request) -> HTMLResponse:
     )
     network_types = fetch_all("SELECT * FROM network_type_definitions WHERE is_active = 1 ORDER BY display_name")
     return render(request, "optimizers.html", optimizers=optimizers, profiles=profiles, network_types=network_types)
+
+
+@app.get("/optimizers/{optimizer_id}", response_class=HTMLResponse)
+def optimizer_detail(request: Request, optimizer_id: str) -> HTMLResponse:
+    optimizer = fetch_one("SELECT * FROM optimizer_definitions_v2 WHERE id = ?", (optimizer_id,))
+    if optimizer is None:
+        raise HTTPException(status_code=404, detail="Optimizer not found")
+    profiles = fetch_all(
+        "SELECT * FROM optimizer_profiles_v2 WHERE optimizer_definition_id = ? ORDER BY model_family, profile_type",
+        (optimizer_id,),
+    )
+    recipes = fetch_all(
+        """
+        SELECT r.*, p.display_name AS purpose_display_name, nt.display_name AS network_type_display_name
+        FROM training_recipes_v2 r
+        LEFT JOIN training_purposes p ON p.id = r.training_purpose_id
+        LEFT JOIN network_type_definitions nt ON nt.id = r.network_type_id
+        WHERE r.optimizer_definition_id = ?
+        ORDER BY r.model_family DESC, p.sort_order, r.sort_order, r.display_name
+        """,
+        (optimizer_id,),
+    )
+    return render(
+        request,
+        "optimizer_detail.html",
+        optimizer=optimizer,
+        profiles=profiles,
+        recipes=recipes,
+        notes=safe_json_loads(optimizer["compatibility_notes_json"], []),
+        allowed_schedulers=safe_json_loads(optimizer["allowed_schedulers_json"], []),
+        args_schema=json.dumps(safe_json_loads(optimizer["optimizer_args_schema_json"], {}), ensure_ascii=False, indent=2),
+    )
 
 
 @app.post("/jobs")
@@ -3205,6 +3337,20 @@ def job_create(
     repeats: str = Form(""),
     train_batch_size: str = Form(""),
     gradient_accumulation_steps: str = Form(""),
+    learning_rate: str = Form(""),
+    unet_lr: str = Form(""),
+    text_encoder_lr1: str = Form(""),
+    text_encoder_lr2: str = Form(""),
+    network_dim: str = Form(""),
+    network_alpha: str = Form(""),
+    optimizer_type: str = Form(""),
+    lr_scheduler: str = Form(""),
+    cache_latents: str = Form(""),
+    cache_text_encoder_outputs: str = Form(""),
+    network_train_unet_only: str = Form(""),
+    raw_args_text: str = Form(""),
+    override_reason: str = Form(""),
+    parent_job_id: str = Form(""),
     save_every_n_epochs: str = Form(""),
     sample_every_n_epochs: str = Form(""),
     repeats_auto_calculated: str = Form("0"),
@@ -3284,6 +3430,7 @@ def job_create(
     recipe_v2 = fetch_one("SELECT * FROM training_recipes_v2 WHERE id = ?", (recipe_v2_id,)) if recipe_v2_id.strip() else None
     params = json.loads((recipe_v2["params_json"] if recipe_v2 else preset["params_json"]) or "{}")
     user_overrides: dict[str, Any] = {}
+    user_overrides_detail: dict[str, Any] = {}
     try:
         before = dict(params)
         update_params_from_form(
@@ -3293,13 +3440,45 @@ def job_create(
                 "repeats": repeats,
                 "train_batch_size": train_batch_size,
                 "gradient_accumulation_steps": gradient_accumulation_steps,
+                "learning_rate": learning_rate,
+                "unet_lr": unet_lr,
+                "text_encoder_lr1": text_encoder_lr1,
+                "text_encoder_lr2": text_encoder_lr2,
+                "network_dim": network_dim,
+                "network_alpha": network_alpha,
+                "optimizer_type": optimizer_type,
+                "lr_scheduler": lr_scheduler,
                 "save_every_n_epochs": save_every_n_epochs,
                 "sample_every_n_epochs": sample_every_n_epochs,
             },
         )
+        if cache_latents.strip():
+            params["cache_latents"] = cache_latents == "1"
+        if cache_text_encoder_outputs.strip():
+            params["cache_text_encoder_outputs"] = cache_text_encoder_outputs == "1"
+        if network_train_unet_only.strip():
+            params["network_train_unet_only"] = network_train_unet_only == "1"
+        if raw_args_text.strip():
+            try:
+                raw_args = json.loads(raw_args_text)
+                if not isinstance(raw_args, dict):
+                    raise ValueError("raw_args must be an object")
+            except (json.JSONDecodeError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail=f"Raw Args JSONを読み込めません: {exc}") from exc
+            params.update(raw_args)
         user_overrides = {key: params[key] for key in params if before.get(key) != params[key]}
+        reason = override_reason.strip()
+        user_overrides_detail = {
+            key: {
+                "from": before.get(key),
+                "to": params[key],
+                "reason": reason,
+            }
+            for key in user_overrides
+        }
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"主要パラメータの値が不正です: {exc}") from exc
+    parent_id = optional_int(parent_job_id)
     job_id = create_job({
         "project_id": selected_project_id,
         "name": name,
@@ -3315,7 +3494,9 @@ def job_create(
         "params": params,
         "recipe_v2_id": recipe_v2_id.strip(),
         "job_creation_mode": job_creation_mode,
+        "parent_job_id": parent_id,
         "user_overrides": user_overrides,
+        "user_overrides_detail": user_overrides_detail,
         "repeats_auto_calculated": repeats_auto_calculated == "1",
         "post_training_review_mode": review_mode,
         "max_auto_images": auto_images,
@@ -4226,6 +4407,80 @@ def job_preflight(job_id: int, acknowledge_trigger_mismatch: str = Form("")) -> 
         else:
             estimate_message = " Step Estimate " + estimate_summary
     return RedirectResponse(f"/jobs/{job_id}?preflight={quote('OK: 実行できます。' + estimate_message)}", status_code=303)
+
+
+@app.post("/jobs/{job_id}/save-custom-recipe")
+def job_save_custom_recipe(
+    job_id: int,
+    display_name: str = Form(""),
+    reason: str = Form(""),
+) -> RedirectResponse:
+    job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (job_id,))
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    params = safe_json_loads(job["params_json"], {})
+    if not isinstance(params, dict) or not params:
+        raise HTTPException(status_code=400, detail="Job params are unavailable")
+    recipe_id = f"custom_job_{job_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    clean_name = re.sub(r"[^a-zA-Z0-9_]+", "_", recipe_id).strip("_")
+    now = settings_now()
+    recipe_display = display_name.strip() or f"Custom Recipe from Job #{job_id}"
+    basic_keys = {
+        "max_train_epochs",
+        "repeats",
+        "train_batch_size",
+        "gradient_accumulation_steps",
+        "learning_rate",
+        "unet_lr",
+        "text_encoder_lr1",
+        "text_encoder_lr2",
+        "network_dim",
+        "network_alpha",
+        "save_every_n_epochs",
+        "sample_every_n_epochs",
+    }
+    basic_params = {key: params[key] for key in basic_keys if key in params}
+    advanced_params = {key: value for key, value in params.items() if key not in basic_keys}
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO training_recipes_v2(
+                id, name, display_name, model_family, training_purpose_id,
+                optimizer_definition_id, optimizer_profile_id, network_type_id,
+                recipe_type, params_json, basic_params_json, advanced_params_json,
+                raw_args_json, compatibility_rules_json, target_steps_min,
+                target_steps_recommended, target_steps_max, target_checkpoint_count,
+                expected_behavior, risk_note, sort_order, is_builtin, is_active,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?)
+            """,
+            (
+                clean_name,
+                clean_name,
+                recipe_display,
+                job["model_family"],
+                job["training_purpose_id"],
+                job["optimizer_definition_id"],
+                job["optimizer_profile_id"],
+                job["network_type_id"] or "standard_lora",
+                "custom",
+                json.dumps(params, ensure_ascii=False, indent=2),
+                json.dumps(basic_params, ensure_ascii=False, indent=2),
+                json.dumps(advanced_params, ensure_ascii=False, indent=2),
+                "{}",
+                "{}",
+                job["target_steps_recommended_at_creation"] or 2500,
+                job["target_steps_recommended_at_creation"] or 5000,
+                max(int(job["target_steps_recommended_at_creation"] or 5000), int(job["expected_total_steps_at_creation"] or 5000)),
+                None,
+                f"Job #{job_id} から保存したCustom Recipe。",
+                reason.strip() or "Job実績から保存したRecipeです。実行前にCompatibility Checkを確認してください。",
+                9000 + job_id,
+                now,
+                now,
+            ),
+        )
+    return RedirectResponse(f"/training-recipes/{clean_name}", status_code=303)
 
 
 @app.post("/jobs/{job_id}/revised-draft")
@@ -6368,7 +6623,7 @@ def update_params_from_form(params: dict[str, Any], values: dict[str, str]) -> N
         "save_every_n_epochs",
         "sample_every_n_epochs",
     }
-    float_keys = {"learning_rate", "unet_lr"}
+    float_keys = {"learning_rate", "unet_lr", "text_encoder_lr", "text_encoder_lr1", "text_encoder_lr2"}
     for key, raw_value in values.items():
         value = raw_value.strip() if isinstance(raw_value, str) else raw_value
         if value in ("", None):

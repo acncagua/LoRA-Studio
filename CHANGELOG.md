@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased - Phase 12.2
+
+LoRA Studio Phase 12.2 improves the Recipe v2 Job creation experience with a wizard-style flow, Recipe cards, Parameter Editor v2, structured override diffs, and richer Recipe / Optimizer browsing.
+
+### 主な変更
+
+- `/jobs/new` を、作成方法、Project / Dataset、Recipe、Parameter Editor、Step Estimate / Compatibility、作成サマリの順で確認するウィザード型画面に整理しました。
+- Job作成モードとして、用途から選ぶ、Optimizerから選ぶ、既存Jobから派生、完全カスタムのカード導線を追加しました。
+- Recipeカードを追加し、用途、Optimizer、Network Type、target steps、risk、Recipe詳細 / Optimizer詳細へのリンクを見ながら選択できるようにしました。
+- Parameter Editor v2として、Basic Params、Advanced Params、Raw Args、Resolved Params、User Override Diffを分離して表示しました。
+- Job作成時のuser overridesを `{key: {from, to, reason}}` 形式で保存し、Job詳細で差分理由を確認できるようにしました。
+- Compatibility CheckをERROR / WARNING / NOTEに分け、ERRORがある場合は画面上でも下書きJob作成を止めるようにしました。
+- Recipe Library `/training-recipes` をカード表示と追加フィルタに更新し、Recipe詳細ページを追加しました。
+- Optimizer Master `/optimizers` にLR semantics説明を追加し、Optimizer詳細ページでprofile、allowed scheduler、関連Recipeを確認できるようにしました。
+- Job詳細から現在paramsをCustom Recipeとして保存できる最小導線を追加しました。
+- legacy presetは折りたたみ表示として残し、既存Job互換を維持しています。
+
+### 確認
+
+- Phase 12.2 acceptance用に、用途、Optimizer、派生、Customの下書きJob作成を実DBで確認しました。
+- 作成した下書きJobのうち1件でPrepare Filesを実行し、`command_argv` / dataset config / sample prompts生成経路が壊れていないことを確認しました。
+
 ## phase12.1 / v0.4.9-beta - 2026-06-23
 
 LoRA Studio Phase 12.1 adds the Training Recipe / Optimizer Master v2 foundation while keeping legacy presets and existing Jobs compatible.

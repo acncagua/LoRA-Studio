@@ -1,15 +1,17 @@
 {% extends "base.html" %}{% block content %}
 <header class="page-head">
-  <h1>Training Recipe Library</h1>
+  <h1>Recipe Library</h1>
   <div class="actions compact-actions">
-    <a class="button" href="/jobs/new">学習ジョブ作成</a>
+    <a class="button" href="/jobs/new?mode=purpose">用途からJob作成</a>
+    <a class="button secondary" href="/jobs/new?mode=optimizer">OptimizerからJob作成</a>
     <a class="button secondary" href="/optimizers">Optimizer Master</a>
   </div>
 </header>
 
 <section class="notice">
-  <h2>Phase 12.1 Recipe v2</h2>
-  <p>Recipe v2は、用途、Optimizer、Network Type、target steps、互換性メモをまとめたJob作成用マスタです。既存presetはlegacyとして残し、新規JobではRecipe v2を推奨します。</p>
+  <h2>Phase 12.2 Recipe v2</h2>
+  <p class="muted">Training Recipe Library</p>
+  <p>Recipeは用途、Optimizer、Network Type、target steps、互換性メモをまとめたJob作成用マスタです。Custom Recipeは実Jobから保存できます。</p>
 </section>
 
 <form method="get" class="filter-bar">
@@ -36,41 +38,57 @@
       {% endfor %}
     </select>
   </label>
+  <label>optimizer category
+    <select name="optimizer_category">
+      <option value="">all</option>
+      {% for item in ['stable', 'advanced', 'experimental', 'memory_saving', 'auto_lr'] %}
+      <option value="{{ item }}" {{ 'selected' if optimizer_category == item else '' }}>{{ item }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>network type
+    <select name="network_type">
+      <option value="">all</option>
+      {% for item in network_types %}
+      <option value="{{ item.id }}" {{ 'selected' if network_type == item.id else '' }}>{{ item.display_name }} / {{ item.availability }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>source
+    <select name="source">
+      <option value="">all</option>
+      <option value="builtin" {{ 'selected' if source == 'builtin' else '' }}>builtin</option>
+      <option value="custom" {{ 'selected' if source == 'custom' else '' }}>custom</option>
+    </select>
+  </label>
   <label>recipe_type<input name="recipe_type" value="{{ recipe_type }}"></label>
   <button type="submit">絞り込み</button>
 </form>
 
 <section>
   <h2>Recipes</h2>
-  <div class="table-scroll">
-    <table class="wide-table compact-table">
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Recipe</th>
-          <th>用途</th>
-          <th>Optimizer</th>
-          <th>Network</th>
-          <th>type</th>
-          <th>target steps</th>
-          <th>risk</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for recipe in recipes %}
-        <tr>
-          <td><code>{{ recipe.id }}</code></td>
-          <td><strong>{{ recipe.display_name }}</strong><br><span class="muted">{{ recipe.expected_behavior or '-' }}</span></td>
-          <td>{{ recipe.purpose_display_name or recipe.training_purpose_id or '-' }}</td>
-          <td>{{ recipe.optimizer_display_name or recipe.optimizer_definition_id or '-' }}<br><span class="label {{ recipe.optimizer_category|replace('/', '-') }}">{{ recipe.optimizer_category or '-' }}</span></td>
-          <td>{{ recipe.network_type_display_name or recipe.network_type_id or '-' }}<br><span class="label {{ recipe.network_type_availability }}">{{ recipe.network_type_availability or '-' }}</span></td>
-          <td><span class="label {{ recipe.recipe_type }}">{{ recipe.recipe_type }}</span></td>
-          <td>{{ recipe.target_steps_min }} / <strong>{{ recipe.target_steps_recommended }}</strong> / {{ recipe.target_steps_max }}</td>
-          <td>{{ recipe.risk_note or '-' }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <div class="recipe-card-grid">
+    {% for recipe in recipes %}
+    <article class="notice">
+      <h3><a href="/training-recipes/{{ recipe.id }}">{{ recipe.display_name }}</a></h3>
+      <p class="muted">{{ recipe.expected_behavior or '-' }}</p>
+      <p>
+        <span class="label {{ recipe.recipe_type }}">{{ recipe.recipe_type }}</span>
+        <span class="label {{ recipe.optimizer_category|replace('/', '-') }}">{{ recipe.optimizer_category or '-' }}</span>
+        <span class="label {{ recipe.network_type_availability }}">{{ recipe.network_type_availability or '-' }}</span>
+        {% if not recipe.is_builtin %}<span class="label warning">custom</span>{% endif %}
+      </p>
+      <dl>
+        <dt>用途</dt><dd>{{ recipe.purpose_display_name or recipe.training_purpose_id or '-' }}</dd>
+        <dt>Optimizer</dt><dd>{{ recipe.optimizer_display_name or recipe.optimizer_definition_id or '-' }}</dd>
+        <dt>Network</dt><dd>{{ recipe.network_type_display_name or recipe.network_type_id or '-' }}</dd>
+        <dt>target steps</dt><dd>{{ recipe.target_steps_min }} / <strong>{{ recipe.target_steps_recommended }}</strong> / {{ recipe.target_steps_max }}</dd>
+      </dl>
+      <p class="actions compact-actions"><a class="button small-button" href="/jobs/new?mode=purpose">このRecipeでJob作成</a></p>
+    </article>
+    {% else %}
+    <p class="muted">該当するRecipeはありません。</p>
+    {% endfor %}
   </div>
 </section>
 {% endblock %}
