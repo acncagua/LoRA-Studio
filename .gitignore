@@ -13,6 +13,8 @@ datasets/*
 !datasets/.gitkeep
 logs/*.log
 logs/*.json
+logs/*.jsonl
+logs/e2e_*.py
 logs/embeddings/
 logs/machine_review/
 server*.log

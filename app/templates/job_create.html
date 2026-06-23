@@ -62,19 +62,66 @@
   <fieldset class="form-fieldset wide-field">
     <legend>Recipe v2選択</legend>
     <p class="muted">Phase 12.1では、用途から選ぶ / Optimizerから選ぶ / 既存Jobから派生 / 完全カスタムの入口を用意しています。Recipe v2を選ぶと、作成時点のRecipe / Optimizer / Network Type snapshotをJobに保存します。</p>
+    <script type="application/json" data-recipes-v2-json>{{ recipes_v2_json|tojson }}</script>
     <label>Job作成モード
-      <select name="job_creation_mode">
+      <select name="job_creation_mode" data-recipe-mode>
         <option value="purpose">用途から選ぶ</option>
         <option value="optimizer">Optimizerから選ぶ</option>
         <option value="derived">既存Jobから派生</option>
         <option value="custom">完全カスタム</option>
       </select>
     </label>
+    <div class="form-grid compact-grid" data-recipe-filters>
+      <label>Model Family
+        <select data-recipe-filter="model_family">
+          <option value="">すべて</option>
+          <option value="SDXL">SDXL</option>
+          <option value="SD15">SD15</option>
+        </select>
+      </label>
+      <label data-purpose-filter-field>Purpose
+        <select data-recipe-filter="training_purpose_id">
+          <option value="">すべて</option>
+          {% for purpose in training_purposes %}
+          <option value="{{ purpose.id }}">{{ purpose.display_name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label data-optimizer-filter-field>Optimizer
+        <select data-recipe-filter="optimizer_definition_id">
+          <option value="">すべて</option>
+          {% for optimizer in optimizers_v2 %}
+          <option value="{{ optimizer.id }}">{{ optimizer.display_name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label data-profile-filter-field>Optimizer Profile
+        <select data-recipe-filter="optimizer_profile_id">
+          <option value="">すべて</option>
+          {% for profile in optimizer_profiles_v2 %}
+          <option value="{{ profile.id }}" data-optimizer-id="{{ profile.optimizer_definition_id }}">{{ profile.optimizer_definition_id }} / {{ profile.model_family }} / {{ profile.profile_type }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label data-network-filter-field>Network Type
+        <select data-recipe-filter="network_type_id">
+          <option value="">すべて</option>
+          {% for network in network_types %}
+          <option value="{{ network.id }}">{{ network.display_name }} / {{ network.availability }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
     <label>Training Recipe v2
-      <select name="recipe_v2_id">
+      <select name="recipe_v2_id" data-recipe-select>
         <option value="">旧形式プリセットを使う</option>
         {% for recipe in recipes_v2 %}
-        <option value="{{ recipe.id }}">
+        <option value="{{ recipe.id }}"
+          data-model-family="{{ recipe.model_family }}"
+          data-purpose-id="{{ recipe.training_purpose_id or '' }}"
+          data-optimizer-id="{{ recipe.optimizer_definition_id or '' }}"
+          data-profile-id="{{ recipe.optimizer_profile_id or '' }}"
+          data-network-id="{{ recipe.network_type_id or '' }}">
           {{ recipe.display_name }} / {{ recipe.purpose_display_name or '-' }} / {{ recipe.optimizer_display_name or '-' }} / {{ recipe.recipe_type }}
           {% if recipe.optimizer_category in ['experimental', 'advanced'] or 'experimental' in (recipe.optimizer_category or '') or 'advanced' in (recipe.optimizer_category or '') %} [advanced]{% endif %}
           {% if recipe.network_type_availability != 'available' %} [{{ recipe.network_type_availability }}]{% endif %}
@@ -82,6 +129,10 @@
         {% endfor %}
       </select>
     </label>
+    <div class="notice compact" data-recipe-summary>
+      <strong>Compatibility Check: Recipe未選択</strong>
+      <p class="muted">用途またはOptimizer条件でRecipeを絞り込んでください。</p>
+    </div>
     <p class="muted">Recipe Library: <a href="/training-recipes">/training-recipes</a> / Optimizer Master: <a href="/optimizers">/optimizers</a></p>
   </fieldset>
   <label>学習プリセット（旧形式 / legacy）

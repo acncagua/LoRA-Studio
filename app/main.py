@@ -3075,6 +3075,9 @@ def job_new(request: Request, project_id: str = Query("")) -> HTMLResponse:
         """
     )
     optimizers_v2 = fetch_all("SELECT * FROM optimizer_definitions_v2 WHERE is_active = 1 ORDER BY display_name")
+    optimizer_profiles_v2 = fetch_all("SELECT * FROM optimizer_profiles_v2 WHERE is_active = 1 ORDER BY optimizer_definition_id, model_family, profile_type")
+    training_purposes = fetch_all("SELECT * FROM training_purposes WHERE is_active = 1 ORDER BY sort_order, display_name")
+    network_types = fetch_all("SELECT * FROM network_type_definitions WHERE is_active = 1 ORDER BY display_name")
     projects = fetch_all("SELECT * FROM lora_projects WHERE status != 'archived' ORDER BY updated_at DESC, id DESC")
     dataset_versions = fetch_all("SELECT * FROM dataset_versions ORDER BY dataset_id, version_no DESC")
     dataset_version_dicts = [dict(row) for row in dataset_versions]
@@ -3091,7 +3094,11 @@ def job_new(request: Request, project_id: str = Query("")) -> HTMLResponse:
         datasets=datasets,
         presets=presets,
         recipes_v2=recipes_v2,
+        recipes_v2_json=[{**dict(row), "params": json.loads(row["params_json"] or "{}")} for row in recipes_v2],
         optimizers_v2=optimizers_v2,
+        optimizer_profiles_v2=optimizer_profiles_v2,
+        training_purposes=training_purposes,
+        network_types=network_types,
         projects=projects,
         dataset_versions=dataset_versions,
         dataset_versions_json=dataset_version_dicts,
@@ -3342,9 +3349,15 @@ def dataset_image_count_for_estimate(dataset_id: int | None, dataset_version_id:
     return 0
 
 
-def step_estimate_for_selection(dataset_id: int | None, preset_id: str | None, params: dict[str, Any], dataset_version_id: int | None = None) -> dict[str, Any]:
+def step_estimate_for_selection(
+    dataset_id: int | None,
+    preset_id: str | None,
+    params: dict[str, Any],
+    dataset_version_id: int | None = None,
+    recipe_v2_id: str | None = None,
+) -> dict[str, Any]:
     preset = fetch_one("SELECT * FROM presets WHERE id = ?", (preset_id,)) if preset_id else None
-    target = step_target_context_for_selection(preset, params)
+    target = step_target_context_for_selection(preset, params, recipe_v2_id=recipe_v2_id)
     return estimate_steps(
         image_count=dataset_image_count_for_estimate(dataset_id, dataset_version_id),
         params=params,
@@ -3352,10 +3365,23 @@ def step_estimate_for_selection(dataset_id: int | None, preset_id: str | None, p
     )
 
 
-def step_target_context_for_selection(preset: Any | None, params: dict[str, Any]) -> dict[str, Any]:
+def step_target_context_for_selection(preset: Any | None, params: dict[str, Any], recipe_v2_id: str | None = None) -> dict[str, Any]:
     recipe = None
     profile = None
     definition = None
+    if recipe_v2_id:
+        recipe = fetch_one("SELECT * FROM training_recipes_v2 WHERE id = ?", (recipe_v2_id,))
+        if recipe is not None:
+            if recipe["optimizer_profile_id"]:
+                profile = fetch_one("SELECT * FROM optimizer_profiles_v2 WHERE id = ?", (recipe["optimizer_profile_id"],))
+            if recipe["optimizer_definition_id"]:
+                definition = fetch_one("SELECT * FROM optimizer_definitions_v2 WHERE id = ?", (recipe["optimizer_definition_id"],))
+            return target_config_from_catalog(
+                training_recipe=recipe,
+                optimizer_profile=profile,
+                optimizer_definition=definition,
+                preset=preset,
+            )
     if preset is not None:
         recipe_id = preset["training_recipe_id"] if "training_recipe_id" in preset.keys() else None
         profile_id = preset["optimizer_profile_id"] if "optimizer_profile_id" in preset.keys() else None
@@ -3397,13 +3423,14 @@ async def api_step_estimate(request: Request) -> JSONResponse:
     dataset_id = optional_int(str(payload.get("dataset_id") or ""))
     dataset_version_id = optional_int(str(payload.get("dataset_version_id") or ""))
     preset_id = str(payload.get("preset_id") or "")
+    recipe_v2_id = str(payload.get("recipe_v2_id") or "")
     params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
-    estimate = step_estimate_for_selection(dataset_id, preset_id, params, dataset_version_id)
+    estimate = step_estimate_for_selection(dataset_id, preset_id, params, dataset_version_id, recipe_v2_id=recipe_v2_id)
     target_steps = optional_int(str(payload.get("target_steps") or ""))
     suggestions = []
     if target_steps:
         preset = fetch_one("SELECT * FROM presets WHERE id = ?", (preset_id,))
-        target_context = step_target_context_for_selection(preset, params)
+        target_context = step_target_context_for_selection(preset, params, recipe_v2_id=recipe_v2_id)
         suggestions = suggest_target_steps(
             image_count=dataset_image_count_for_estimate(dataset_id, dataset_version_id),
             params=params,

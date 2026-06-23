@@ -143,9 +143,12 @@ function parseJsonScript(selector, root = document) {
 
 function stepEstimatorParams(form) {
   const presets = parseJsonScript("[data-step-presets-json]", form);
+  const recipes = parseJsonScript("[data-recipes-v2-json]", form);
+  const recipeId = form.querySelector("select[name='recipe_v2_id']")?.value || "";
+  const recipe = recipes.find((item) => item.id === recipeId) || null;
   const presetId = form.querySelector("select[name='preset_id']")?.value || "";
   const preset = presets.find((item) => item.id === presetId) || {};
-  const params = { ...(preset.params || {}) };
+  const params = { ...((recipe && recipe.params) || preset.params || {}) };
   [
     "repeats",
     "max_train_epochs",
@@ -174,6 +177,7 @@ async function refreshStepEstimate(form, withSuggestions = false) {
     dataset_id: form.querySelector("[name='dataset_id']")?.value || "",
     dataset_version_id: form.querySelector("[name='dataset_version_id']")?.value || "",
     preset_id: form.querySelector("[name='preset_id']")?.value || "",
+    recipe_v2_id: form.querySelector("[name='recipe_v2_id']")?.value || "",
     params: stepEstimatorParams(form),
     target_steps: panel.querySelector("[data-step-target]")?.value || "",
     strategy: panel.querySelector("[data-step-strategy]")?.value || "balanced",
@@ -313,9 +317,9 @@ function initStepEstimators() {
       }
     });
     form.addEventListener("change", (event) => {
-      if (event.target.matches("[name='dataset_id'], [name='dataset_version_id'], [name='preset_id']")) {
+      if (event.target.matches("[name='dataset_id'], [name='dataset_version_id'], [name='preset_id'], [name='recipe_v2_id']")) {
         const targetInput = form.querySelector("[data-step-target]");
-        if (targetInput && event.target.matches("[name='preset_id']")) {
+        if (targetInput && event.target.matches("[name='preset_id'], [name='recipe_v2_id']")) {
           targetInput.dataset.manualTarget = "false";
         }
         refreshStepEstimate(form);
@@ -326,6 +330,142 @@ function initStepEstimators() {
       event.target.dataset.manualTarget = "true";
     });
     refreshStepEstimate(form);
+  });
+}
+
+function recipeLabel(recipe) {
+  if (!recipe) {
+    return "Recipe未選択";
+  }
+  return recipe.display_name || recipe.name || recipe.id;
+}
+
+function recipeCompatibilityLines(recipe) {
+  if (!recipe) {
+    return ["Recipe v2を選ぶとBasic Params / Step Estimate / Compatibility Checkを確認できます。"];
+  }
+  const lines = [
+    `Model: ${recipe.model_family || "-"}`,
+    `Purpose: ${recipe.purpose_display_name || recipe.training_purpose_id || "-"}`,
+    `Optimizer: ${recipe.optimizer_display_name || recipe.optimizer_definition_id || "-"}`,
+    `Network: ${recipe.network_type_display_name || recipe.network_type_id || "-"}`,
+    `Target steps: ${recipe.target_steps_min ?? "-"} / ${recipe.target_steps_recommended ?? "-"} / ${recipe.target_steps_max ?? "-"}`,
+  ];
+  const warnings = [];
+  const category = String(recipe.optimizer_category || "");
+  if (category.includes("advanced") || category.includes("experimental")) {
+    warnings.push(`注意: ${category} optimizerです。`);
+  }
+  if (recipe.optimizer_lr_semantics && recipe.optimizer_lr_semantics !== "normal_lr") {
+    warnings.push(`LR意味: ${recipe.optimizer_lr_semantics}`);
+  }
+  if (recipe.network_type_availability && recipe.network_type_availability !== "available") {
+    warnings.push(`ERROR: Network Typeは${recipe.network_type_availability}です。Phase 12.1では実行できません。`);
+  }
+  if (recipe.risk_note) {
+    warnings.push(recipe.risk_note);
+  }
+  return [...lines, ...warnings];
+}
+
+function updateRecipeSummary(form) {
+  const recipes = parseJsonScript("[data-recipes-v2-json]", form);
+  const select = form.querySelector("[data-recipe-select]");
+  const summary = form.querySelector("[data-recipe-summary]");
+  if (!select || !summary) {
+    return;
+  }
+  const recipe = recipes.find((item) => item.id === select.value) || null;
+  const lines = recipeCompatibilityLines(recipe);
+  summary.innerHTML = "";
+  const title = document.createElement("strong");
+  title.textContent = `Compatibility Check: ${recipeLabel(recipe)}`;
+  summary.appendChild(title);
+  const list = document.createElement("ul");
+  lines.forEach((line) => {
+    const li = document.createElement("li");
+    li.textContent = line;
+    list.appendChild(li);
+  });
+  summary.appendChild(list);
+}
+
+function applyRecipeFilters(form) {
+  const mode = form.querySelector("[data-recipe-mode]")?.value || "purpose";
+  const recipeSelect = form.querySelector("[data-recipe-select]");
+  if (!recipeSelect) {
+    return;
+  }
+  const purposeField = form.querySelector("[data-purpose-filter-field]");
+  const optimizerField = form.querySelector("[data-optimizer-filter-field]");
+  const profileField = form.querySelector("[data-profile-filter-field]");
+  const networkField = form.querySelector("[data-network-filter-field]");
+  if (purposeField) purposeField.hidden = mode === "optimizer";
+  if (optimizerField) optimizerField.hidden = mode === "purpose";
+  if (profileField) profileField.hidden = mode !== "optimizer";
+  if (networkField) networkField.hidden = mode !== "optimizer";
+
+  const filters = {};
+  form.querySelectorAll("[data-recipe-filter]").forEach((filter) => {
+    const key = filter.getAttribute("data-recipe-filter");
+    if (key && filter.value) {
+      filters[key] = filter.value;
+    }
+  });
+  if (mode === "purpose") {
+    delete filters.optimizer_definition_id;
+    delete filters.optimizer_profile_id;
+    delete filters.network_type_id;
+  }
+  if (mode === "optimizer") {
+    delete filters.training_purpose_id;
+  }
+
+  let selectedVisible = false;
+  Array.from(recipeSelect.options).forEach((option) => {
+    if (!option.value) {
+      option.hidden = false;
+      option.disabled = false;
+      return;
+    }
+    const visible = Object.entries(filters).every(([key, value]) => {
+      const attr = {
+        model_family: "model-family",
+        training_purpose_id: "purpose-id",
+        optimizer_definition_id: "optimizer-id",
+        optimizer_profile_id: "profile-id",
+        network_type_id: "network-id",
+      }[key];
+      return !value || option.getAttribute(`data-${attr}`) === value;
+    });
+    option.hidden = !visible;
+    option.disabled = !visible;
+    if (visible && option.selected) {
+      selectedVisible = true;
+    }
+  });
+  if (!selectedVisible && recipeSelect.value) {
+    recipeSelect.value = "";
+  }
+  updateRecipeSummary(form);
+}
+
+function initRecipeSelectors() {
+  document.querySelectorAll("form").forEach((form) => {
+    if (!form.querySelector("[data-recipe-select]")) {
+      return;
+    }
+    applyRecipeFilters(form);
+    updateRecipeSummary(form);
+    form.addEventListener("change", (event) => {
+      if (event.target.matches("[data-recipe-mode], [data-recipe-filter]")) {
+        applyRecipeFilters(form);
+        refreshStepEstimate(form);
+      }
+      if (event.target.matches("[data-recipe-select]")) {
+        updateRecipeSummary(form);
+      }
+    });
   });
 }
 
@@ -2042,6 +2182,7 @@ document.addEventListener("DOMContentLoaded", clearTransientNoticeParams);
 document.addEventListener("DOMContentLoaded", restoreScrollAfterInlineRefresh);
 document.addEventListener("DOMContentLoaded", initProjectModeForms);
 document.addEventListener("DOMContentLoaded", initDatasetVersionFilters);
+document.addEventListener("DOMContentLoaded", initRecipeSelectors);
 document.addEventListener("DOMContentLoaded", initStepEstimators);
 document.addEventListener("DOMContentLoaded", initReviewAutomationSettings);
 document.addEventListener("DOMContentLoaded", initEmbeddingJobStatusPolling);
