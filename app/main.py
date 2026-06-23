@@ -73,8 +73,10 @@ from app.services.machine_review import (
 )
 from app.services.output_collector import collect_job_results
 from app.services.operation_monitor import (
+    completion_eta_label,
     embedding_monitor,
     machine_review_monitor,
+    operation_monitor,
     operation_timing_summary,
     review_session_monitor,
     running_training_monitor,
@@ -412,10 +414,138 @@ def running_machine_review_job(target_type: str, target_id: int) -> dict[str, An
     return dict(row) if row else None
 
 
-def job_operation_monitor(job: Any, review_preparation: dict[str, Any]) -> dict[str, Any] | None:
-    training = running_training_monitor(dict(job))
+def downstream_standard_comparison_estimate(job: Any, estimate: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not job or str(job["status"] or "") != "running":
+        return None
+    mode = str(job["post_training_review_mode"] or "")
+    if mode != "standard_auto" or not estimate:
+        return None
+    image_count = int(estimate.get("expected_total_images") or 0)
+    if image_count <= 0:
+        return None
+    generation_seconds = image_count * 30
+    import_seconds = max(60, image_count * 2)
+    embedding_seconds = max(120, image_count * 5)
+    machine_review_seconds = max(90, image_count * 4)
+    matrix_seconds = 60
+    estimated_seconds = generation_seconds + import_seconds + embedding_seconds + machine_review_seconds + matrix_seconds
+    return {
+        "label": "学習後の標準候補比較",
+        "image_count": image_count,
+        "candidate_epochs": estimate.get("candidate_epochs") or [],
+        "generation_seconds": generation_seconds,
+        "import_seconds": import_seconds,
+        "embedding_seconds": embedding_seconds,
+        "machine_review_seconds": machine_review_seconds,
+        "matrix_seconds": matrix_seconds,
+        "estimated_seconds": estimated_seconds,
+        "basis": "未開始のため、画像生成30秒/枚 + 取り込み/Embedding/機械補助レビュー/Matrixの概算です。開始後は各Pipelineの実測に切り替わります。",
+    }
+
+
+def active_candidate_comparison_group(job_id: int) -> dict[str, Any] | None:
+    row = fetch_one(
+        """
+        SELECT *
+        FROM candidate_comparison_groups
+        WHERE job_id = ?
+          AND status IN ('running', 'generating_images', 'embedding_images', 'machine_reviewing', 'building_matrix')
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (job_id,),
+    )
+    return dict(row) if row else None
+
+
+def candidate_comparison_live_generation(group: dict[str, Any]) -> dict[str, Any] | None:
+    try:
+        run_ids = [int(value) for value in json.loads(group.get("validation_run_ids_json") or "[]")]
+    except (TypeError, ValueError):
+        run_ids = []
+    if not run_ids:
+        return None
+    placeholders = ",".join("?" for _ in run_ids)
+    row = fetch_one(
+        f"""
+        SELECT *
+        FROM validation_generation_runs
+        WHERE validation_run_id IN ({placeholders})
+          AND status IN ('running', 'queued')
+        ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END, id
+        LIMIT 1
+        """,
+        tuple(run_ids),
+    )
+    return dict(row) if row else None
+
+
+def count_live_generated_files(output_dir: str | None) -> int:
+    if not output_dir:
+        return 0
+    root = Path(str(output_dir))
+    if not root.exists():
+        return 0
+    try:
+        return sum(1 for path in root.rglob("*") if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"})
+    except OSError:
+        return 0
+
+
+def candidate_comparison_operation_monitor(group: dict[str, Any]) -> dict[str, Any] | None:
+    status = str(group.get("status") or "")
+    if status not in {"running", "generating_images", "embedding_images", "machine_reviewing", "building_matrix"}:
+        return None
+    generation = candidate_comparison_live_generation(group)
+    generated_live = count_live_generated_files(generation.get("output_dir") if generation else None)
+    registered = int(group.get("registered_image_count") or 0)
+    embedding_ready = int(group.get("embedding_ready_count") or 0)
+    scored = int(group.get("machine_review_score_count") or 0)
+    current = max(generated_live, registered, embedding_ready, scored)
+    total = int(group.get("expected_total_images") or 0)
+    pid = generation.get("process_id") if generation else None
+    log_path = generation.get("log_path") if generation else ""
+    started_at = group.get("started_at") or (generation.get("started_at") if generation else None)
+    return operation_monitor(
+        operation_type="candidate_standard_comparison",
+        type_label="標準候補比較",
+        status=status,
+        stage=candidate_comparison_stage_label(status, generation),
+        started_at=started_at,
+        pid=pid,
+        return_code=generation.get("return_code") if generation else None,
+        progress_current=current,
+        progress_total=total,
+        log_path=log_path,
+        full_log_anchor="#candidate-standard-comparison",
+        status_url=f"/jobs/{group['job_id']}/candidate-comparisons/{group['id']}/status",
+        message="Standard Candidate Comparisonを実行中です。検証画像生成、Embedding、機械補助レビュー、横断Matrix作成まで順に進めます。",
+    )
+
+
+def candidate_comparison_stage_label(status: str, generation: dict[str, Any] | None) -> str:
+    if status == "generating_images":
+        if generation and generation.get("status") == "queued":
+            return "検証画像生成待機中"
+        return "検証画像生成中"
+    labels = {
+        "running": "実行中",
+        "embedding_images": "Embedding計算中",
+        "machine_reviewing": "機械補助レビュー中",
+        "building_matrix": "横断Matrix作成中",
+    }
+    return labels.get(status, status or "-")
+
+
+def job_operation_monitor(job: Any, review_preparation: dict[str, Any], candidate_standard_estimate_data: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    training = running_training_monitor(dict(job), downstream_standard_comparison_estimate(job, candidate_standard_estimate_data))
     if training:
         return training
+    comparison_group = active_candidate_comparison_group(int(job["id"]))
+    if comparison_group:
+        monitor = candidate_comparison_operation_monitor(comparison_group)
+        if monitor:
+            return monitor
     session = review_preparation.get("session") if review_preparation else None
     if session:
         monitor = review_session_monitor(dict(session))
@@ -3413,7 +3543,7 @@ def job_detail(
     candidate_standard_estimate_data = candidate_standard_estimate(job_id)
     candidate_standard_groups = latest_candidate_comparison_groups(job_id)
     review_prepare = normalize_review_prepare_message(review_prepare, review_preparation)
-    operation_monitor = job_operation_monitor(job, review_preparation)
+    operation_monitor = job_operation_monitor(job, review_preparation, candidate_standard_estimate_data)
     machine_score_map = score_map_for_samples(job_id)
     machine_epoch_summary = epoch_machine_summary(job_id)
     dataset_version = fetch_one("SELECT * FROM dataset_versions WHERE id = ?", (job["dataset_version_id"],)) if job["dataset_version_id"] else None
@@ -3510,14 +3640,29 @@ def job_log_tail_status(job_id: int) -> JSONResponse:
             log_size = 0
             log_updated_at = ""
     log_tail = read_log_tail(dict(job))
-    progress_current, progress_total, progress_label = training_progress_from_log(log_tail)
+    parse_tail = read_log_tail(dict(job), max_lines=500)
+    progress_current, progress_total, progress_label = training_progress_from_log(parse_tail)
+    if progress_total is None:
+        progress_total = job["expected_total_steps"] or job["expected_total_steps_at_creation"]
+    downstream_estimate = downstream_standard_comparison_estimate(job, candidate_standard_estimate(job_id))
     timing = operation_timing_summary(
         started_at=job["start_time"],
         progress_current=progress_current,
         progress_total=progress_total,
-        log_tail=log_tail,
+        log_tail=parse_tail,
         operation_type="training",
     )
+    if downstream_estimate:
+        downstream_estimate["estimated_label"] = format_seconds(downstream_estimate["estimated_seconds"])
+        for key in ("generation_seconds", "import_seconds", "embedding_seconds", "machine_review_seconds", "matrix_seconds"):
+            downstream_estimate[f"{key}_label"] = format_seconds(downstream_estimate.get(key))
+        if timing["estimated_remaining_seconds"] is not None:
+            downstream_estimate["pc_total_remaining_seconds"] = int(timing["estimated_remaining_seconds"]) + int(downstream_estimate["estimated_seconds"])
+            downstream_estimate["pc_total_remaining_label"] = format_seconds(downstream_estimate["pc_total_remaining_seconds"])
+            downstream_estimate["pc_total_completion_eta_label"] = completion_eta_label(downstream_estimate["pc_total_remaining_seconds"])
+        else:
+            downstream_estimate["pc_total_remaining_label"] = "-"
+            downstream_estimate["pc_total_completion_eta_label"] = "-"
     return JSONResponse(
         {
             "job_id": job_id,
@@ -3538,6 +3683,7 @@ def job_log_tail_status(job_id: int) -> JSONResponse:
             "estimated_total_label": timing["estimated_total_label"],
             "completion_eta_label": timing["completion_eta_label"],
             "rate_label": timing["rate_label"],
+            "followup_estimate": downstream_estimate or {},
             "log_size": log_size,
             "log_updated_at": log_updated_at,
         }
@@ -3654,6 +3800,37 @@ def job_candidate_standard_group_matrix_build(job_id: int, group_id: int) -> Red
     except Exception as exc:
         return RedirectResponse(f"/jobs/{job_id}?review_prepare_error={quote(str(exc))}#candidate-standard-comparison", status_code=303)
     return RedirectResponse(f"/jobs/{job_id}?review_prepare={quote('Standard Candidate Comparisonの横断Matrixを作成しました。')}#candidate-standard-comparison", status_code=303)
+
+
+@app.get("/jobs/{job_id}/candidate-comparisons/{group_id}/status")
+def job_candidate_standard_group_status(job_id: int, group_id: int) -> JSONResponse:
+    group = fetch_one("SELECT * FROM candidate_comparison_groups WHERE id = ? AND job_id = ?", (group_id, job_id))
+    if group is None:
+        raise HTTPException(status_code=404, detail="Candidate comparison group not found")
+    group_dict = dict(group)
+    monitor = candidate_comparison_operation_monitor(group_dict)
+    generation = candidate_comparison_live_generation(group_dict)
+    generated_live = count_live_generated_files(generation.get("output_dir") if generation else None)
+    payload = monitor or {
+        "status": group_dict.get("status"),
+        "current": max(
+            generated_live,
+            int(group_dict.get("registered_image_count") or 0),
+            int(group_dict.get("embedding_ready_count") or 0),
+            int(group_dict.get("machine_review_score_count") or 0),
+        ),
+        "total": int(group_dict.get("expected_total_images") or 0),
+        "progress_label": "",
+        "log_tail": "",
+        "log_warning": "",
+        "return_code": generation.get("return_code") if generation else None,
+        "process_id": generation.get("process_id") if generation else None,
+    }
+    if not payload.get("progress_label"):
+        current = payload.get("current") or payload.get("progress_current") or 0
+        total = payload.get("total") or payload.get("progress_total") or group_dict.get("expected_total_images") or 0
+        payload["progress_label"] = f"{current} / {total}" if total else str(current)
+    return JSONResponse(payload)
 
 
 @app.get("/jobs/{job_id}/candidate-comparisons/{group_id}/matrix", response_class=HTMLResponse)
@@ -4079,6 +4256,8 @@ def job_clone(job_id: int, name: str = Form("")) -> RedirectResponse:
     if source is None:
         raise HTTPException(status_code=404, detail="Job not found")
     clone_name = name.strip() or f"{source['name']}_clone"
+    params = json.loads(source["params_json"])
+    params["save_every_n_epochs"] = 1
     new_id = create_job(
         {
             "name": clone_name,
@@ -4088,7 +4267,7 @@ def job_clone(job_id: int, name: str = Form("")) -> RedirectResponse:
             "vae_path": source["vae_path"] or "",
             "output_name": f"{source['output_name']}_clone",
             "memo": f"Cloned from Job #{job_id}",
-            "params": json.loads(source["params_json"]),
+            "params": params,
             "parent_job_id": job_id,
             "project_id": source["project_id"] if "project_id" in source.keys() else None,
             "sample_prompt_template_id": source["sample_prompt_template_id"] or "",
@@ -6121,6 +6300,8 @@ def create_revised_draft(source_job_id: int) -> int:
     source = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (source_job_id,))
     if source is None:
         raise HTTPException(status_code=404, detail="Job not found")
+    params = json.loads(source["params_json"])
+    params["save_every_n_epochs"] = 1
     new_id = create_job(
         {
             "name": f"{source['name']} revised",
@@ -6130,7 +6311,7 @@ def create_revised_draft(source_job_id: int) -> int:
             "vae_path": source["vae_path"] or "",
             "output_name": f"{source['output_name']}_revised",
             "memo": f"派生ドラフト from ジョブ #{source_job_id}",
-            "params": json.loads(source["params_json"]),
+            "params": params,
             "parent_job_id": source_job_id,
             "project_id": source["project_id"] if "project_id" in source.keys() else None,
             "sample_prompt_template_id": source["sample_prompt_template_id"] or "",

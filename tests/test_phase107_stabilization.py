@@ -1765,14 +1765,33 @@ class Phase107StabilizationTests(IsolatedDbTest):
         from app.services.review_sessions import handle_post_training_review_automation
 
         job_id = self.add_review_ready_job(mode="standard_auto", max_auto_images=12, epochs=(1, 2, 3))
-        with mock.patch("app.services.review_sessions.start_review_preparation") as start_mock:
+        with mock.patch("app.services.review_sessions.start_candidate_standard_comparison") as start_mock:
             result = handle_post_training_review_automation(job_id)
 
-        session = fetch_one("SELECT * FROM review_sessions WHERE job_id = ?", (job_id,))
+        group = fetch_one("SELECT * FROM candidate_comparison_groups WHERE job_id = ?", (job_id,))
         self.assertEqual(result["status"], "waiting_confirmation")
-        self.assertEqual(session["review_plan_kind"], "standard_candidate_review")
-        self.assertGreater(session["expected_image_count"], 12)
+        self.assertIsNotNone(group)
+        assert group is not None
+        self.assertEqual(result["comparison_group_id"], group["id"])
+        self.assertEqual(group["expected_total_images"], 135)
+        self.assertGreater(group["expected_total_images"], 12)
         start_mock.assert_not_called()
+
+    def test_post_training_review_standard_auto_starts_candidate_comparison(self) -> None:
+        from app.services.review_sessions import handle_post_training_review_automation
+
+        job_id = self.add_review_ready_job(mode="standard_auto", max_auto_images=150, epochs=(1, 2, 3))
+        with mock.patch("app.services.review_sessions.start_candidate_standard_comparison", return_value={"group_id": 123, "status": "started"}) as start_mock:
+            result = handle_post_training_review_automation(job_id)
+
+        group = fetch_one("SELECT * FROM candidate_comparison_groups WHERE job_id = ?", (job_id,))
+        self.assertIsNotNone(group)
+        assert group is not None
+        self.assertEqual(result["status"], "auto_started")
+        self.assertEqual(result["comparison_group_id"], group["id"])
+        self.assertEqual(result["start_result"]["status"], "started")
+        self.assertEqual(group["expected_total_images"], 135)
+        start_mock.assert_called_once_with(group["id"])
 
     def test_machine_assist_no_clear_winner_summary(self) -> None:
         from app.services.review_sessions import review_machine_candidate_summary
@@ -2900,6 +2919,28 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertEqual(condition_count, 44)
         self.assertEqual(payload["skipped_existing_count"], 1)
         self.assertNotIn(f"ec{int(condition['id']):06d}", prompt_text)
+
+    def test_validation_generation_import_skips_duplicate_condition_hash(self) -> None:
+        from app.services.validation_generation import (
+            generation_output_dir,
+            import_generated_images,
+            output_stem,
+            prepare_validation_generation,
+        )
+
+        run_id, _ = self.create_validation_generation_fixture()
+        generation = prepare_validation_generation(run_id)
+        condition = dict(fetch_one("SELECT * FROM validation_expected_conditions WHERE validation_run_id = ? ORDER BY expected_order LIMIT 1", (run_id,)))
+        output_dir = generation_output_dir(run_id)
+        image_path = output_dir / f"{output_stem(run_id, condition)}.png"
+        self.make_png(image_path)
+        self.assertEqual(import_generated_images(run_id, int(generation["generation_id"])), 1)
+
+        duplicate_path = output_dir / f"copy_{condition['condition_hash'][:12]}.png"
+        self.make_png(duplicate_path)
+        self.assertEqual(import_generated_images(run_id, int(generation["generation_id"])), 0)
+        count = fetch_one("SELECT COUNT(*) AS count FROM validation_images WHERE validation_run_id = ?", (run_id,))
+        self.assertEqual(count["count"], 1)
 
     def test_sd_scripts_generation_stop_without_process_marks_stopped(self) -> None:
         from app.services.validation_generation import stop_validation_generation

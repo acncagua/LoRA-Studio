@@ -1914,6 +1914,17 @@ function initActiveOperationMonitorPolling() {
   const shortLog = panel.querySelector("[data-operation-log-short]");
   const fullLog = panel.querySelector("[data-operation-log-full]");
   const warning = panel.querySelector("[data-operation-log-warning]");
+  const followupFields = {
+    estimated: panel.querySelector('[data-followup-field="estimated"]'),
+    generation: panel.querySelector('[data-followup-field="generation"]'),
+    import: panel.querySelector('[data-followup-field="import"]'),
+    embedding: panel.querySelector('[data-followup-field="embedding"]'),
+    machineReview: panel.querySelector('[data-followup-field="machine_review"]'),
+    matrix: panel.querySelector('[data-followup-field="matrix"]'),
+    pcTotalRemaining: panel.querySelector('[data-followup-field="pc_total_remaining"]'),
+    pcTotalEta: panel.querySelector('[data-followup-field="pc_total_eta"]'),
+    basis: panel.querySelector('[data-followup-field="basis"]'),
+  };
 
   const applyPayload = (payload) => {
     if (statusText && payload.status !== undefined) statusText.textContent = payload.status || "-";
@@ -1955,6 +1966,18 @@ function initActiveOperationMonitorPolling() {
     if (warning && !payload.log_warning) {
       warning.hidden = true;
       warning.textContent = "";
+    }
+    if (payload.followup_estimate) {
+      const followup = payload.followup_estimate;
+      if (followupFields.estimated) followupFields.estimated.textContent = followup.estimated_label || "-";
+      if (followupFields.generation) followupFields.generation.textContent = followup.generation_seconds_label || "-";
+      if (followupFields.import) followupFields.import.textContent = followup.import_seconds_label || "-";
+      if (followupFields.embedding) followupFields.embedding.textContent = followup.embedding_seconds_label || "-";
+      if (followupFields.machineReview) followupFields.machineReview.textContent = followup.machine_review_seconds_label || "-";
+      if (followupFields.matrix) followupFields.matrix.textContent = followup.matrix_seconds_label || "-";
+      if (followupFields.pcTotalRemaining) followupFields.pcTotalRemaining.textContent = followup.pc_total_remaining_label || "-";
+      if (followupFields.pcTotalEta) followupFields.pcTotalEta.textContent = followup.pc_total_completion_eta_label || "-";
+      if (followupFields.basis) followupFields.basis.textContent = followup.basis || "";
     }
     const runningStatuses = new Set(["starting", "running", "generating_images", "importing_images", "embedding_images", "machine_reviewing", "building_matrix"]);
     const isRunning = runningStatuses.has(payload.status);

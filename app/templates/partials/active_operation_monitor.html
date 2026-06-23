@@ -29,6 +29,29 @@
     <div><span>処理速度</span><strong data-operation-field="rate">{{ operation_monitor.rate_label or '-' }}</strong></div>
     <div><span>ログ更新</span><strong data-operation-field="last_log_update">{{ operation_monitor.last_log_update_label or '-' }}</strong></div>
   </div>
+  {% if operation_monitor.followup_estimate %}
+  <div class="notice warning" data-operation-followup>
+    <h3>後続処理の概算</h3>
+    <p>
+      {{ operation_monitor.followup_estimate.label or '後続処理' }}:
+      {{ operation_monitor.followup_estimate.image_count or 0 }}枚
+      {% if operation_monitor.followup_estimate.candidate_epochs %}
+      / 候補epoch {{ operation_monitor.followup_estimate.candidate_epochs|join(', ') }}
+      {% endif %}
+    </p>
+    <div class="operation-monitor-grid compact-grid">
+      <div><span>後続処理のみ</span><strong data-followup-field="estimated">{{ operation_monitor.followup_estimate.estimated_label or '-' }}</strong></div>
+      <div><span>画像生成</span><strong data-followup-field="generation">{{ operation_monitor.followup_estimate.generation_seconds_label or '-' }}</strong></div>
+      <div><span>取り込み</span><strong data-followup-field="import">{{ operation_monitor.followup_estimate.import_seconds_label or '-' }}</strong></div>
+      <div><span>Embedding</span><strong data-followup-field="embedding">{{ operation_monitor.followup_estimate.embedding_seconds_label or '-' }}</strong></div>
+      <div><span>機械補助レビュー</span><strong data-followup-field="machine_review">{{ operation_monitor.followup_estimate.machine_review_seconds_label or '-' }}</strong></div>
+      <div><span>Matrix</span><strong data-followup-field="matrix">{{ operation_monitor.followup_estimate.matrix_seconds_label or '-' }}</strong></div>
+      <div><span>PC占有残り合計</span><strong data-followup-field="pc_total_remaining">{{ operation_monitor.followup_estimate.pc_total_remaining_label or '-' }}</strong></div>
+      <div><span>PC空き推定</span><strong data-followup-field="pc_total_eta">{{ operation_monitor.followup_estimate.pc_total_completion_eta_label or '-' }}</strong></div>
+    </div>
+    <p class="muted" data-followup-field="basis">{{ operation_monitor.followup_estimate.basis or '' }}</p>
+  </div>
+  {% endif %}
   {% if operation_monitor.log_warning %}
   <p class="notice warning" data-operation-log-warning>{{ operation_monitor.log_warning }}</p>
   {% else %}

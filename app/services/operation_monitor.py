@@ -117,6 +117,10 @@ def completion_eta_label(remaining_seconds: int | None, now: datetime | None = N
     return eta.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def completion_eta_from_seconds_label(total_remaining_seconds: int | None, now: datetime | None = None) -> str:
+    return completion_eta_label(total_remaining_seconds, now)
+
+
 def parse_training_tqdm_timing(log_tail: str) -> dict[str, Any]:
     matches = list(
         re.finditer(
@@ -223,13 +227,15 @@ def operation_monitor(
     full_log_anchor: str | None = None,
     status_url: str | None = None,
     message: str | None = None,
+    followup_estimate: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
     short_tail = tail_file(log_path, 12)
     full_tail = tail_file(log_path, 80)
+    parse_tail = tail_file(log_path, 500) if operation_type == "training" else full_tail
     log_updated_at = file_mtime(log_path)
     if operation_type == "training" and progress_current is None:
-        progress_current, progress_total, parsed_progress = training_progress_from_log(full_tail)
+        progress_current, progress_total, parsed_progress = training_progress_from_log(parse_tail)
     else:
         parsed_progress = ""
     if progress_current is not None and progress_total is not None:
@@ -240,12 +246,26 @@ def operation_monitor(
         started_at=started_at,
         progress_current=progress_current,
         progress_total=progress_total,
-        log_tail=full_tail,
+        log_tail=parse_tail,
         operation_type=operation_type,
         now=now,
     )
     if pid and status == "running" and not process_exists(int(pid)):
         stage = stage or "プロセス未確認"
+    if followup_estimate:
+        followup_seconds = int(followup_estimate.get("estimated_seconds") or 0)
+        current_remaining = timing["estimated_remaining_seconds"]
+        if current_remaining is not None:
+            followup_estimate["pc_total_remaining_seconds"] = int(current_remaining) + followup_seconds
+            followup_estimate["pc_total_remaining_label"] = format_duration(followup_estimate["pc_total_remaining_seconds"])
+            followup_estimate["pc_total_completion_eta_label"] = completion_eta_from_seconds_label(followup_estimate["pc_total_remaining_seconds"], now)
+        else:
+            followup_estimate.setdefault("pc_total_remaining_seconds", None)
+            followup_estimate.setdefault("pc_total_remaining_label", "-")
+            followup_estimate.setdefault("pc_total_completion_eta_label", "-")
+        followup_estimate["estimated_label"] = format_duration(followup_seconds)
+        for key in ("generation_seconds", "import_seconds", "embedding_seconds", "machine_review_seconds", "matrix_seconds"):
+            followup_estimate[f"{key}_label"] = format_duration(followup_estimate.get(key))
     return {
         "operation_type": operation_type,
         "type_label": type_label,
@@ -276,13 +296,15 @@ def operation_monitor(
         "status_url": status_url or "",
         "message": message or "",
         "is_running": status == "running",
+        "followup_estimate": followup_estimate or {},
     }
 
 
-def running_training_monitor(job: dict[str, Any]) -> dict[str, Any] | None:
+def running_training_monitor(job: dict[str, Any], followup_estimate: dict[str, Any] | None = None) -> dict[str, Any] | None:
     if job.get("status") != "running":
         return None
     log_path = str(Path(job["run_dir"]) / "logs" / "train.log")
+    expected_total = job.get("expected_total_steps") or job.get("expected_total_steps_at_creation")
     return operation_monitor(
         operation_type="training",
         type_label="学習ジョブ",
@@ -291,11 +313,13 @@ def running_training_monitor(job: dict[str, Any]) -> dict[str, Any] | None:
         started_at=job.get("start_time"),
         pid=job.get("process_id"),
         return_code=job.get("return_code"),
+        progress_total=int(expected_total) if expected_total else None,
         log_path=log_path,
         stop_action=f"/jobs/{job['id']}/stop",
         full_log_anchor="#technical-log",
         status_url=f"/jobs/{job['id']}/log-tail/status",
         message="処理は実行中です。ログ末尾で進行状況を確認できます。",
+        followup_estimate=followup_estimate,
     )
 
 

@@ -18,6 +18,7 @@ from app.services.image_store import verify_image_file
 from app.services.embedding_service import reconcile_stale_embedding_jobs
 from app.services.output_collector import image_size, safe_sha256_file
 from app.services.review_candidates import ensure_epoch_candidates
+from app.services.candidate_comparisons import ensure_candidate_standard_comparison_group, start_candidate_standard_comparison
 from app.services.training_runner import archive_existing_log, decode_log_bytes, elapsed_seconds, process_exists, sd_scripts_subprocess_env
 from app.services.validation_generation import IMAGE_SUFFIXES, common_gen_img_args, count_generated_images, sanitize_filename
 from app.services.validation_generation import matrix_display_controls, matrix_display_script, matrix_display_style, matrix_machine_score
@@ -1449,6 +1450,34 @@ def handle_post_training_review_automation(job_id: int) -> dict[str, Any]:
     if mode == "manual":
         mark_post_training_review(job_id, "manual", "Post-training Review Automationはmanualです。")
         return {"status": "manual", "message": "manual mode"}
+
+    if mode == "standard_auto":
+        group = ensure_candidate_standard_comparison_group(job_id)
+        group_status = str(group.get("status") or "")
+        group_id = int(group["id"])
+        if group_status == "completed":
+            mark_post_training_review(job_id, "completed", f"Standard Candidate Comparison group #{group_id} は完了済みです。")
+            return {"status": "completed", "comparison_group_id": group_id, "message": "existing completed comparison group"}
+        if group_status in {"running", "generating_images", "embedding_images", "machine_reviewing", "building_matrix"}:
+            mark_post_training_review(job_id, "auto_running", f"Standard Candidate Comparison group #{group_id} は実行中です。")
+            return {"status": "auto_running", "comparison_group_id": group_id, "message": "existing running comparison group"}
+
+        expected = int(group.get("expected_total_images") or 0)
+        if expected > int(settings_row["max_auto_images"]):
+            mark_post_training_review(
+                job_id,
+                "waiting_confirmation",
+                f"Standard Candidate Comparison group #{group_id} は {expected} 枚でmax_auto_imagesを超えたため自動開始しません。",
+            )
+            return {"status": "waiting_confirmation", "comparison_group_id": group_id, "message": "max images exceeded"}
+
+        if review_gpu_task_busy():
+            mark_post_training_review(job_id, "planned_waiting", f"GPUタスク実行中のためStandard Candidate Comparison group #{group_id} はplannedで待機します。")
+            return {"status": "planned_waiting", "comparison_group_id": group_id, "message": "gpu busy"}
+
+        start_result = start_candidate_standard_comparison(group_id)
+        mark_post_training_review(job_id, "auto_started", f"Standard Candidate Comparison group #{group_id} を開始しました。")
+        return {"status": "auto_started", "comparison_group_id": group_id, "start_result": start_result}
 
     include_neighbors = bool(settings_row["include_neighbor_epochs"]) or mode == "standard_auto"
     session = create_candidate_review_plan(

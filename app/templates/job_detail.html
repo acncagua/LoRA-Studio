@@ -413,7 +413,7 @@
       <dt>開始</dt><dd>{{ job.start_time or '-' }}</dd>
       <dt>終了</dt><dd>{{ job.end_time or '-' }}</dd>
       <dt>経過秒数</dt><dd>{{ job.elapsed_seconds if job.elapsed_seconds is not none else '-' }}</dd>
-      <dt>想定Step</dt><dd>{{ job.expected_total_steps if job.expected_total_steps is not none else '-' }}</dd>
+      <dt>想定Step</dt><dd>{{ job.expected_total_steps if job.expected_total_steps is not none else (job.expected_total_steps_at_creation if job.expected_total_steps_at_creation is not none else '-') }}</dd>
       <dt>実Step</dt><dd>{{ job.actual_max_step if job.actual_max_step is not none else '-' }}</dd>
       <dt>Step確認</dt><dd><span class="label {{ (job.step_consistency_label or 'unknown')|lower }}">{{ job.step_consistency_label or '-' }}</span> {{ job.step_consistency_message or '' }}</dd>
       <dt>作成時想定Step</dt><dd>{{ job.expected_total_steps_at_creation if job.expected_total_steps_at_creation is not none else '-' }}</dd>

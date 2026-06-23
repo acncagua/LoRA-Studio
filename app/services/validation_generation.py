@@ -1214,7 +1214,21 @@ def import_generated_images(run_id: int, generation_id: int | None = None) -> in
             continue
         detail["matched"] += 1
         duplicate_started = time.perf_counter()
-        existing = fetch_one("SELECT id FROM validation_images WHERE validation_run_id = ? AND image_path = ?", (run_id, str(path)))
+        existing = fetch_one(
+            """
+            SELECT id
+            FROM validation_images
+            WHERE validation_run_id = ?
+              AND image_role = 'individual'
+              AND (
+                  image_path = ?
+                  OR expected_condition_id = ?
+                  OR condition_hash = ?
+              )
+            LIMIT 1
+            """,
+            (run_id, str(path), condition["id"], condition["condition_hash"]),
+        )
         detail["duplicate_check_seconds"] += time.perf_counter() - duplicate_started
         if existing is not None:
             detail["duplicates"] += 1
