@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased - Phase 12.1
+## phase12.1 / v0.4.9-beta - 2026-06-23
 
 LoRA Studio Phase 12.1 adds the Training Recipe / Optimizer Master v2 foundation while keeping legacy presets and existing Jobs compatible.
 
