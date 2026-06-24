@@ -90,9 +90,16 @@ from app.services.review_candidates import ensure_epoch_candidates, regenerate_e
 from app.services.retry_signal import retry_signal_for_job, retry_signal_for_profile, retry_signal_for_project, retry_signal_for_review_session
 from app.services.optimizer_profile_validation import (
     profile_validation_badge,
-    record_mini_pilot_skipped,
     run_prepare_test,
     run_smoke_test,
+)
+from app.services.optimizer_mini_pilots import (
+    MINI_PILOT_PROFILES,
+    create_mini_pilot_run,
+    latest_mini_pilot_run,
+    mini_pilot_run_detail,
+    run_mini_pilot_items,
+    write_mini_pilot_report,
 )
 from app.services.optimizer_master_checks import (
     MASTER_CHECK_PROFILES,
@@ -3154,6 +3161,7 @@ def job_new(request: Request, project_id: str = Query(""), mode: str = Query("")
                op.profile_type AS optimizer_profile_type,
                op.description AS optimizer_profile_description,
                op.validation_status AS optimizer_profile_validation_status,
+               op.mini_pilot_status AS optimizer_profile_mini_pilot_status,
                op.last_tested_at AS optimizer_profile_last_tested_at,
                op.last_test_result_id AS optimizer_profile_last_test_result_id,
                nt.display_name AS network_type_display_name,
@@ -3287,6 +3295,7 @@ def training_recipes_library(
                od.category AS optimizer_category,
                od.lr_semantics AS optimizer_lr_semantics,
                op.validation_status AS optimizer_profile_validation_status,
+               op.mini_pilot_status AS optimizer_profile_mini_pilot_status,
                op.last_tested_at AS optimizer_profile_last_tested_at,
                nt.display_name AS network_type_display_name,
                nt.availability AS network_type_availability
@@ -3328,6 +3337,7 @@ def training_recipe_detail(request: Request, recipe_id: str) -> HTMLResponse:
                op.display_name AS optimizer_profile_display_name,
                op.profile_type AS optimizer_profile_type,
                op.validation_status AS optimizer_profile_validation_status,
+               op.mini_pilot_status AS optimizer_profile_mini_pilot_status,
                op.last_tested_at AS optimizer_profile_last_tested_at,
                nt.display_name AS network_type_display_name,
                nt.availability AS network_type_availability
@@ -3506,6 +3516,92 @@ def optimizer_master_check_run_image_smoke(item_id: int, base_model_path: str = 
     return RedirectResponse(f"/optimizer-master-checks?run_id={item['check_run_id']}&{urlencode(params)}", status_code=303)
 
 
+@app.get("/optimizer-mini-pilots", response_class=HTMLResponse)
+@app.get("/optimizers/mini-pilot", response_class=HTMLResponse)
+def optimizer_mini_pilots(request: Request, run_id: int | None = Query(None), message: str = Query(""), error: str = Query("")) -> HTMLResponse:
+    if run_id is None:
+        latest = latest_mini_pilot_run()
+        run_id = int(latest["id"]) if latest else None
+    detail = mini_pilot_run_detail(run_id) if run_id else {"run": None, "items": []}
+    runs = fetch_all("SELECT * FROM optimizer_mini_pilot_runs ORDER BY id DESC LIMIT 20")
+    profiles = fetch_all(
+        """
+        SELECT p.*, od.display_name AS optimizer_display_name
+        FROM optimizer_profiles_v2 p
+        LEFT JOIN optimizer_definitions_v2 od ON od.id = p.optimizer_definition_id
+        WHERE p.id IN ({})
+        ORDER BY od.smoke_test_priority, p.id
+        """.format(",".join("?" for _ in MINI_PILOT_PROFILES)),
+        tuple(MINI_PILOT_PROFILES),
+    )
+    datasets = fetch_all("SELECT id, name, image_count FROM datasets ORDER BY id DESC")
+    jobs = fetch_all("SELECT id, name, status, dataset_id, base_model_path FROM training_jobs WHERE deleted_at IS NULL ORDER BY id DESC LIMIT 50")
+    return render(
+        request,
+        "optimizer_mini_pilots.html",
+        run=detail["run"],
+        items=detail["items"],
+        runs=runs,
+        profiles=profiles,
+        datasets=datasets,
+        jobs=jobs,
+        default_base_model_path=str(settings.ROOT_DIR / "models"),
+        message=message,
+        error=error,
+        suggested_action=suggested_action,
+    )
+
+
+@app.post("/optimizer-mini-pilots")
+def optimizer_mini_pilot_create(
+    target_scope: str = Form("acceptance_minimum"),
+    profile_ids: list[str] = Form(default=[]),
+    dataset_id: str = Form(""),
+    base_model_path: str = Form(""),
+    source_job_id: str = Form(""),
+    provider: str = Form("default"),
+    steps: str = Form("300"),
+    fast_mode: str = Form(""),
+) -> RedirectResponse:
+    try:
+        selected = [item for item in profile_ids if item.strip()]
+        scope = target_scope if target_scope in {"all_smoke_ok", "selected_profiles", "single_profile", "acceptance_minimum"} else "acceptance_minimum"
+        run_id = create_mini_pilot_run(
+            scope,
+            selected,
+            dataset_id=int(dataset_id) if dataset_id.strip() else None,
+            base_model_path=base_model_path.strip() or None,
+            source_job_id=int(source_job_id) if source_job_id.strip() else None,
+            provider=provider.strip() or "default",
+            steps=int(steps or 300),
+            fast_mode=bool(fast_mode),
+        )
+        return RedirectResponse(f"/optimizer-mini-pilots?run_id={run_id}&message={quote('Mini Pilot Runを作成しました。')}", status_code=303)
+    except Exception as exc:
+        return RedirectResponse(f"/optimizer-mini-pilots?error={quote(str(exc))}", status_code=303)
+
+
+@app.post("/optimizer-mini-pilots/{run_id}/run")
+def optimizer_mini_pilot_run(
+    run_id: int,
+    steps: str = Form("300"),
+    fast_mode: str = Form(""),
+    profile_limit: str = Form(""),
+) -> RedirectResponse:
+    try:
+        limit = int(profile_limit) if profile_limit.strip() else None
+        result = run_mini_pilot_items(run_id, steps=int(steps or 300), fast_mode=bool(fast_mode), profile_limit=limit)
+        return RedirectResponse(f"/optimizer-mini-pilots?run_id={run_id}&message={quote('Mini Pilotを実行しました: ' + str(result['executed']) + '件')}", status_code=303)
+    except Exception as exc:
+        return RedirectResponse(f"/optimizer-mini-pilots?run_id={run_id}&error={quote(str(exc))}", status_code=303)
+
+
+@app.post("/optimizer-mini-pilots/{run_id}/report")
+def optimizer_mini_pilot_report(run_id: int) -> RedirectResponse:
+    paths = write_mini_pilot_report(run_id)
+    return RedirectResponse(f"/optimizer-mini-pilots?run_id={run_id}&message={quote('Mini Pilot Reportを出力しました: ' + paths['report_path'])}", status_code=303)
+
+
 @app.get("/optimizers/{optimizer_id}", response_class=HTMLResponse)
 def optimizer_detail(request: Request, optimizer_id: str, message: str = Query(""), error: str = Query("")) -> HTMLResponse:
     optimizer = fetch_one("SELECT * FROM optimizer_definitions_v2 WHERE id = ?", (optimizer_id,))
@@ -3518,7 +3614,8 @@ def optimizer_detail(request: Request, optimizer_id: str, message: str = Query("
     recipes = fetch_all(
         """
         SELECT r.*, p.display_name AS purpose_display_name, nt.display_name AS network_type_display_name,
-               op.validation_status AS optimizer_profile_validation_status
+               op.validation_status AS optimizer_profile_validation_status,
+               op.mini_pilot_status AS optimizer_profile_mini_pilot_status
         FROM training_recipes_v2 r
         LEFT JOIN training_purposes p ON p.id = r.training_purpose_id
         LEFT JOIN network_type_definitions nt ON nt.id = r.network_type_id
@@ -3596,10 +3693,31 @@ def optimizer_profile_mini_pilot(
     optimizer_id: str,
     profile_id: str,
     recipe_id: str = Form(""),
+    dataset_id: str = Form(""),
+    base_model_path: str = Form(""),
+    steps: str = Form("300"),
+    fast_mode: str = Form(""),
 ) -> RedirectResponse:
-    result = record_mini_pilot_skipped(profile_id, recipe_id=recipe_id.strip() or None)
-    params = {"message": f"Mini PilotはPhase 12.3ではスキップ記録のみ保存しました: result #{result['result_id']}"}
-    return RedirectResponse(f"/optimizers/{optimizer_id}?{urlencode(params)}", status_code=303)
+    try:
+        run_id = create_mini_pilot_run(
+            "single_profile",
+            [profile_id],
+            dataset_id=int(dataset_id) if dataset_id.strip() else None,
+            base_model_path=base_model_path.strip() or None,
+            steps=int(steps or 300),
+            fast_mode=bool(fast_mode),
+        )
+        if recipe_id.strip():
+            with connect() as conn:
+                conn.execute(
+                    "UPDATE optimizer_mini_pilot_items SET recipe_id = ? WHERE mini_pilot_run_id = ? AND optimizer_profile_id = ?",
+                    (recipe_id.strip(), run_id, profile_id),
+                )
+        params = {"message": f"Mini Pilot Runを作成しました: #{run_id}"}
+        return RedirectResponse(f"/optimizer-mini-pilots?run_id={run_id}&{urlencode(params)}", status_code=303)
+    except Exception as exc:
+        params = {"error": str(exc)}
+        return RedirectResponse(f"/optimizers/{optimizer_id}?{urlencode(params)}", status_code=303)
 
 
 @app.post("/jobs")

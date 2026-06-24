@@ -115,6 +115,14 @@
             <button type="submit" class="small-button">Run 2-step Smoke Test</button>
           </form>
           <form method="post" action="/optimizers/{{ optimizer.id }}/profiles/{{ item.id }}/mini-pilot" class="compact-form">
+            <p class="muted">Mini Pilotは短時間の実学習確認です。品質保証ではありません。</p>
+            <label>Dataset
+              <select name="dataset_id" required>
+                {% for dataset in datasets %}
+                <option value="{{ dataset.id }}">#{{ dataset.id }} {{ dataset.name }}</option>
+                {% endfor %}
+              </select>
+            </label>
             <label>Recipe
               <select name="recipe_id">
                 <option value="">Profileの先頭Recipe</option>
@@ -123,7 +131,10 @@
                 {% endfor %}
               </select>
             </label>
-            <button type="submit" class="small-button secondary">Run Mini Pilot</button>
+            <label>base model<input name="base_model_path" value="{{ default_base_model_path }}" required></label>
+            <label>steps<input name="steps" type="number" value="300" min="2"></label>
+            <label><input type="checkbox" name="fast_mode" value="1"> fast mode</label>
+            <button type="submit" class="small-button secondary">Mini Pilot Runを作成</button>
           </form>
         </td>
       </tr>

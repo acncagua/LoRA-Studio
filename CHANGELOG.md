@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased - Phase 12.3.1
+
+Phase 12.3.1 adds Practical Mini Pilot checks for Optimizer Profiles after Smoke OK.
+
+### 主な変更
+
+- `optimizer_mini_pilot_runs` / `optimizer_mini_pilot_items` を追加し、Optimizer Profileごとの短時間Mini Pilot結果を保存できるようにしました。
+- `optimizer_profiles_v2` に `mini_pilot_status` / `last_mini_pilot_at` / `last_mini_pilot_result_id` を追加しました。
+- `/optimizer-mini-pilots` を追加し、対象Profile選択、実行前見積もり、順次実行、Run履歴、Item結果、Report出力を確認できるようにしました。
+- Optimizer詳細画面のMini Pilot導線を、スキップ記録ではなくMini Pilot Run作成へ接続しました。
+- Mini Pilot用Jobでは、短時間step、sample出力、safetensors出力を使い、loss summary、artifact check、sample画像数を保存します。
+- Mini Pilot Reportを `reports/optimizer_mini_pilots/*.md` と `logs/*.json` に出力できるようにしました。
+
+### 注意点
+
+- Mini Pilot OKは品質保証ではありません。Smoke OKより一段進んだ軽量実用確認です。
+- Machine Review / Mini Validationは初期版では結果枠を用意し、重い自動評価は明示実行の対象として扱います。
+- DAdaptLionなどExperimental ProfileはMini Pilot OKでも実験扱いを維持します。
+
 ## phase12.3 / v0.5.2-beta - 2026-06-24
 
 Phase 12.3 adds an Optimizer Profile Validation / Smoke Test foundation so Recipe v2 entries can show whether their optimizer profile has been prepared or smoke-tested against sd-scripts.

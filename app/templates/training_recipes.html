@@ -79,6 +79,7 @@
         <span class="label {{ recipe.optimizer_category|replace('/', '-') }}">{{ recipe.optimizer_category or '-' }}</span>
         <span class="label {{ recipe.network_type_availability }}">{{ recipe.network_type_availability or '-' }}</span>
         <span class="label {{ 'ok' if recipe.optimizer_profile_validation_status in ['smoke_ok', 'mini_pilot_ok'] else ('error' if recipe.optimizer_profile_validation_status == 'smoke_failed' else 'warning') }}">{{ recipe.optimizer_profile_validation_status or 'untested' }}</span>
+        <span class="label {{ 'ok' if recipe.optimizer_profile_mini_pilot_status == 'mini_pilot_ok' else ('error' if recipe.optimizer_profile_mini_pilot_status == 'mini_pilot_failed' else 'warning') }}">{{ recipe.optimizer_profile_mini_pilot_status or 'mini_pilot_untested' }}</span>
         {% if not recipe.is_builtin %}<span class="label warning">custom</span>{% endif %}
       </p>
       <dl>
@@ -86,6 +87,7 @@
         <dt>Optimizer</dt><dd>{{ recipe.optimizer_display_name or recipe.optimizer_definition_id or '-' }}</dd>
         <dt>Network</dt><dd>{{ recipe.network_type_display_name or recipe.network_type_id or '-' }}</dd>
         <dt>Profile検証</dt><dd>{{ recipe.optimizer_profile_validation_status or 'untested' }}</dd>
+        <dt>Mini Pilot</dt><dd>{{ recipe.optimizer_profile_mini_pilot_status or 'untested' }}</dd>
         <dt>target steps</dt><dd>{{ recipe.target_steps_min }} / <strong>{{ recipe.target_steps_recommended }}</strong> / {{ recipe.target_steps_max }}</dd>
       </dl>
       <p class="actions compact-actions"><a class="button small-button" href="/jobs/new?mode=purpose">このRecipeでJob作成</a></p>

@@ -22,7 +22,7 @@ than training itself.
 ## Status
 
 Current release: v0.5.2-beta
-Development phase: Phase 12.3
+Development phase: Phase 12.3.1
 
 The core workflow is operational and
 actively used for local LoRA production,
@@ -58,6 +58,28 @@ for the entire LoRA lifecycle.
 - Machine Review Assist
 - Storage Cleanup Support
 
+## Phase 12.3.1: Practical Mini Pilot
+
+Phase 12.3.1 adds a Practical Mini Pilot layer on top of the Phase 12.3
+Optimizer Smoke Matrix.
+
+Smoke Test remains a startup check. Mini Pilot is a short practical training
+run, usually 100-300 steps, used to catch obvious optimizer problems before a
+full 3000-5000 step training run.
+
+Mini Pilot records:
+
+- short training Job and log path
+- loss summary, including NaN / Inf detection
+- LoRA artifact status and safetensors readability
+- sample image count and image smoke status
+- optional Machine Review / mini validation placeholders
+- failure category and suggested next action
+
+Mini Pilot OK is still not a quality guarantee. It means the profile is a
+reasonable candidate for real project evaluation. Candidate Review and Weight
+Calibration remain the final evaluation paths.
+
 ## Phase 12.3: Optimizer Profile Validation
 
 Phase 12.3 adds a validation layer for Optimizer Profiles and Recipe v2 entries.
@@ -80,7 +102,7 @@ Optimizer detail pages now provide:
 
 - Prepare Test Job: generates `command_argv.json`, dataset config, and sample prompts without running training.
 - Run 2-step Smoke Test: creates a temporary low-dim Job and runs only two training steps.
-- Run Mini Pilot: reserved for longer explicit validation; Phase 12.3 records the action foundation.
+- Run Mini Pilot: creates a practical short-run validation plan and can run it explicitly.
 - View Last Test Result: shows the latest status, return code, command path, and log path.
 
 Smoke Test is a startup check, not a quality evaluation.

@@ -17,6 +17,7 @@
     <div><span>Optimizer</span><strong>{{ recipe.optimizer_display_name or recipe.optimizer_definition_id or '-' }}</strong></div>
     <div><span>Profile</span><strong>{{ recipe.optimizer_profile_display_name or recipe.optimizer_profile_id or '-' }}</strong></div>
     <div><span>Profile検証</span><strong>{{ recipe.optimizer_profile_validation_status or 'untested' }}</strong></div>
+    <div><span>Mini Pilot</span><strong>{{ recipe.optimizer_profile_mini_pilot_status or 'untested' }}</strong></div>
     <div><span>Network</span><strong>{{ recipe.network_type_display_name or recipe.network_type_id or '-' }}</strong></div>
     <div><span>type</span><strong>{{ recipe.recipe_type }}</strong></div>
     <div><span>target steps</span><strong>{{ recipe.target_steps_min }} / {{ recipe.target_steps_recommended }} / {{ recipe.target_steps_max }}</strong></div>
@@ -26,6 +27,9 @@
   {% if recipe.card_subtitle %}<p class="muted">{{ recipe.card_subtitle }}</p>{% endif %}
   {% if recipe.optimizer_profile_validation_status not in ['smoke_ok', 'mini_pilot_ok'] %}
   <p class="notice warning">このOptimizer ProfileはSmoke OKではありません。Optimizer詳細からPrepare / 2-step Smoke Testを実行できます。</p>
+  {% endif %}
+  {% if recipe.optimizer_profile_mini_pilot_status not in ['mini_pilot_ok'] %}
+  <p class="notice warning">このOptimizer ProfileはMini Pilot未確認または未通過です。実用学習前にOptimizer Mini Pilotで短時間確認できます。</p>
   {% endif %}
   {% if recipe.risk_note %}<p class="warning">{{ recipe.risk_note }}</p>{% endif %}
 </section>

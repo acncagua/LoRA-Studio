@@ -4,6 +4,7 @@
   <div class="actions compact-actions">
     <a class="button" href="/jobs/new?mode=optimizer">OptimizerからJob作成</a>
     <a class="button secondary" href="/optimizer-master-checks">Master Check</a>
+    <a class="button secondary" href="/optimizer-mini-pilots">Mini Pilot</a>
     <a class="button secondary" href="/training-recipes">Recipe Library</a>
   </div>
 </header>
@@ -54,7 +55,10 @@
           <td><a href="/optimizers/{{ item.optimizer_definition_id }}">{{ item.optimizer_display_name }}</a></td>
           <td>{{ item.model_family }}</td>
           <td><span class="label {{ item.profile_type }}">{{ item.profile_type }}</span></td>
-          <td><span class="label {{ 'ok' if item.validation_status in ['smoke_ok', 'mini_pilot_ok'] else ('error' if item.validation_status == 'smoke_failed' else 'warning') }}">{{ item.validation_status or 'untested' }}</span></td>
+          <td>
+            <span class="label {{ 'ok' if item.validation_status in ['smoke_ok', 'mini_pilot_ok'] else ('error' if item.validation_status in ['smoke_failed','dependency_missing'] else 'warning') }}">{{ item.validation_status or 'untested' }}</span>
+            <br><span class="label {{ 'ok' if item.mini_pilot_status == 'mini_pilot_ok' else ('error' if item.mini_pilot_status == 'mini_pilot_failed' else 'warning') }}">{{ item.mini_pilot_status or 'untested' }}</span>
+          </td>
           <td>{{ item.default_learning_rate if item.default_learning_rate is not none else '-' }} / {{ item.default_unet_lr if item.default_unet_lr is not none else '-' }} / {{ item.default_text_encoder_lr if item.default_text_encoder_lr is not none else '-' }}</td>
           <td>{{ item.target_steps_min }} / <strong>{{ item.target_steps_recommended }}</strong> / {{ item.target_steps_max }}</td>
           <td>{{ item.risk_note or '-' }}</td>

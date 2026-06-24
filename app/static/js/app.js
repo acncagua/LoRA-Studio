@@ -452,6 +452,7 @@ function wizardCompatibility(form, recipe, params, rawText = "") {
       notes.push(recipe.risk_note);
     }
     const validationStatus = recipe.optimizer_profile_validation_status || "untested";
+    const miniPilotStatus = recipe.optimizer_profile_mini_pilot_status || "untested";
     if (validationStatus === "untested") {
       warnings.push("Optimizer ProfileはSmoke Test未検証です。AdamW8bit以外ではOptimizer詳細からSmoke Testを実行してから使うことを推奨します。");
     } else if (validationStatus === "prepare_ok") {
@@ -462,6 +463,15 @@ function wizardCompatibility(form, recipe, params, rawText = "") {
       warnings.push("Optimizer Profileはdisabled扱いです。通常運用では選択しないでください。");
     } else if (validationStatus === "smoke_ok" || validationStatus === "mini_pilot_ok") {
       notes.push(`Optimizer Profile validation: ${validationStatus}`);
+    }
+    if (miniPilotStatus === "untested") {
+      warnings.push("Optimizer ProfileはSmoke OKでもMini Pilot未確認です。実用学習では挙動が未確認です。");
+    } else if (miniPilotStatus === "mini_pilot_failed") {
+      warnings.push("Optimizer ProfileはMini Pilotで失敗しています。通常選択は推奨されません。");
+    } else if (miniPilotStatus === "mini_pilot_warning") {
+      warnings.push("Optimizer ProfileはMini Pilotで警告があります。ログとartifact確認結果を見てください。");
+    } else if (miniPilotStatus === "mini_pilot_ok") {
+      notes.push("Mini Pilot OK: 短時間実学習の起動・artifact確認を通過しています。");
     }
     const category = String(recipe.optimizer_category || "");
     if (category.includes("advanced") || category.includes("experimental")) {
@@ -666,13 +676,16 @@ function recipePurposeGroup(recipe) {
 }
 
 function recipeValidationBadge(recipe) {
-  const status = recipe?.optimizer_profile_validation_status || "untested";
+  const miniStatus = recipe?.optimizer_profile_mini_pilot_status || "untested";
+  const status = miniStatus !== "untested" ? miniStatus : (recipe?.optimizer_profile_validation_status || "untested");
   const map = {
     untested: { text: "Untested", klass: "warning" },
     prepare_ok: { text: "Prepare OK", klass: "ok" },
     smoke_ok: { text: "Smoke OK", klass: "ok" },
     smoke_failed: { text: "Failed", klass: "error" },
     mini_pilot_ok: { text: "Mini Pilot OK", klass: "ok" },
+    mini_pilot_warning: { text: "Mini Pilot Warning", klass: "warning" },
+    mini_pilot_failed: { text: "Mini Pilot Failed", klass: "error" },
     disabled: { text: "Disabled", klass: "error" },
   };
   return map[status] || { text: status, klass: "warning" };

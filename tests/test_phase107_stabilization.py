@@ -2788,6 +2788,55 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertIn("adamw8bit_sdxl_balanced", body)
         self.assertIn("Run Prepare Check", body)
 
+    def test_phase1231_optimizer_mini_pilot_run_and_report_are_saved(self) -> None:
+        from app.main import optimizer_mini_pilots
+        from app.services.optimizer_mini_pilots import create_mini_pilot_run, mini_pilot_run_detail, write_mini_pilot_report
+
+        _project_id, dataset_id, _version_id = self.create_project_fixture()
+        run_id = create_mini_pilot_run(
+            "selected_profiles",
+            ["adamw8bit_sdxl_balanced"],
+            dataset_id=dataset_id,
+            base_model_path="D:/models/base.safetensors",
+            steps=300,
+        )
+        detail = mini_pilot_run_detail(run_id)
+        self.assertEqual(detail["run"]["total_count"], 1)
+        self.assertEqual(detail["items"][0]["optimizer_profile_id"], "adamw8bit_sdxl_balanced")
+        paths = write_mini_pilot_report(run_id)
+        self.assertTrue(Path(paths["report_path"]).exists())
+        self.assertTrue(Path(paths["json_report_path"]).exists())
+
+        body = optimizer_mini_pilots(request=None, run_id=run_id).body.decode("utf-8")
+        self.assertIn("Optimizer Practical Mini Pilot", body)
+        self.assertIn("adamw8bit_sdxl_balanced", body)
+        self.assertIn("Run Mini Pilot", body)
+
+    def test_phase1231_mini_pilot_result_updates_profile_badge(self) -> None:
+        from app.services.optimizer_profile_validation import profile_validation_badge, record_profile_test_result
+
+        result_id = record_profile_test_result(
+            "adamw8bit_sdxl_balanced",
+            recipe_id="sdxl_character_face_adamw8bit_balanced",
+            test_type="mini_pilot",
+            status="ok",
+            test_job_id=321,
+            return_code=0,
+            elapsed_seconds=12,
+        )
+        profile = fetch_one(
+            """
+            SELECT validation_status, mini_pilot_status, last_mini_pilot_result_id
+            FROM optimizer_profiles_v2 WHERE id = ?
+            """,
+            ("adamw8bit_sdxl_balanced",),
+        )
+        self.assertEqual(profile["validation_status"], "mini_pilot_ok")
+        self.assertEqual(profile["mini_pilot_status"], "mini_pilot_ok")
+        self.assertEqual(profile["last_mini_pilot_result_id"], result_id)
+        badge = profile_validation_badge(profile)
+        self.assertEqual(badge["text"], "Mini Pilot OK")
+
     def test_phase121_recipe_v2_job_creation_saves_snapshots(self) -> None:
         from app.db import create_job
 

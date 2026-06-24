@@ -26,6 +26,9 @@ SMOKE_TARGET_PROFILES = {
 
 def profile_validation_badge(profile: Any | None) -> dict[str, str]:
     status = (profile["validation_status"] if profile and "validation_status" in profile.keys() else None) or "untested"
+    mini_status = (profile["mini_pilot_status"] if profile and "mini_pilot_status" in profile.keys() else None) or "untested"
+    if mini_status in {"mini_pilot_ok", "mini_pilot_warning", "mini_pilot_failed"}:
+        status = mini_status
     labels = {
         "untested": ("Untested", "warning"),
         "prepare_ok": ("Prepare OK", "ok"),
@@ -33,6 +36,8 @@ def profile_validation_badge(profile: Any | None) -> dict[str, str]:
         "smoke_failed": ("Failed", "error"),
         "dependency_missing": ("Dependency Missing", "error"),
         "mini_pilot_ok": ("Mini Pilot OK", "ok"),
+        "mini_pilot_warning": ("Mini Pilot Warning", "warning"),
+        "mini_pilot_failed": ("Mini Pilot Failed", "error"),
         "disabled": ("Disabled", "error"),
     }
     text, klass = labels.get(status, (status, "warning"))
@@ -176,16 +181,37 @@ def record_profile_test_result(
             ("smoke", "ok"): "smoke_ok",
             ("smoke", "failed"): "smoke_failed",
             ("mini_pilot", "ok"): "mini_pilot_ok",
+            ("mini_pilot", "warning"): None,
+            ("mini_pilot", "failed"): None,
             ("mini_pilot", "skipped"): None,
         }.get((test_type, status), "smoke_failed" if status == "failed" else "untested")
+        mini_profile_status = {
+            ("mini_pilot", "ok"): "mini_pilot_ok",
+            ("mini_pilot", "warning"): "mini_pilot_warning",
+            ("mini_pilot", "failed"): "mini_pilot_failed",
+        }.get((test_type, status))
         conn.execute(
             """
             UPDATE optimizer_profiles_v2
             SET validation_status = COALESCE(?, validation_status),
-                last_tested_at = ?, last_test_result_id = ?, updated_at = ?
+                last_tested_at = ?, last_test_result_id = ?,
+                mini_pilot_status = COALESCE(?, mini_pilot_status),
+                last_mini_pilot_at = CASE WHEN ? IS NOT NULL THEN ? ELSE last_mini_pilot_at END,
+                last_mini_pilot_result_id = COALESCE(?, last_mini_pilot_result_id),
+                updated_at = ?
             WHERE id = ?
             """,
-            (profile_status, now, result_id, now, optimizer_profile_id),
+            (
+                profile_status,
+                now,
+                result_id,
+                mini_profile_status,
+                mini_profile_status,
+                now,
+                result_id if mini_profile_status else None,
+                now,
+                optimizer_profile_id,
+            ),
         )
         if optimizer_definition_id:
             conn.execute(

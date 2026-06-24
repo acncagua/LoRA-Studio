@@ -1,0 +1,151 @@
+{% extends "base.html" %}{% block content %}
+<nav class="breadcrumbs"><a href="/optimizers">Optimizer Master</a><span>Mini Pilot</span></nav>
+<header class="page-head">
+  <h1>Optimizer Practical Mini Pilot</h1>
+  <div class="actions compact-actions">
+    <a class="button secondary" href="/optimizers">Optimizer Masterへ戻る</a>
+    <a class="button secondary" href="/optimizer-master-checks">Smoke Matrix</a>
+    <a class="button secondary" href="/training-recipes">Recipe Library</a>
+  </div>
+</header>
+{% if message %}<p class="notice">{{ message }}</p>{% endif %}
+{% if error %}<p class="notice warning">{{ error }}</p>{% endif %}
+
+<section class="notice">
+  <h2>この画面の目的</h2>
+  <p>Smoke OKのOptimizer Profileを短時間だけ実学習し、loss安定性、LoRA artifact、sample画像の最低限の破綻有無を確認します。</p>
+  <p class="warning">Mini Pilot OKは品質保証ではありません。実用候補として次に進めるかを見る軽量確認です。本判断はCandidate Review / Weight Calibrationで行います。</p>
+</section>
+
+<section class="panel-grid">
+  <div>
+    <h2>Mini Pilot Runを作成</h2>
+    <form method="post" action="/optimizer-mini-pilots" class="stack-form">
+      <label>対象
+        <select name="target_scope">
+          <option value="acceptance_minimum">Acceptance最低対象</option>
+          <option value="all_smoke_ok">Built-in対象profileすべて</option>
+          <option value="selected_profiles">選択したprofile</option>
+        </select>
+      </label>
+      <div class="checkbox-grid">
+        {% for profile in profiles %}
+        <label><input type="checkbox" name="profile_ids" value="{{ profile.id }}"> {{ profile.display_name }} <span class="muted">({{ profile.id }})</span></label>
+        {% endfor %}
+      </div>
+      <label>Source Job（任意。Dataset/base modelを引き継ぎ）
+        <select name="source_job_id">
+          <option value="">指定しない</option>
+          {% for job in jobs %}
+          <option value="{{ job.id }}">#{{ job.id }} {{ job.name }} / {{ job.status }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Dataset
+        <select name="dataset_id">
+          <option value="">Source Jobから取得</option>
+          {% for dataset in datasets %}
+          <option value="{{ dataset.id }}">#{{ dataset.id }} {{ dataset.name }} ({{ dataset.image_count or 0 }})</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>base model<input name="base_model_path" value="{{ default_base_model_path }}"></label>
+      <label>steps<input name="steps" type="number" value="300" min="2"></label>
+      <label><input type="checkbox" name="fast_mode" value="1"> fast mode（100step / dim16）</label>
+      <button type="submit">Mini Pilot Runを作成</button>
+    </form>
+  </div>
+  <div>
+    <h2>実行操作</h2>
+    {% if run %}
+    <form method="post" action="/optimizer-mini-pilots/{{ run.id }}/run" class="stack-form">
+      <p>Run #{{ run.id }} を順次実行します。同時実行は避け、GPUが空いている時に実行してください。</p>
+      <label>steps<input name="steps" type="number" value="300" min="2"></label>
+      <label>実行件数制限<input name="profile_limit" placeholder="空なら未完了を全件"></label>
+      <label><input type="checkbox" name="fast_mode" value="1"> fast mode（100step / dim16）</label>
+      <button type="submit">Run Mini Pilot</button>
+    </form>
+    <form method="post" action="/optimizer-mini-pilots/{{ run.id }}/report">
+      <button type="submit" class="secondary">View / Export Report</button>
+    </form>
+    {% else %}
+    <p class="muted">まずMini Pilot Runを作成してください。</p>
+    {% endif %}
+  </div>
+</section>
+
+<section>
+  <h2>Run履歴</h2>
+  <table class="wide-table compact-table">
+    <thead><tr><th>ID</th><th>状態</th><th>対象</th><th>total</th><th>OK</th><th>warning</th><th>failed</th><th>report</th></tr></thead>
+    <tbody>
+      {% for item in runs %}
+      <tr>
+        <td><a href="/optimizer-mini-pilots?run_id={{ item.id }}">#{{ item.id }}</a></td>
+        <td><span class="label {{ 'ok' if item.status == 'completed' else ('error' if item.status == 'failed' else 'warning') }}">{{ item.status }}</span></td>
+        <td>{{ item.target_scope or '-' }}</td>
+        <td>{{ item.total_count or 0 }}</td>
+        <td>{{ item.mini_pilot_ok_count or 0 }}</td>
+        <td>{{ item.warning_count or 0 }}</td>
+        <td>{{ item.failed_count or 0 }}</td>
+        <td>{{ item.report_path or '-' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="muted">Run履歴はまだありません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% if run %}
+<section>
+  <h2>Mini Pilot #{{ run.id }}</h2>
+  <div class="summary-grid">
+    <div><span>status</span><strong>{{ run.status }}</strong></div>
+    <div><span>dataset</span><strong>{{ run.dataset_id or '-' }}</strong></div>
+    <div><span>total</span><strong>{{ run.total_count or 0 }}</strong></div>
+    <div><span>OK</span><strong>{{ run.mini_pilot_ok_count or 0 }}</strong></div>
+    <div><span>warning</span><strong>{{ run.warning_count or 0 }}</strong></div>
+    <div><span>failed</span><strong>{{ run.failed_count or 0 }}</strong></div>
+  </div>
+  <p class="muted">Report: {{ run.report_path or '-' }} / JSON: {{ run.json_report_path or run.log_path or '-' }}</p>
+  <table class="wide-table compact-table">
+    <thead>
+      <tr>
+        <th>Profile</th><th>Recipe</th><th>状態</th><th>Job</th><th>loss</th><th>artifact</th><th>images</th><th>Machine Review</th><th>Failure</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+      <tr>
+        <td><strong>{{ item.profile_display_name or item.optimizer_profile_id }}</strong><br><code>{{ item.optimizer_profile_id }}</code></td>
+        <td>{{ item.recipe_short_label or item.recipe_display_name or item.recipe_id or '-' }}</td>
+        <td><span class="label {{ 'ok' if item.status == 'mini_pilot_ok' else ('error' if item.status == 'failed' else 'warning') }}">{{ item.status }}</span></td>
+        <td>{% if item.test_job_id %}<a href="/jobs/{{ item.test_job_id }}">#{{ item.test_job_id }}</a>{% else %}-{% endif %}</td>
+        <td>
+          {{ item.loss_status or '-' }}
+          {% if item.final_loss is not none %}<br><small>final {{ item.final_loss }}</small>{% endif %}
+          {% if item.nan_loss_count or item.inf_loss_count %}<br><small>NaN {{ item.nan_loss_count or 0 }} / Inf {{ item.inf_loss_count or 0 }}</small>{% endif %}
+        </td>
+        <td>
+          {{ item.artifact_status or '-' }}
+          {% if item.output_lora_file_size %}<br><small>{{ item.output_lora_file_size }} bytes</small>{% endif %}
+          {% if item.output_lora_sha256 %}<br><small>{{ item.output_lora_sha256[:12] }}</small>{% endif %}
+        </td>
+        <td>sample {{ item.sample_image_count or 0 }}<br>mini validation {{ item.mini_validation_image_count or 0 }}</td>
+        <td>{{ item.machine_review_status or '-' }}</td>
+        <td>
+          {{ item.failure_category or '-' }}
+          {% if item.error_message %}<br><small>{{ item.error_message }}</small>{% endif %}
+          {% if item.failure_category %}<br><small>{{ suggested_action(item.failure_category, item.error_message) }}</small>{% endif %}
+          {% if item.log_path %}<br><small>{{ item.log_path }}</small>{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="9" class="muted">Itemはありません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+{% endblock %}
