@@ -99,6 +99,13 @@ Recipe cards and the Job creation Wizard show validation badges such as `Unteste
 `Prepare OK`, `Smoke OK`, and `Failed`. Selecting an untested or failed profile adds a
 Compatibility WARNING so the choice is visible before creating a draft Job.
 
+Phase 12.3.x also adds the Optimizer Master Check screen at `/optimizer-master-checks`.
+It creates a smoke matrix for the built-in optimizer profiles, records Prepare Check /
+2-step Smoke / LoRA artifact status / Image Smoke status, and writes Markdown/JSON
+reports under `reports/optimizer_master_checks/` and `logs/`. Failure categories separate
+LoRA-Studio command generation issues, master parameter problems, missing dependencies,
+sd-scripts unsupported options, and local environment issues.
+
 ## Phase 12.2: Recipe Wizard UX
 
 Phase 12.2 improves the Job creation flow on top of Recipe v2.

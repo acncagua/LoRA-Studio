@@ -58,10 +58,10 @@ def select_recipe_for_profile(profile_id: str, recipe_id: str | None = None) -> 
 
 
 def preset_for_model_family(model_family: str) -> str:
-    preset = fetch_one("SELECT id FROM presets WHERE model_family = ? ORDER BY sort_order, id LIMIT 1", (model_family,))
+    preset = fetch_one("SELECT id FROM presets WHERE model_family = ? ORDER BY id LIMIT 1", (model_family,))
     if preset:
         return preset["id"]
-    fallback = fetch_one("SELECT id FROM presets ORDER BY sort_order, id LIMIT 1")
+    fallback = fetch_one("SELECT id FROM presets ORDER BY id LIMIT 1")
     if fallback:
         return fallback["id"]
     raise RuntimeError("Presetが登録されていません。")

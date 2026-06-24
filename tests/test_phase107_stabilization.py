@@ -2697,6 +2697,96 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertIn("Smoke OK", js_source)
         self.assertIn("smoke_ok", recipes_body)
 
+    def test_phase123x_optimizer_master_check_run_and_prepare_are_saved(self) -> None:
+        from app.services.optimizer_master_checks import create_master_check_run, master_check_run_detail, run_prepare_checks
+
+        project_id, dataset_id, _version_id = self.create_project_fixture()
+        sd_scripts = self.root / "external" / "sd-scripts"
+        sd_scripts.mkdir(parents=True, exist_ok=True)
+        now = utc_now()
+        with connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO environments(
+                    name, sd_scripts_path, venv_python_path, mixed_precision,
+                    sd_scripts_commit_hash, status, created_at, updated_at
+                )
+                VALUES ('default', ?, ?, 'bf16', 'test', 'ok', ?, ?)
+                """,
+                (str(sd_scripts), sys.executable, now, now),
+            )
+
+        run_id = create_master_check_run("selected_profiles", ["adamw8bit_sdxl_balanced"])
+        detail = master_check_run_detail(run_id)
+        self.assertEqual(detail["run"]["total_count"], 1)
+        self.assertEqual(len(detail["items"]), 1)
+        self.assertEqual(detail["items"][0]["optimizer_profile_id"], "adamw8bit_sdxl_balanced")
+
+        result = run_prepare_checks(run_id, dataset_id=dataset_id, base_model_path="D:/models/base.safetensors")
+        self.assertTrue(result["ok"])
+        item = fetch_one("SELECT * FROM optimizer_master_check_items WHERE check_run_id = ?", (run_id,))
+        run = fetch_one("SELECT * FROM optimizer_master_check_runs WHERE id = ?", (run_id,))
+        self.assertEqual(item["status"], "prepare_ok")
+        self.assertIsNotNone(item["prepare_job_id"])
+        self.assertEqual(run["prepare_ok_count"], 1)
+        self.assertTrue(run["report_path"])
+
+    def test_phase123x_optimizer_master_artifact_and_image_checks(self) -> None:
+        from app.services.optimizer_master_checks import check_image_smoke, check_lora_artifact
+
+        try:
+            import numpy as np
+            from safetensors.numpy import save_file
+        except Exception as exc:
+            self.skipTest(f"safetensors/numpy unavailable: {exc}")
+
+        valid_model = self.root / "model.safetensors"
+        save_file({"lora_unet_down.weight": np.array([1.0, 2.0], dtype=np.float32)}, str(valid_model))
+        valid_check = check_lora_artifact(str(valid_model))
+        self.assertEqual(valid_check["status"], "ok")
+        self.assertGreater(valid_check["file_size"], 0)
+        self.assertTrue(valid_check["sha256"])
+
+        empty_model = self.root / "empty.safetensors"
+        empty_model.write_bytes(b"")
+        failed_check = check_lora_artifact(str(empty_model))
+        self.assertEqual(failed_check["status"], "failed")
+
+        def make_varied(path: Path, offset: int) -> None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            img = Image.new("RGB", (16, 16))
+            for x in range(16):
+                for y in range(16):
+                    img.putpixel((x, y), ((x * 13 + offset) % 255, (y * 17 + offset) % 255, ((x + y) * 11 + offset) % 255))
+            img.save(path)
+
+        left = self.root / "left.png"
+        right = self.root / "right.png"
+        make_varied(left, 0)
+        make_varied(right, 20)
+        image_check = check_image_smoke(str(left), str(right))
+        self.assertEqual(image_check["status"], "image_smoke_ok")
+        self.assertIsNotNone(image_check["difference_score"])
+
+    def test_phase123x_optimizer_master_failure_classification(self) -> None:
+        from app.services.optimizer_master_checks import classify_failure, suggested_action
+
+        self.assertEqual(classify_failure("ModuleNotFoundError: No module named 'prodigyopt'"), "missing_dependency")
+        self.assertEqual(classify_failure("unexpected keyword argument decouple"), "master_parameter")
+        self.assertEqual(classify_failure("optimizer_type not found: DAdaptLion"), "sd_scripts_unsupported")
+        self.assertEqual(classify_failure("database is locked"), "environment")
+        self.assertIn("依存", suggested_action("missing_dependency"))
+
+    def test_phase123x_optimizer_master_check_page_renders(self) -> None:
+        from app.main import optimizer_master_checks
+        from app.services.optimizer_master_checks import create_master_check_run
+
+        run_id = create_master_check_run("selected_profiles", ["adamw8bit_sdxl_balanced"])
+        body = optimizer_master_checks(request=None, run_id=run_id).body.decode("utf-8")
+        self.assertIn("Optimizer Master Validation / Smoke Matrix", body)
+        self.assertIn("adamw8bit_sdxl_balanced", body)
+        self.assertIn("Run Prepare Check", body)
+
     def test_phase121_recipe_v2_job_creation_saves_snapshots(self) -> None:
         from app.db import create_job
 

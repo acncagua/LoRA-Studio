@@ -173,6 +173,8 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "recipe_snapshot_json": "TEXT",
             "params_snapshot_json": "TEXT",
             "user_overrides_json": "TEXT",
+            "command_argv_json": "TEXT",
+            "prompt_file_path": "TEXT",
         },
     )
     ensure_columns(
@@ -2227,6 +2229,45 @@ CREATE TABLE IF NOT EXISTS optimizer_profile_test_results (
     cuda_version TEXT,
     created_at TEXT NOT NULL,
     memo TEXT
+);
+CREATE TABLE IF NOT EXISTS optimizer_master_check_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    status TEXT NOT NULL DEFAULT 'planned',
+    target_scope TEXT,
+    started_at TEXT,
+    ended_at TEXT,
+    elapsed_seconds INTEGER,
+    total_count INTEGER DEFAULT 0,
+    prepare_ok_count INTEGER DEFAULT 0,
+    smoke_ok_count INTEGER DEFAULT 0,
+    failed_count INTEGER DEFAULT 0,
+    dependency_missing_count INTEGER DEFAULT 0,
+    log_path TEXT,
+    report_path TEXT,
+    created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS optimizer_master_check_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    check_run_id INTEGER,
+    optimizer_definition_id TEXT,
+    optimizer_profile_id TEXT,
+    recipe_id TEXT,
+    status TEXT NOT NULL DEFAULT 'planned',
+    prepare_job_id INTEGER,
+    smoke_job_id INTEGER,
+    output_lora_path TEXT,
+    output_lora_sha256 TEXT,
+    output_lora_file_size INTEGER,
+    safetensors_check_status TEXT,
+    generated_weight0_image_path TEXT,
+    generated_weight1_image_path TEXT,
+    image_smoke_status TEXT,
+    difference_score REAL,
+    failure_category TEXT,
+    error_message TEXT,
+    log_path TEXT,
+    created_at TEXT,
+    updated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS network_type_definitions (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, display_name TEXT NOT NULL,

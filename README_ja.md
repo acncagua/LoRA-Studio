@@ -75,6 +75,11 @@ Adafactor Fixedは固定LRと `max_grad_norm=0.0` を使います。
 RecipeカードとJob作成Wizardには `Untested`、`Prepare OK`、`Smoke OK`、`Failed` のbadgeを表示します。
 未検証または失敗済みProfileを選んだ場合はCompatibility WARNINGを出し、下書きJob作成前に気付けるようにしています。
 
+Phase 12.3.xでは `/optimizer-master-checks` にOptimizer Master Check画面を追加しました。
+Built-in Optimizer Profileを対象に、Prepare Check、2-step Smoke、LoRA artifact確認、Image Smoke結果を一覧化します。
+結果は `reports/optimizer_master_checks/` のMarkdownと `logs/` のJSONへ出力できます。
+失敗時は、LoRA-Studio側のcommand生成、マスタパラメータ、依存不足、sd-scripts未対応、実行環境問題を初期分類し、修正方針を表示します。
+
 ## Phase 12.2: Recipe Wizard UX
 
 Phase 12.2では、Recipe v2の土台の上にJob作成ウィザードを追加しました。

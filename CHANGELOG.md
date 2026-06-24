@@ -13,6 +13,10 @@ Phase 12.3 adds an Optimizer Profile Validation / Smoke Test foundation so Recip
 - Command BuilderでAdafactor Autoの `learning_rate=null` を許容し、nullの場合は `--learning_rate` / `--unet_lr` を出さないようにしました。
 - `optimizer_args` を `--optimizer_args decouple=True weight_decay=0.01 ...` の配列形式で出力するようにしました。
 - Optimizer詳細画面に `Prepare Test Job`、`Run 2-step Smoke Test`、`Run Mini Pilot`、最終結果表示の導線を追加しました。
+- `/optimizer-master-checks` を追加し、Built-in Optimizer ProfileのPrepare / 2-step Smoke / LoRA artifact / Image Smoke結果をMatrixとして保存・表示できるようにしました。
+- `optimizer_master_check_runs` / `optimizer_master_check_items` を追加し、profileごとのJob、LoRA artifact hash、safetensors確認、image smoke結果、failure categoryを追跡できるようにしました。
+- Master Check Reportを `reports/optimizer_master_checks/*.md` と `logs/*.json` に出力できるようにしました。
+- Failure classificationとして、LoRA-Studioロジック、マスタパラメータ、依存不足、sd-scripts未対応、環境問題を初期推定するようにしました。
 - Smoke Test用Jobは `max_train_steps=2`、低dim、最小サンプル設定で作成し、品質評価ではなく起動確認として扱います。
 - Recipeカード / Recipe Library / Job作成Wizardに `Untested` / `Prepare OK` / `Smoke OK` / `Failed` badgeを表示するようにしました。
 - Job作成Wizardで未検証・失敗済みOptimizer Profileを選んだ場合、Compatibility WARNINGを表示します。

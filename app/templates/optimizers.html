@@ -3,9 +3,13 @@
   <h1>Optimizer Master</h1>
   <div class="actions compact-actions">
     <a class="button" href="/jobs/new?mode=optimizer">OptimizerからJob作成</a>
+    <a class="button secondary" href="/optimizer-master-checks">Master Check</a>
     <a class="button secondary" href="/training-recipes">Recipe Library</a>
   </div>
 </header>
+{% if latest_master_check %}
+<p class="notice">Latest Master Check: <a href="/optimizer-master-checks?run_id={{ latest_master_check.id }}">#{{ latest_master_check.id }}</a> / {{ latest_master_check.status }} / Smoke OK {{ latest_master_check.smoke_ok_count or 0 }} 件</p>
+{% endif %}
 
 <section class="notice">
   <h2>LR semantics</h2>

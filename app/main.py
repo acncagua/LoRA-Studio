@@ -94,6 +94,20 @@ from app.services.optimizer_profile_validation import (
     run_prepare_test,
     run_smoke_test,
 )
+from app.services.optimizer_master_checks import (
+    MASTER_CHECK_PROFILES,
+    check_lora_artifact,
+    check_png_image,
+    classify_failure,
+    create_master_check_run,
+    latest_master_check_run,
+    master_check_run_detail,
+    record_image_smoke_result,
+    run_prepare_checks,
+    run_smoke_checks,
+    suggested_action,
+    write_master_check_report,
+)
 from app.services.step_estimator import calculate_required_repeats, estimate_steps, suggest_target_steps, target_config_from_catalog
 from app.services.review_sessions import (
     create_neighbor_review_session,
@@ -3310,7 +3324,89 @@ def optimizers_library(request: Request) -> HTMLResponse:
         """
     )
     network_types = fetch_all("SELECT * FROM network_type_definitions WHERE is_active = 1 ORDER BY display_name")
-    return render(request, "optimizers.html", optimizers=optimizers, profiles=profiles, network_types=network_types)
+    return render(request, "optimizers.html", optimizers=optimizers, profiles=profiles, network_types=network_types, latest_master_check=latest_master_check_run())
+
+
+@app.get("/optimizer-master-checks", response_class=HTMLResponse)
+@app.get("/optimizers/master-check", response_class=HTMLResponse)
+def optimizer_master_checks(request: Request, run_id: int | None = Query(None), message: str = Query(""), error: str = Query("")) -> HTMLResponse:
+    if run_id is None:
+        latest = latest_master_check_run()
+        run_id = int(latest["id"]) if latest else None
+    detail = master_check_run_detail(run_id) if run_id else {"run": None, "items": []}
+    runs = fetch_all("SELECT * FROM optimizer_master_check_runs ORDER BY id DESC LIMIT 20")
+    profiles = fetch_all(
+        """
+        SELECT p.*, od.display_name AS optimizer_display_name
+        FROM optimizer_profiles_v2 p
+        LEFT JOIN optimizer_definitions_v2 od ON od.id = p.optimizer_definition_id
+        WHERE p.id IN ({})
+        ORDER BY od.smoke_test_priority, p.id
+        """.format(",".join("?" for _ in MASTER_CHECK_PROFILES)),
+        tuple(MASTER_CHECK_PROFILES),
+    )
+    datasets = fetch_all("SELECT id, name, image_count FROM datasets ORDER BY id DESC")
+    return render(
+        request,
+        "optimizer_master_checks.html",
+        run=detail["run"],
+        items=detail["items"],
+        runs=runs,
+        profiles=profiles,
+        datasets=datasets,
+        default_base_model_path=str(settings.ROOT_DIR / "models"),
+        message=message,
+        error=error,
+        suggested_action=suggested_action,
+    )
+
+
+@app.post("/optimizer-master-checks")
+def optimizer_master_check_create(target_scope: str = Form("all_builtin"), profile_ids: list[str] = Form(default=[])) -> RedirectResponse:
+    selected = [item for item in profile_ids if item.strip()]
+    scope = target_scope if target_scope in {"all_builtin", "selected_profiles", "single_profile"} else "all_builtin"
+    run_id = create_master_check_run(scope, selected)
+    return RedirectResponse(f"/optimizer-master-checks?run_id={run_id}&message={quote('Optimizer Master Checkを作成しました。')}", status_code=303)
+
+
+@app.post("/optimizer-master-checks/{run_id}/prepare")
+def optimizer_master_check_prepare(run_id: int, dataset_id: int = Form(...), base_model_path: str = Form(...)) -> RedirectResponse:
+    try:
+        result = run_prepare_checks(run_id, dataset_id=dataset_id, base_model_path=base_model_path)
+        message = f"Prepare Checkを実行しました: run #{result['run_id']}"
+        return RedirectResponse(f"/optimizer-master-checks?run_id={run_id}&message={quote(message)}", status_code=303)
+    except Exception as exc:
+        return RedirectResponse(f"/optimizer-master-checks?run_id={run_id}&error={quote(str(exc))}", status_code=303)
+
+
+@app.post("/optimizer-master-checks/{run_id}/smoke")
+def optimizer_master_check_smoke(run_id: int, dataset_id: int = Form(...), base_model_path: str = Form(...), profile_limit: str = Form("")) -> RedirectResponse:
+    try:
+        limit = int(profile_limit) if profile_limit.strip() else None
+        result = run_smoke_checks(run_id, dataset_id=dataset_id, base_model_path=base_model_path, profile_limit=limit)
+        message = f"2-step Smokeを実行しました: {result['executed']}件"
+        return RedirectResponse(f"/optimizer-master-checks?run_id={run_id}&message={quote(message)}", status_code=303)
+    except Exception as exc:
+        return RedirectResponse(f"/optimizer-master-checks?run_id={run_id}&error={quote(str(exc))}", status_code=303)
+
+
+@app.post("/optimizer-master-checks/{run_id}/report")
+def optimizer_master_check_report(run_id: int) -> RedirectResponse:
+    paths = write_master_check_report(run_id)
+    return RedirectResponse(f"/optimizer-master-checks?run_id={run_id}&message={quote('Reportを出力しました: ' + paths['report_path'])}", status_code=303)
+
+
+@app.post("/optimizer-master-check-items/{item_id}/image-smoke")
+def optimizer_master_check_image_smoke(item_id: int, weight0_path: str = Form(...), weight1_path: str = Form(...)) -> RedirectResponse:
+    item = fetch_one("SELECT check_run_id FROM optimizer_master_check_items WHERE id = ?", (item_id,))
+    if item is None:
+        raise HTTPException(status_code=404, detail="Optimizer Master Check item not found")
+    try:
+        result = record_image_smoke_result(item_id, weight0_path, weight1_path)
+        params = {"message" if result["status"] != "failed" else "error": f"Image Smoke: {result['status']}"}
+    except Exception as exc:
+        params = {"error": str(exc)}
+    return RedirectResponse(f"/optimizer-master-checks?run_id={item['check_run_id']}&{urlencode(params)}", status_code=303)
 
 
 @app.get("/optimizers/{optimizer_id}", response_class=HTMLResponse)

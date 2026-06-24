@@ -20,6 +20,7 @@ logs/machine_review/
 server*.log
 runs/job_*/
 runs/comparisons/
+reports/
 external/sd-scripts/
 exports/*
 backups/
