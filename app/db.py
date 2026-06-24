@@ -62,6 +62,7 @@ def init_db() -> None:
         conn.executescript(SCHEMA_SQL)
         run_migrations(conn)
         seed_app_settings(conn)
+        seed_optional_optimizer_dependencies(conn)
         seed_optimizer_catalog(conn)
         seed_presets(conn)
         seed_sample_prompt_templates(conn)
@@ -273,6 +274,22 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         {
             "optimizer_definition_id": "TEXT",
             "memo": "TEXT",
+        },
+    )
+    ensure_columns(
+        conn,
+        "optional_optimizer_dependencies",
+        {
+            "display_name": "TEXT",
+            "required_for_optimizer_ids_json": "TEXT",
+            "install_target": "TEXT NOT NULL DEFAULT 'sd_scripts_venv'",
+            "import_check_module": "TEXT",
+            "install_command_json": "TEXT",
+            "status": "TEXT NOT NULL DEFAULT 'unknown'",
+            "last_checked_at": "TEXT",
+            "last_install_at": "TEXT",
+            "error_message": "TEXT",
+            "updated_at": "TEXT",
         },
     )
     ensure_columns(
@@ -880,6 +897,7 @@ def seed_app_settings(conn: sqlite3.Connection) -> None:
         "sd_scripts_release_tag": settings.SD_SCRIPTS_RELEASE_TAG,
         "sd_scripts_release_commit": settings.SD_SCRIPTS_RELEASE_COMMIT,
         "sd_scripts_repo_url": settings.SD_SCRIPTS_REPO_URL,
+        "install_optional_optimizer_deps": "true",
         "webui_api_enabled": "false",
         "webui_api_url": "http://127.0.0.1:7865",
     }
@@ -2151,6 +2169,68 @@ def infer_prompt_role(name: str, prompt: str = "") -> str:
     return "other"
 
 
+def seed_optional_optimizer_dependencies(conn: sqlite3.Connection) -> None:
+    now = utc_now()
+    rows = [
+        {
+            "id": "dadaptation",
+            "package_name": "dadaptation",
+            "display_name": "D-Adaptation",
+            "required_for_optimizer_ids_json": json.dumps(["DAdaptAdam", "DAdaptLion"], ensure_ascii=False),
+            "install_target": "sd_scripts_venv",
+            "import_check_module": "dadaptation",
+            "install_command_json": json.dumps(["-m", "pip", "install", "dadaptation"], ensure_ascii=False),
+        },
+        {
+            "id": "prodigyopt",
+            "package_name": "prodigyopt",
+            "display_name": "Prodigy Optimizer",
+            "required_for_optimizer_ids_json": json.dumps(["Prodigy"], ensure_ascii=False),
+            "install_target": "sd_scripts_venv",
+            "import_check_module": "prodigyopt",
+            "install_command_json": json.dumps(["-m", "pip", "install", "prodigyopt"], ensure_ascii=False),
+        },
+        {
+            "id": "lion-pytorch",
+            "package_name": "lion-pytorch",
+            "display_name": "Lion PyTorch",
+            "required_for_optimizer_ids_json": json.dumps(["Lion", "Lion8bit", "PagedLion8bit"], ensure_ascii=False),
+            "install_target": "sd_scripts_venv",
+            "import_check_module": "lion_pytorch",
+            "install_command_json": json.dumps(["-m", "pip", "install", "lion-pytorch"], ensure_ascii=False),
+        },
+    ]
+    for row in rows:
+        conn.execute(
+            """
+            INSERT INTO optional_optimizer_dependencies(
+                id, package_name, display_name, required_for_optimizer_ids_json,
+                install_target, import_check_module, install_command_json,
+                status, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'unknown', ?)
+            ON CONFLICT(id) DO UPDATE SET
+                package_name = excluded.package_name,
+                display_name = excluded.display_name,
+                required_for_optimizer_ids_json = excluded.required_for_optimizer_ids_json,
+                install_target = excluded.install_target,
+                import_check_module = excluded.import_check_module,
+                install_command_json = excluded.install_command_json,
+                updated_at = excluded.updated_at
+            """,
+            (
+                row["id"],
+                row["package_name"],
+                row["display_name"],
+                row["required_for_optimizer_ids_json"],
+                row["install_target"],
+                row["import_check_module"],
+                row["install_command_json"],
+                now,
+            ),
+        )
+
+
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS environments (
@@ -2229,6 +2309,20 @@ CREATE TABLE IF NOT EXISTS optimizer_profile_test_results (
     cuda_version TEXT,
     created_at TEXT NOT NULL,
     memo TEXT
+);
+CREATE TABLE IF NOT EXISTS optional_optimizer_dependencies (
+    id TEXT PRIMARY KEY,
+    package_name TEXT NOT NULL,
+    display_name TEXT,
+    required_for_optimizer_ids_json TEXT NOT NULL,
+    install_target TEXT NOT NULL DEFAULT 'sd_scripts_venv',
+    import_check_module TEXT NOT NULL,
+    install_command_json TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'unknown',
+    last_checked_at TEXT,
+    last_install_at TEXT,
+    error_message TEXT,
+    updated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS optimizer_master_check_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

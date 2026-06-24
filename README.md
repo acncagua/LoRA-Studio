@@ -106,6 +106,15 @@ reports under `reports/optimizer_master_checks/` and `logs/`. Failure categories
 LoRA-Studio command generation issues, master parameter problems, missing dependencies,
 sd-scripts unsupported options, and local environment issues.
 
+Optimizer optional dependencies are tracked separately from the LoRA-Studio app venv.
+`dadaptation` is required for DAdaptAdam / DAdaptLion, `prodigyopt` for Prodigy,
+and `lion-pytorch` for Lion. The Environment screen and Optimizer Master Check screen
+show whether those packages are importable from the sd-scripts venv, and provide install
+buttons that run `sd-scripts venv python -m pip install ...`. LoRA-Studio-managed
+sd-scripts setup installs these optional optimizer packages by default
+(`install_optional_optimizer_deps=true`); existing external sd-scripts environments are
+not modified unless the user presses an install button.
+
 ## Phase 12.2: Recipe Wizard UX
 
 Phase 12.2 improves the Job creation flow on top of Recipe v2.

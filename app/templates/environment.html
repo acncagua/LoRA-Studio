@@ -9,6 +9,8 @@
 {% if query_params.get('refreshed') %}
 <p class="notice">環境情報を再読み込みしました。</p>
 {% endif %}
+{% if query_params.get('message') %}<p class="notice">{{ query_params.get('message') }}</p>{% endif %}
+{% if query_params.get('error') %}<p class="notice warning">{{ query_params.get('error') }}</p>{% endif %}
 <p class="muted">この画面は保存済みの環境情報を表示します。Python / Torch / GPU情報を取り直す場合だけ「環境情報を再読み込み」を押してください。</p>
 <section class="panel-grid">
   <div><h2>sd-scripts</h2><dl><dt>リポジトリ</dt><dd>{{ settings.SD_SCRIPTS_REPO_URL }}</dd><dt>リリース</dt><dd>{{ settings.SD_SCRIPTS_RELEASE_TAG }}</dd><dt>コミット</dt><dd>{{ settings.SD_SCRIPTS_RELEASE_COMMIT }}</dd><dt>パス</dt><dd>{{ settings.SD_SCRIPTS_DIR }}</dd></dl></div>
@@ -26,6 +28,36 @@
       <tr><td colspan="7"><dl><dt>sd-scripts</dt><dd>{{ env.sd_scripts_path }}</dd><dt>venv Python</dt><dd>{{ env.venv_python_path }}</dd><dt>accelerate</dt><dd>{{ env.venv_accelerate_path or '-' }}</dd><dt>コミット</dt><dd>{{ env.sd_scripts_commit_hash or '-' }}</dd></dl></td></tr>
       {% else %}
       <tr><td colspan="7" class="muted">環境情報はまだ取り込まれていません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+<section>
+  <h2>Optimizer optional dependencies</h2>
+  <p class="muted">DAdapt / Prodigy / Lionなどの追加Optimizer依存はLoRA-Studio本体venvではなく、sd-scripts venvへ導入します。既存外部sd-scripts環境では自動installせず、この画面のボタンを押した場合だけinstallします。</p>
+  <div class="actions compact-actions">
+    <form method="post" action="/environment/optimizer-dependencies/check"><button type="submit" class="secondary">依存状態を確認</button></form>
+    <form method="post" action="/environment/optimizer-dependencies/install-all"><button type="submit">不足分をすべてinstall</button></form>
+  </div>
+  <table class="wide-table compact-table">
+    <thead><tr><th>Package</th><th>Required optimizer</th><th>Status</th><th>Install target</th><th>Last checked</th><th>Error</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for dep in optional_dependencies %}
+      <tr>
+        <td><strong>{{ dep.display_name or dep.package_name }}</strong><br><code>{{ dep.package_name }}</code></td>
+        <td><code>{{ dep.required_for_optimizer_ids_json }}</code></td>
+        <td><span class="label {{ 'ok' if dep.status == 'installed' else ('error' if dep.status in ['missing','install_failed'] else 'warning') }}">{{ dep.status }}</span></td>
+        <td>{{ dep.install_target }}</td>
+        <td>{{ dep.last_checked_at or '-' }}</td>
+        <td>{{ dep.error_message or '-' }}</td>
+        <td>
+          <form method="post" action="/environment/optimizer-dependencies/{{ dep.id }}/install">
+            <button type="submit" class="small-button">Install {{ dep.package_name }}</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="muted">Optional dependencyは未登録です。</td></tr>
       {% endfor %}
     </tbody>
   </table>

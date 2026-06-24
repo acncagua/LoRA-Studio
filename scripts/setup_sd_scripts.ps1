@@ -3,7 +3,8 @@
     [string]$PythonCmd = "",
     [string]$CudaProfile = "cu128",
     [string]$MixedPrecision = "bf16",
-    [string]$ReleaseTag = "v0.10.5"
+    [string]$ReleaseTag = "v0.10.5",
+    [bool]$InstallOptionalOptimizerDeps = $true
 )
 
 $ErrorActionPreference = "Stop"
@@ -196,6 +197,12 @@ switch ($CudaProfile) {
     default { throw "Unsupported CudaProfile: $CudaProfile" }
 }
 Invoke-LoggedNative $Pip @("install", "--upgrade", "-r", "requirements.txt") $SdScriptsPath
+if ($InstallOptionalOptimizerDeps) {
+    Write-Log "installing optional optimizer dependencies"
+    Invoke-LoggedNative $Python @("-m", "pip", "install", "dadaptation", "prodigyopt", "lion-pytorch")
+} else {
+    Write-Log "skip optional optimizer dependencies"
+}
 
 $AccelerateDir = Join-Path $env:USERPROFILE ".cache\huggingface\accelerate"
 New-Item -ItemType Directory -Force -Path $AccelerateDir | Out-Null

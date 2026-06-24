@@ -109,6 +109,12 @@ from app.services.optimizer_master_checks import (
     suggested_action,
     write_master_check_report,
 )
+from app.services.optimizer_dependencies import (
+    check_all_dependencies,
+    dependency_status_summary,
+    install_all_missing_dependencies,
+    install_dependency,
+)
 from app.services.step_estimator import calculate_required_repeats, estimate_steps, suggest_target_steps, target_config_from_catalog
 from app.services.review_sessions import (
     create_neighbor_review_session,
@@ -2236,13 +2242,53 @@ def recommended_workflow(request: Request) -> HTMLResponse:
 def environment(request: Request) -> HTMLResponse:
     settings_rows = fetch_all("SELECT * FROM app_settings ORDER BY key")
     environments = fetch_all("SELECT * FROM environments ORDER BY id DESC")
-    return render(request, "environment.html", settings_rows=settings_rows, environments=environments, settings=settings)
+    return render(
+        request,
+        "environment.html",
+        settings_rows=settings_rows,
+        environments=environments,
+        settings=settings,
+        optional_dependencies=dependency_status_summary()["rows"],
+    )
 
 
 @app.post("/environment/refresh")
 def environment_refresh() -> RedirectResponse:
     import_latest_environment()
     return RedirectResponse("/environment?refreshed=1", status_code=303)
+
+
+@app.post("/environment/optimizer-dependencies/check")
+def environment_optimizer_dependencies_check() -> RedirectResponse:
+    try:
+        results = check_all_dependencies()
+        installed = sum(1 for item in results if item["status"] == "installed")
+        message = f"Optimizer依存を確認しました: installed {installed}/{len(results)}"
+        return RedirectResponse(f"/environment?message={quote(message)}", status_code=303)
+    except Exception as exc:
+        return RedirectResponse(f"/environment?error={quote(str(exc))}", status_code=303)
+
+
+@app.post("/environment/optimizer-dependencies/install-all")
+def environment_optimizer_dependencies_install_all() -> RedirectResponse:
+    try:
+        results = install_all_missing_dependencies()
+        installed = sum(1 for item in results if item["status"] == "installed")
+        failed = sum(1 for item in results if item["status"] == "install_failed")
+        message = f"Optimizer依存をinstallしました: installed {installed}, failed {failed}"
+        return RedirectResponse(f"/environment?message={quote(message)}", status_code=303)
+    except Exception as exc:
+        return RedirectResponse(f"/environment?error={quote(str(exc))}", status_code=303)
+
+
+@app.post("/environment/optimizer-dependencies/{dependency_id}/install")
+def environment_optimizer_dependency_install(dependency_id: str) -> RedirectResponse:
+    try:
+        result = install_dependency(dependency_id)
+        message = f"{dependency_id}: {result['status']}"
+        return RedirectResponse(f"/environment?message={quote(message)}", status_code=303)
+    except Exception as exc:
+        return RedirectResponse(f"/environment?error={quote(str(exc))}", status_code=303)
 
 
 @app.get("/settings/embeddings", response_class=HTMLResponse)
@@ -3355,6 +3401,7 @@ def optimizer_master_checks(request: Request, run_id: int | None = Query(None), 
         runs=runs,
         profiles=profiles,
         datasets=datasets,
+        optional_dependencies=dependency_status_summary()["rows"],
         default_base_model_path=str(settings.ROOT_DIR / "models"),
         message=message,
         error=error,
@@ -3395,6 +3442,42 @@ def optimizer_master_check_smoke(run_id: int, dataset_id: int = Form(...), base_
 def optimizer_master_check_report(run_id: int) -> RedirectResponse:
     paths = write_master_check_report(run_id)
     return RedirectResponse(f"/optimizer-master-checks?run_id={run_id}&message={quote('Reportを出力しました: ' + paths['report_path'])}", status_code=303)
+
+
+@app.post("/optimizer-master-checks/dependencies/check")
+def optimizer_master_check_dependencies_check(run_id: int | None = Form(None)) -> RedirectResponse:
+    try:
+        results = check_all_dependencies()
+        installed = sum(1 for item in results if item["status"] == "installed")
+        params = {"message": f"Optimizer依存を確認しました: installed {installed}/{len(results)}"}
+    except Exception as exc:
+        params = {"error": str(exc)}
+    suffix = f"?run_id={run_id}&{urlencode(params)}" if run_id else f"?{urlencode(params)}"
+    return RedirectResponse(f"/optimizer-master-checks{suffix}", status_code=303)
+
+
+@app.post("/optimizer-master-checks/dependencies/install-all")
+def optimizer_master_check_dependencies_install_all(run_id: int | None = Form(None)) -> RedirectResponse:
+    try:
+        results = install_all_missing_dependencies()
+        installed = sum(1 for item in results if item["status"] == "installed")
+        failed = sum(1 for item in results if item["status"] == "install_failed")
+        params = {"message": f"Optimizer依存をinstallしました: installed {installed}, failed {failed}"}
+    except Exception as exc:
+        params = {"error": str(exc)}
+    suffix = f"?run_id={run_id}&{urlencode(params)}" if run_id else f"?{urlencode(params)}"
+    return RedirectResponse(f"/optimizer-master-checks{suffix}", status_code=303)
+
+
+@app.post("/optimizer-master-checks/dependencies/{dependency_id}/install")
+def optimizer_master_check_dependency_install(dependency_id: str, run_id: int | None = Form(None)) -> RedirectResponse:
+    try:
+        result = install_dependency(dependency_id)
+        params = {"message": f"{dependency_id}: {result['status']}"}
+    except Exception as exc:
+        params = {"error": str(exc)}
+    suffix = f"?run_id={run_id}&{urlencode(params)}" if run_id else f"?{urlencode(params)}"
+    return RedirectResponse(f"/optimizer-master-checks{suffix}", status_code=303)
 
 
 @app.post("/optimizer-master-check-items/{item_id}/image-smoke")

@@ -80,6 +80,12 @@ Built-in Optimizer Profileを対象に、Prepare Check、2-step Smoke、LoRA art
 結果は `reports/optimizer_master_checks/` のMarkdownと `logs/` のJSONへ出力できます。
 失敗時は、LoRA-Studio側のcommand生成、マスタパラメータ、依存不足、sd-scripts未対応、実行環境問題を初期分類し、修正方針を表示します。
 
+Optimizer optional dependenciesはLoRA-Studio本体venvではなく、sd-scripts venvで管理します。
+DAdaptAdam / DAdaptLionには `dadaptation`、Prodigyには `prodigyopt`、Lionには `lion-pytorch` が必要です。
+Environment画面とOptimizer Master Check画面で、sd-scripts venvからimportできるかを確認し、不足時は明示的にinstallできます。
+LoRA-Studio管理下でsd-scripts環境を作る場合は `install_optional_optimizer_deps=true` を初期値とし、requirements導入後にこれらのoptional dependencyも標準導入します。
+既存外部sd-scripts環境は勝手に変更せず、Installボタンを押した場合だけsd-scripts venvへ導入します。
+
 ## Phase 12.2: Recipe Wizard UX
 
 Phase 12.2では、Recipe v2の土台の上にJob作成ウィザードを追加しました。

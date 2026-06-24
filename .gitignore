@@ -17,6 +17,7 @@ logs/*.jsonl
 logs/e2e_*.py
 logs/embeddings/
 logs/machine_review/
+logs/optimizer_dependencies/
 server*.log
 runs/job_*/
 runs/comparisons/

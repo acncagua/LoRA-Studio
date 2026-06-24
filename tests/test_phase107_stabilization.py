@@ -7,6 +7,7 @@ import unittest
 import hashlib
 import json
 import os
+import subprocess
 from pathlib import Path
 from unittest import mock
 
@@ -4259,6 +4260,69 @@ class StartHelperTests(unittest.TestCase):
         args = run.call_args.args[0]
         self.assertEqual(args, ["taskkill", "/PID", "1234", "/F"])
         self.assertNotIn("/T", args)
+
+
+class OptimizerDependencyTests(IsolatedDbTest):
+    def add_environment(self) -> Path:
+        fake_python = self.root / "external" / "sd-scripts" / "venv" / "Scripts" / "python.exe"
+        fake_python.parent.mkdir(parents=True, exist_ok=True)
+        fake_python.write_text("", encoding="utf-8")
+        now = utc_now()
+        with connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO environments(
+                    name, sd_scripts_path, venv_python_path, venv_accelerate_path,
+                    status, created_at, updated_at
+                )
+                VALUES ('test', ?, ?, ?, 'ready', ?, ?)
+                """,
+                (
+                    str(self.root / "external" / "sd-scripts"),
+                    str(fake_python),
+                    str(fake_python.parent / "accelerate.exe"),
+                    now,
+                    now,
+                ),
+            )
+        return fake_python
+
+    def test_optional_optimizer_dependencies_are_seeded(self) -> None:
+        rows = fetch_all("SELECT id, package_name, install_target FROM optional_optimizer_dependencies ORDER BY id")
+        self.assertEqual([row["id"] for row in rows], ["dadaptation", "lion-pytorch", "prodigyopt"])
+        self.assertTrue(all(row["install_target"] == "sd_scripts_venv" for row in rows))
+
+    def test_dependency_check_uses_sd_scripts_python_and_saves_status(self) -> None:
+        from app.services.optimizer_dependencies import check_dependency
+
+        fake_python = self.add_environment()
+        completed = subprocess.CompletedProcess([str(fake_python)], 0, stdout="module-path\n", stderr="")
+        with mock.patch("app.services.optimizer_dependencies.subprocess.run", return_value=completed) as run:
+            result = check_dependency("dadaptation")
+
+        self.assertEqual(result["status"], "installed")
+        self.assertEqual(run.call_args.args[0][0], str(fake_python))
+        row = fetch_one("SELECT status, last_checked_at, error_message FROM optional_optimizer_dependencies WHERE id = 'dadaptation'")
+        self.assertEqual(row["status"], "installed")
+        self.assertIsNotNone(row["last_checked_at"])
+        self.assertIsNone(row["error_message"])
+
+    def test_dependency_install_failure_is_saved_without_raising(self) -> None:
+        from app.services.optimizer_dependencies import install_dependency
+
+        fake_python = self.add_environment()
+        completed = subprocess.CompletedProcess([str(fake_python)], 1, stdout="install failed", stderr="")
+        with mock.patch("app.services.optimizer_dependencies.subprocess.run", return_value=completed) as run:
+            result = install_dependency("lion-pytorch")
+
+        self.assertEqual(result["status"], "install_failed")
+        self.assertEqual(run.call_args.args[0][0], str(fake_python))
+        self.assertIn("-m", run.call_args.args[0])
+        self.assertIn("pip", run.call_args.args[0])
+        row = fetch_one("SELECT status, last_install_at, error_message FROM optional_optimizer_dependencies WHERE id = 'lion-pytorch'")
+        self.assertEqual(row["status"], "install_failed")
+        self.assertIsNotNone(row["last_install_at"])
+        self.assertIn("install failed", row["error_message"])
 
 
 class OneoffScriptTests(unittest.TestCase):

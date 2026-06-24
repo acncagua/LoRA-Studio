@@ -16,6 +16,43 @@
   <p class="warning">Smoke OKは品質保証ではありません。起動・生成・最低限の破綻なし確認です。実用品質はCandidate Review / Weight Calibrationで確認してください。</p>
 </section>
 
+<section>
+  <h2>Optimizer optional dependencies</h2>
+  <p class="muted">依存はsd-scripts venvに対して確認・installします。DAdaptLionはexperimental扱いのままです。Smoke OKは品質保証ではなく起動確認です。</p>
+  <div class="actions compact-actions">
+    <form method="post" action="/optimizer-master-checks/dependencies/check">
+      {% if run %}<input type="hidden" name="run_id" value="{{ run.id }}">{% endif %}
+      <button type="submit" class="secondary">依存状態を確認</button>
+    </form>
+    <form method="post" action="/optimizer-master-checks/dependencies/install-all">
+      {% if run %}<input type="hidden" name="run_id" value="{{ run.id }}">{% endif %}
+      <button type="submit">不足分をすべてinstall</button>
+    </form>
+  </div>
+  <table class="compact-table wide-table">
+    <thead><tr><th>Package</th><th>Required optimizer</th><th>Status</th><th>Last checked</th><th>Error</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for dep in optional_dependencies %}
+      <tr>
+        <td><strong>{{ dep.display_name or dep.package_name }}</strong><br><code>{{ dep.package_name }}</code></td>
+        <td><code>{{ dep.required_for_optimizer_ids_json }}</code></td>
+        <td><span class="label {{ 'ok' if dep.status == 'installed' else ('error' if dep.status in ['missing','install_failed'] else 'warning') }}">{{ dep.status }}</span></td>
+        <td>{{ dep.last_checked_at or '-' }}</td>
+        <td>{{ dep.error_message or '-' }}</td>
+        <td>
+          <form method="post" action="/optimizer-master-checks/dependencies/{{ dep.id }}/install">
+            {% if run %}<input type="hidden" name="run_id" value="{{ run.id }}">{% endif %}
+            <button type="submit" class="small-button">Install {{ dep.package_name }}</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">Optional dependencyは未登録です。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
 <section class="panel-grid">
   <div>
     <h2>新しいCheck Runを作成</h2>
@@ -59,6 +96,12 @@
       <label>base model<input name="base_model_path" value="{{ default_base_model_path }}" required></label>
       <label>実行件数制限<input name="profile_limit" placeholder="空なら全件"></label>
       <button type="submit">Run 2-step Smoke</button>
+    </form>
+    <form method="post" action="/optimizer-master-checks" class="stack-form">
+      <input type="hidden" name="target_scope" value="selected_profiles">
+      <input type="hidden" name="profile_ids" value="dadaptadam_sdxl_auto">
+      <input type="hidden" name="profile_ids" value="dadaptlion_sdxl_auto">
+      <button type="submit" class="secondary">DAdapt系だけ再Check Runを作成</button>
     </form>
     <form method="post" action="/optimizer-master-checks/{{ run.id }}/report">
       <button type="submit" class="secondary">View / Export Report</button>

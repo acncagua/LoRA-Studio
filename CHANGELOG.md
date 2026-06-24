@@ -17,6 +17,9 @@ Phase 12.3 adds an Optimizer Profile Validation / Smoke Test foundation so Recip
 - `optimizer_master_check_runs` / `optimizer_master_check_items` を追加し、profileごとのJob、LoRA artifact hash、safetensors確認、image smoke結果、failure categoryを追跡できるようにしました。
 - Master Check Reportを `reports/optimizer_master_checks/*.md` と `logs/*.json` に出力できるようにしました。
 - Failure classificationとして、LoRA-Studioロジック、マスタパラメータ、依存不足、sd-scripts未対応、環境問題を初期推定するようにしました。
+- `optional_optimizer_dependencies` を追加し、`dadaptation` / `prodigyopt` / `lion-pytorch` をsd-scripts venv上で確認・installできるようにしました。
+- Environment画面とOptimizer Master Check画面にOptimizer optional dependency状態とInstall導線を追加しました。
+- LoRA-Studio管理sd-scripts環境のセットアップでは、`install_optional_optimizer_deps=true` を初期値としてoptional optimizer dependenciesを標準導入します。既存外部sd-scripts環境は明示操作時だけinstallします。
 - Smoke Test用Jobは `max_train_steps=2`、低dim、最小サンプル設定で作成し、品質評価ではなく起動確認として扱います。
 - Recipeカード / Recipe Library / Job作成Wizardに `Untested` / `Prepare OK` / `Smoke OK` / `Failed` badgeを表示するようにしました。
 - Job作成Wizardで未検証・失敗済みOptimizer Profileを選んだ場合、Compatibility WARNINGを表示します。
