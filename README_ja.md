@@ -86,6 +86,11 @@ Environment画面とOptimizer Master Check画面で、sd-scripts venvからimpor
 LoRA-Studio管理下でsd-scripts環境を作る場合は `install_optional_optimizer_deps=true` を初期値とし、requirements導入後にこれらのoptional dependencyも標準導入します。
 既存外部sd-scripts環境は勝手に変更せず、Installボタンを押した場合だけsd-scripts venvへ導入します。
 
+Phase 12.3のOptimizer Master Check最終サマリは
+`docs/optimizer_master_check_final_summary_phase12.3.md` に保存しています。
+`dadaptation` をsd-scripts venvへ導入した後、Built-in Optimizer Profile 9件すべてで
+Prepare OK、2-step Smoke OK、LoRA artifact OK、Image Smoke OKを確認しました。
+
 ## Phase 12.2: Recipe Wizard UX
 
 Phase 12.2では、Recipe v2の土台の上にJob作成ウィザードを追加しました。

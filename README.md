@@ -115,6 +115,11 @@ sd-scripts setup installs these optional optimizer packages by default
 (`install_optional_optimizer_deps=true`); existing external sd-scripts environments are
 not modified unless the user presses an install button.
 
+The Phase 12.3 final Optimizer Master Check summary is saved in
+`docs/optimizer_master_check_final_summary_phase12.3.md`. After installing `dadaptation`
+into the sd-scripts venv, all 9 built-in optimizer profiles reached Prepare OK,
+2-step Smoke OK, LoRA artifact OK, and Image Smoke OK.
+
 ## Phase 12.2: Recipe Wizard UX
 
 Phase 12.2 improves the Job creation flow on top of Recipe v2.
