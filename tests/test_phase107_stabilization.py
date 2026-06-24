@@ -2398,15 +2398,76 @@ class Phase107StabilizationTests(IsolatedDbTest):
         for recipe_id in {
             "sdxl_character_face_adamw8bit_smoke",
             "sdxl_character_face_adamw8bit_pilot_3epoch",
+            "sdxl_character_face_adamw8bit_soft",
+            "sdxl_character_face_adamw8bit_balanced",
+            "sdxl_character_face_adamw8bit_strong",
             "sdxl_character_face_adamw8bit_standard_6epoch",
             "sdxl_character_face_adamw8bit_standard_10epoch",
             "sdxl_character_face_adamw8bit_generalize",
+            "sdxl_character_face_paged_adamw8bit_balanced",
+            "sdxl_character_face_lion_soft_experimental",
             "sdxl_character_face_lion_balanced_experimental",
             "sdxl_character_face_adafactor_auto_advanced",
             "sdxl_character_face_dadapt_adam_auto_advanced",
             "sdxl_character_face_prodigy_soft_advanced",
+            "sdxl_style_adamw8bit_soft",
+            "sdxl_style_adamw8bit_balanced",
+            "sdxl_style_prodigy_soft_advanced",
+            "sdxl_style_adafactor_auto_advanced",
+            "sdxl_style_lion_experimental",
+            "sdxl_costume_adamw8bit_balanced",
+            "sdxl_costume_adamw8bit_strong",
+            "sdxl_costume_prodigy_soft_advanced",
+            "sd15_character_face_adamw8bit_balanced",
+            "sd15_character_face_adamw8bit_strong",
+            "sd15_style_adamw8bit_balanced",
         }:
             self.assertIn(recipe_id, recipes)
+
+    def test_phase1221_recipe_seed_supports_purpose_and_optimizer_entry_filters(self) -> None:
+        character_face_rows = fetch_all(
+            """
+            SELECT DISTINCT optimizer_definition_id
+            FROM training_recipes_v2
+            WHERE model_family = 'SDXL' AND training_purpose_id = 'character_face' AND is_active = 1
+            """
+        )
+        self.assertGreaterEqual(
+            len({row["optimizer_definition_id"] for row in character_face_rows}),
+            5,
+        )
+
+        prodigy_rows = fetch_all(
+            """
+            SELECT optimizer_definition_id, training_purpose_id
+            FROM training_recipes_v2
+            WHERE model_family = 'SDXL' AND optimizer_definition_id = 'Prodigy' AND is_active = 1
+            """
+        )
+        self.assertTrue(prodigy_rows)
+        self.assertTrue(all(row["optimizer_definition_id"] == "Prodigy" for row in prodigy_rows))
+        self.assertIn("style", {row["training_purpose_id"] for row in prodigy_rows})
+        self.assertIn("costume", {row["training_purpose_id"] for row in prodigy_rows})
+
+        lion_rows = fetch_all(
+            """
+            SELECT optimizer_definition_id, recipe_type
+            FROM training_recipes_v2
+            WHERE model_family = 'SDXL' AND optimizer_definition_id = 'Lion' AND is_active = 1
+            """
+        )
+        self.assertTrue(lion_rows)
+        self.assertTrue(all(row["optimizer_definition_id"] == "Lion" for row in lion_rows))
+        self.assertTrue(all(row["recipe_type"] == "experimental" for row in lion_rows))
+
+        style_rows = fetch_all(
+            """
+            SELECT id
+            FROM training_recipes_v2
+            WHERE model_family = 'SDXL' AND training_purpose_id = 'style' AND is_active = 1
+            """
+        )
+        self.assertGreaterEqual(len(style_rows), 5)
 
     def test_phase121_recipe_v2_job_creation_saves_snapshots(self) -> None:
         from app.db import create_job
@@ -2535,6 +2596,13 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertIn("Recipe Wizard UX", body)
         self.assertIn("Parameter Editor v2", body)
         self.assertIn("Compatibility Check", body)
+        self.assertIn("data-mode-summary", body)
+        self.assertIn("data-mode-change-button", body)
+        self.assertIn("data-selected-recipe-panel", body)
+        self.assertIn("data-recipe-result-count", body)
+        self.assertIn("data-optimizer-info-panel", body)
+        self.assertIn("この条件に合うRecipeはまだ登録されていません。", body)
+        self.assertIn("/jobs/new?mode=custom", body)
         self.assertIn("SDXL Character Face / AdamW8bit Standard 10 Epoch", recipe_body)
         self.assertIn("learning_rate=1.0", optimizer_body)
 

@@ -371,10 +371,31 @@ function recipeLabel(recipe) {
   return recipe.display_name || recipe.name || recipe.id;
 }
 
+function currentModeLabel(form) {
+  const mode = form.querySelector("[data-recipe-mode-input]")?.value || "purpose";
+  const modeLabels = {
+    purpose: "用途から選ぶ",
+    optimizer: "Optimizerから選ぶ",
+    derived: "既存Jobから派生",
+    custom: "完全カスタム",
+  };
+  return modeLabels[mode] || mode;
+}
+
 function currentRecipe(form) {
   const recipes = parseJsonScript("[data-recipes-v2-json]", form);
   const select = form.querySelector("[data-recipe-select]");
   return recipes.find((item) => item.id === select?.value) || null;
+}
+
+function recipeKeyParams(recipe) {
+  const params = recipe?.basic_params || recipe?.params || {};
+  const parts = [];
+  if (params.repeats !== undefined) parts.push(`repeats ${params.repeats}`);
+  if (params.max_train_epochs !== undefined) parts.push(`epoch ${params.max_train_epochs}`);
+  if (params.train_batch_size !== undefined) parts.push(`batch ${params.train_batch_size}`);
+  if (params.network_dim !== undefined) parts.push(`dim ${params.network_dim}`);
+  return parts.join(" / ") || "-";
 }
 
 function paramsEqual(a, b) {
@@ -490,6 +511,39 @@ function updateRecipeDetail(form) {
   `;
 }
 
+function updateSelectedRecipePanel(form) {
+  const panel = form.querySelector("[data-selected-recipe-panel]");
+  const summary = form.querySelector("[data-selected-recipe-summary]");
+  if (!panel || !summary) return;
+  const recipe = currentRecipe(form);
+  const params = resolveWizardParams(form);
+  const result = wizardCompatibility(form, recipe, params, form.querySelector("[data-param-editor-raw]")?.value || "");
+  const overrideCount = updateParamDiff(form);
+  const stepTotal = form.querySelector("[data-step-field='total_steps']")?.textContent || "-";
+  const createButton = form.querySelector("[data-selected-create-button]");
+  if (!recipe) {
+    summary.innerHTML = `<strong>未選択</strong><p class="muted">左のRecipeカードから選択してください。</p>`;
+    if (createButton) createButton.disabled = true;
+    return;
+  }
+  const riskClass = String(recipe.optimizer_category || "").includes("experimental") ? "warning" : "";
+  summary.innerHTML = `
+    <strong>${recipeLabel(recipe)}</strong>
+    <dl>
+      <dt>Optimizer</dt><dd>${recipe.optimizer_display_name || recipe.optimizer_definition_id || "-"}</dd>
+      <dt>Purpose</dt><dd>${recipe.purpose_display_name || recipe.training_purpose_id || "-"}</dd>
+      <dt>Target steps</dt><dd>${recipe.target_steps_min ?? "-"} / <strong>${recipe.target_steps_recommended ?? "-"}</strong> / ${recipe.target_steps_max ?? "-"}</dd>
+      <dt>Expected steps</dt><dd>${stepTotal}</dd>
+      <dt>Compatibility</dt><dd>${result.errors.length ? `ERROR ${result.errors.length}` : (result.warnings.length ? `WARNING ${result.warnings.length}` : "OK")}</dd>
+      <dt>Override</dt><dd>${overrideCount} 件</dd>
+      <dt>Risk</dt><dd><span class="label ${riskClass}">${recipe.risk_note || recipe.optimizer_category || "-"}</span></dd>
+    </dl>
+  `;
+  if (createButton) {
+    createButton.disabled = result.errors.length > 0;
+  }
+}
+
 function updateParamDiff(form) {
   const recipe = currentRecipe(form);
   const mode = form.querySelector("[data-recipe-mode-input]")?.value || "purpose";
@@ -567,14 +621,29 @@ function updateWizardState(form) {
   updateParamDiff(form);
   updateCompatibilityPanel(form);
   updateWizardSummary(form);
+  updateSelectedRecipePanel(form);
 }
 
-function buildRecipeCards(form) {
-  const grid = form.querySelector("[data-recipe-cards]");
-  if (!grid) return;
-  const recipes = parseJsonScript("[data-recipes-v2-json]", form);
-  grid.innerHTML = "";
-  recipes.forEach((recipe) => {
+function recipeMatchesFilters(recipe, filters) {
+  return Object.entries(filters).every(([key, value]) => {
+    return !value || String(recipe[key] || "") === String(value);
+  });
+}
+
+function recipeOptimizerGroup(recipe) {
+  const category = String(recipe.optimizer_category || "");
+  if (category.includes("experimental")) return "Experimental";
+  if (category.includes("auto_lr") || category.includes("advanced")) return "Auto-LR / Advanced";
+  if (category.includes("memory")) return "Memory Saving";
+  if (category.includes("stable")) return "Stable";
+  return "Custom";
+}
+
+function recipePurposeGroup(recipe) {
+  return recipe.purpose_display_name || recipe.training_purpose_id || "Custom";
+}
+
+function appendRecipeCard(form, grid, recipe) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "recipe-choice-card";
@@ -585,10 +654,17 @@ function buildRecipeCards(form) {
     button.setAttribute("data-profile-id", recipe.optimizer_profile_id || "");
     button.setAttribute("data-network-id", recipe.network_type_id || "");
     button.setAttribute("data-recipe-type", recipe.recipe_type || "");
+    const risk = recipe.risk_note || recipe.optimizer_risk_note || "";
+    const recommended = recipe.recipe_type === "balanced" || recipe.recipe_type === "balanced_long";
     button.innerHTML = `
+      ${recommended ? '<span class="recipe-recommend-badge">おすすめ</span>' : ''}
       <strong>${recipeLabel(recipe)}</strong>
       <span>${recipe.purpose_display_name || recipe.training_purpose_id || "-"} / ${recipe.optimizer_display_name || recipe.optimizer_definition_id || "-"}</span>
-      <small>${recipe.recipe_type || "-"} / ${recipe.optimizer_category || "-"} / target ${recipe.target_steps_recommended ?? "-"}</small>
+      <small>${recipe.recipe_type || "-"} / ${recipe.optimizer_category || "-"} / target ${recipe.target_steps_min ?? "-"} / ${recipe.target_steps_recommended ?? "-"} / ${recipe.target_steps_max ?? "-"}</small>
+      <small>key params: ${recipeKeyParams(recipe)}</small>
+      <small>${recipe.expected_behavior || "-"}</small>
+      ${risk ? `<span class="label warning">${risk}</span>` : ''}
+      <span class="button small-button recipe-card-action">このRecipeを選択</span>
     `;
     button.addEventListener("click", () => {
       const select = form.querySelector("[data-recipe-select]");
@@ -598,7 +674,102 @@ function buildRecipeCards(form) {
       }
     });
     grid.appendChild(button);
+}
+
+function renderRecipeCards(form, filters = {}) {
+  const grid = form.querySelector("[data-recipe-cards]");
+  if (!grid) return;
+  const recipes = parseJsonScript("[data-recipes-v2-json]", form);
+  const mode = form.querySelector("[data-recipe-mode-input]")?.value || "purpose";
+  const filtered = recipes.filter((recipe) => recipeMatchesFilters(recipe, filters));
+  const selectedId = form.querySelector("[data-recipe-select]")?.value || "";
+  const countNode = form.querySelector("[data-recipe-result-count]");
+  const hintNode = form.querySelector("[data-recipe-group-hint]");
+  const emptyTemplate = form.querySelector("[data-recipe-empty-state]");
+  if (countNode) countNode.textContent = `${filtered.length}件`;
+  if (hintNode) {
+    hintNode.textContent = mode === "optimizer"
+      ? "選択Optimizerで使えるRecipeを用途別に表示しています。"
+      : "用途に合うRecipeをOptimizerカテゴリ別に表示しています。";
+  }
+  grid.innerHTML = "";
+
+  if (!filtered.length) {
+    if (emptyTemplate) emptyTemplate.hidden = false;
+    return;
+  }
+  if (emptyTemplate) emptyTemplate.hidden = true;
+
+  const groups = new Map();
+  filtered.forEach((recipe) => {
+    const groupName = mode === "optimizer" ? recipePurposeGroup(recipe) : recipeOptimizerGroup(recipe);
+    if (!groups.has(groupName)) groups.set(groupName, []);
+    groups.get(groupName).push(recipe);
   });
+
+  const order = mode === "optimizer"
+    ? ["Character Face", "Style", "Costume", "Custom"]
+    : ["Stable", "Memory Saving", "Auto-LR / Advanced", "Experimental", "Custom"];
+  Array.from(groups.keys())
+    .sort((a, b) => {
+      const ai = order.indexOf(a);
+      const bi = order.indexOf(b);
+      if (ai !== -1 || bi !== -1) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+      return a.localeCompare(b);
+    })
+    .forEach((groupName) => {
+      const heading = document.createElement("h3");
+      heading.className = "recipe-card-group";
+      heading.textContent = groupName;
+      grid.appendChild(heading);
+      groups.get(groupName).forEach((recipe) => {
+        appendRecipeCard(form, grid, recipe);
+        const card = grid.querySelector(`[data-recipe-card="${CSS.escape(recipe.id)}"]`);
+        if (card) card.classList.toggle("active", card.getAttribute("data-recipe-card") === selectedId);
+      });
+    });
+}
+
+function optionBaseLabel(option) {
+  if (!option.dataset.baseLabel) {
+    option.dataset.baseLabel = option.textContent.replace(/\s+\(\d+\)$/, "");
+  }
+  return option.dataset.baseLabel;
+}
+
+function updateFilterOptionCounts(form, currentFilters) {
+  const recipes = parseJsonScript("[data-recipes-v2-json]", form);
+  form.querySelectorAll("[data-recipe-filter]").forEach((select) => {
+    const key = select.getAttribute("data-recipe-filter");
+    if (!key) return;
+    Array.from(select.options).forEach((option) => {
+      const base = optionBaseLabel(option);
+      if (!option.value) {
+        option.textContent = base;
+        option.disabled = false;
+        option.hidden = false;
+        return;
+      }
+      const testFilters = { ...currentFilters, [key]: option.value };
+      const count = recipes.filter((recipe) => recipeMatchesFilters(recipe, testFilters)).length;
+      option.textContent = `${base} (${count})`;
+      option.disabled = count === 0;
+      option.hidden = count === 0;
+    });
+  });
+}
+
+function updateModeSummary(form, { expanded = false } = {}) {
+  const label = form.querySelector("[data-mode-summary-label]");
+  const cards = form.querySelector("[data-mode-cards]");
+  if (label) label.textContent = currentModeLabel(form);
+  if (cards) {
+    cards.classList.toggle("collapsed", !expanded);
+  }
+}
+
+function buildRecipeCards(form) {
+  renderRecipeCards(form, {});
 }
 
 function syncOptimizerProfileFilter(form) {
@@ -612,6 +783,7 @@ function syncOptimizerProfileFilter(form) {
   const modelFamily = form.querySelector("[data-recipe-filter='model_family']")?.value || "";
   const recipeType = form.querySelector("[data-recipe-filter='recipe_type']")?.value || "";
   const networkType = form.querySelector("[data-recipe-filter='network_type_id']")?.value || "";
+  const purposeId = form.querySelector("[data-recipe-filter='training_purpose_id']")?.value || "";
   const recipeOptions = recipeSelect ? Array.from(recipeSelect.options).filter((option) => option.value) : [];
   let selectedVisible = false;
   Array.from(profileSelect.options).forEach((option) => {
@@ -621,7 +793,8 @@ function syncOptimizerProfileFilter(form) {
         && (!optimizerId || recipeOption.getAttribute("data-optimizer-id") === optimizerId)
         && (!modelFamily || recipeOption.getAttribute("data-model-family") === modelFamily)
         && (!recipeType || recipeOption.getAttribute("data-recipe-type") === recipeType)
-        && (!networkType || recipeOption.getAttribute("data-network-id") === networkType);
+        && (!networkType || recipeOption.getAttribute("data-network-id") === networkType)
+        && (!purposeId || recipeOption.getAttribute("data-purpose-id") === purposeId);
     });
     const visible = !option.value || ((!optimizerId || profileOptimizerId === optimizerId) && hasMatchingRecipe);
     option.hidden = !visible;
@@ -633,6 +806,37 @@ function syncOptimizerProfileFilter(form) {
   if (!selectedVisible) {
     profileSelect.value = "";
   }
+}
+
+function updateOptimizerInfoPanel(form) {
+  const panel = form.querySelector("[data-optimizer-info-panel]");
+  if (!panel) return;
+  const mode = form.querySelector("[data-recipe-mode-input]")?.value || "purpose";
+  const optimizerId = form.querySelector("[data-recipe-filter='optimizer_definition_id']")?.value || "";
+  if (mode !== "optimizer" || !optimizerId) {
+    panel.hidden = true;
+    panel.innerHTML = "";
+    return;
+  }
+  const optimizers = parseJsonScript("[data-optimizers-v2-json]", form);
+  const optimizer = optimizers.find((item) => item.id === optimizerId);
+  if (!optimizer) {
+    panel.hidden = true;
+    panel.innerHTML = "";
+    return;
+  }
+  const notes = Array.isArray(optimizer.compatibility_notes) ? optimizer.compatibility_notes.join(" / ") : "";
+  panel.hidden = false;
+  panel.innerHTML = `
+    <strong>${optimizer.display_name || optimizer.id}</strong>
+    <dl>
+      <dt>LR意味</dt><dd>${optimizer.lr_semantics || "-"}</dd>
+      <dt>default LR</dt><dd>${optimizer.default_learning_rate ?? "-"} / UNet ${optimizer.default_unet_lr ?? "-"} / TE ${optimizer.default_text_encoder_lr ?? "-"}</dd>
+      <dt>target steps</dt><dd>${optimizer.target_steps_min ?? "-"} / <strong>${optimizer.target_steps_recommended ?? "-"}</strong> / ${optimizer.target_steps_max ?? "-"}</dd>
+      <dt>注意</dt><dd>${optimizer.risk_note || "-"}</dd>
+      <dt>互換メモ</dt><dd>${notes || "-"}</dd>
+    </dl>
+  `;
 }
 
 function applyRecipeFilters(form) {
@@ -649,7 +853,7 @@ function applyRecipeFilters(form) {
   if (purposeField) purposeField.hidden = mode === "optimizer";
   if (optimizerField) optimizerField.hidden = mode === "purpose";
   if (profileField) profileField.hidden = mode !== "optimizer";
-  if (networkField) networkField.hidden = mode !== "optimizer";
+  if (networkField) networkField.hidden = mode !== "custom";
   const parentField = form.querySelector("[data-derived-parent-field]");
   if (parentField) parentField.hidden = mode !== "derived";
 
@@ -667,7 +871,12 @@ function applyRecipeFilters(form) {
   }
   if (mode === "optimizer") {
     delete filters.training_purpose_id;
+    delete filters.network_type_id;
   }
+  if (mode !== "custom") {
+    delete filters.network_type_id;
+  }
+  updateFilterOptionCounts(form, filters);
 
   let selectedVisible = false;
   Array.from(recipeSelect.options).forEach((option) => {
@@ -696,23 +905,9 @@ function applyRecipeFilters(form) {
   if (!selectedVisible && recipeSelect.value) {
     recipeSelect.value = "";
   }
-  form.querySelectorAll("[data-recipe-card]").forEach((card) => {
-    card.classList.toggle("active", card.getAttribute("data-recipe-card") === recipeSelect.value);
-  });
-  form.querySelectorAll("[data-recipe-card]").forEach((card) => {
-    const visible = Object.entries(filters).every(([key, value]) => {
-      const attr = {
-        model_family: "model-family",
-        training_purpose_id: "purpose-id",
-        optimizer_definition_id: "optimizer-id",
-        optimizer_profile_id: "profile-id",
-        network_type_id: "network-id",
-        recipe_type: "recipe-type",
-      }[key];
-      return !value || card.getAttribute(`data-${attr}`) === value;
-    });
-    card.hidden = !visible;
-  });
+  renderRecipeCards(form, filters);
+  updateOptimizerInfoPanel(form);
+  updateModeSummary(form);
   updateWizardState(form);
 }
 
@@ -762,12 +957,17 @@ function initRecipeSelectors() {
             select.dispatchEvent(new Event("change", { bubbles: true }));
           }
         }
+        updateModeSummary(form);
         applyRecipeFilters(form);
         refreshStepEstimate(form);
       });
     });
+    form.querySelector("[data-mode-change-button]")?.addEventListener("click", () => {
+      updateModeSummary(form, { expanded: true });
+    });
     const currentMode = form.querySelector("[data-recipe-mode-input]")?.value || "purpose";
     form.querySelector(`[data-mode-card='${currentMode}']`)?.classList.add("active");
+    updateModeSummary(form, { expanded: !new URLSearchParams(window.location.search).has("mode") });
     applyRecipeFilters(form);
     updateWizardState(form);
     form.addEventListener("change", (event) => {

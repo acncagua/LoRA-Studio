@@ -34,6 +34,7 @@
 <form method="post" action="/jobs" class="form-grid wide recipe-wizard" data-recipe-wizard>
   <input type="hidden" name="repeats_auto_calculated" value="0" data-repeats-auto-calculated>
   <script type="application/json" data-recipes-v2-json>{{ recipes_v2_json|tojson }}</script>
+  <script type="application/json" data-optimizers-v2-json>{{ optimizers_v2_json|tojson }}</script>
   <script type="application/json" data-step-presets-json>{{ step_estimator_presets|tojson }}</script>
   <script type="application/json" data-step-dataset-versions-json>{{ dataset_versions_json|tojson }}</script>
 
@@ -48,8 +49,11 @@
 
   <fieldset id="wizard-mode" class="form-fieldset wide-field">
     <legend>1. 作成方法</legend>
-    <p class="muted">通常は「用途から選ぶ」から始めます。Optimizerを先に比較したい場合だけ「Optimizerから選ぶ」を使います。</p>
     <input type="hidden" name="job_creation_mode" value="{{ initial_job_creation_mode }}" data-recipe-mode-input>
+    <div class="mode-summary" data-mode-summary>
+      <span>作成モード: <strong data-mode-summary-label>用途から選ぶ</strong></span>
+      <button type="button" class="button secondary small-button" data-mode-change-button>変更</button>
+    </div>
     <div class="choice-card-grid" data-mode-cards>
       <button type="button" class="choice-card" data-mode-card="purpose">
         <strong>用途から選ぶ</strong>
@@ -113,33 +117,13 @@
 
   <fieldset id="wizard-recipe" class="form-fieldset wide-field">
     <legend>3. Recipe</legend>
-    <p class="muted">カードを選ぶとTraining Recipe v2がセットされ、Step EstimateとCompatibility Checkが更新されます。</p>
+    <p class="muted">最終的に使うRecipeカードを選択してください。作成モードとフィルタは候補を探すための補助操作です。</p>
     <div class="form-grid compact-grid" data-recipe-filters>
       <label>Model Family
         <select data-recipe-filter="model_family">
           <option value="">すべて</option>
           <option value="SDXL">SDXL</option>
           <option value="SD15">SD15</option>
-        </select>
-      </label>
-      <label data-purpose-filter-field>用途
-        <select data-recipe-filter="training_purpose_id">
-          <option value="">すべて</option>
-          {% for purpose in training_purposes %}
-          <option value="{{ purpose.id }}">{{ purpose.display_name }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label>Recipe Type
-        <select data-recipe-filter="recipe_type">
-          <option value="">すべて</option>
-          <option value="smoke">smoke</option>
-          <option value="pilot">pilot</option>
-          <option value="balanced">balanced</option>
-          <option value="balanced_long">balanced_long</option>
-          <option value="generalize">generalize</option>
-          <option value="advanced">advanced</option>
-          <option value="experimental">experimental</option>
         </select>
       </label>
       <label data-optimizer-filter-field>Optimizer
@@ -158,6 +142,28 @@
           {% endfor %}
         </select>
       </label>
+      <label data-purpose-filter-field>用途
+        <select data-recipe-filter="training_purpose_id">
+          <option value="">すべて</option>
+          {% for purpose in training_purposes %}
+          <option value="{{ purpose.id }}">{{ purpose.display_name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Recipe Type
+        <select data-recipe-filter="recipe_type">
+          <option value="">すべて</option>
+          <option value="smoke">smoke</option>
+          <option value="pilot">pilot</option>
+          <option value="soft">soft</option>
+          <option value="balanced">balanced</option>
+          <option value="balanced_long">balanced_long</option>
+          <option value="strong">strong</option>
+          <option value="generalize">generalize</option>
+          <option value="advanced">advanced</option>
+          <option value="experimental">experimental</option>
+        </select>
+      </label>
       <label data-network-filter-field>Network Type
         <select data-recipe-filter="network_type_id">
           <option value="">すべて</option>
@@ -167,7 +173,8 @@
         </select>
       </label>
     </div>
-    <label>Training Recipe v2
+    <div class="notice compact" data-optimizer-info-panel hidden></div>
+    <label class="compact-recipe-select">Training Recipe v2
       <select name="recipe_v2_id" data-recipe-select>
         <option value="">旧形式プリセット / Custom</option>
         {% for recipe in recipes_v2 %}
@@ -183,10 +190,23 @@
         {% endfor %}
       </select>
     </label>
-    <div class="recipe-card-grid" data-recipe-cards></div>
-    <div class="notice compact" data-recipe-detail>
-      <strong>Recipe未選択</strong>
-      <p class="muted">Recipeカードを選択してください。</p>
+    <div class="recipe-selection-layout">
+      <section class="recipe-candidates-panel" aria-label="Recipe候補">
+        <div class="recipe-candidates-head">
+          <h3>Recipe候補 <span data-recipe-result-count>0件</span></h3>
+          <p class="muted" data-recipe-group-hint>用途に合うRecipeをOptimizerカテゴリ別に表示しています。</p>
+        </div>
+        <div class="recipe-card-grid" data-recipe-cards></div>
+        <p class="recipe-card-empty notice" data-recipe-empty-state hidden>この条件に合うRecipeはまだ登録されていません。<a href="/jobs/new?mode=custom">Customで作成</a>するか、<a href="/training-recipes">Recipe Library</a>で追加してください。</p>
+      </section>
+      <aside class="selected-recipe-panel" data-selected-recipe-panel>
+        <h3>選択中Recipe</h3>
+        <div data-selected-recipe-summary>
+          <strong>未選択</strong>
+          <p class="muted">左のRecipeカードから選択してください。</p>
+        </div>
+        <button type="submit" data-wizard-submit data-selected-create-button disabled>Jobを作成</button>
+      </aside>
     </div>
     <details class="wide-field">
       <summary>旧形式プリセット（legacy）</summary>
@@ -375,7 +395,6 @@
       <div><span>差分</span><strong data-summary-diff>-</strong></div>
     </div>
     <p class="muted">作成後はJob詳細でRecipe Snapshot、Resolved Params、User Overrides Diffを確認できます。</p>
-    <button type="submit" data-wizard-submit>学習ジョブの下書きを作成</button>
   </section>
 </form>
 {% endblock %}

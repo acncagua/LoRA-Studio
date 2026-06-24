@@ -3142,6 +3142,15 @@ def job_new(request: Request, project_id: str = Query(""), mode: str = Query("")
             for row in recipes_v2
         ],
         optimizers_v2=optimizers_v2,
+        optimizers_v2_json=[
+            {
+                **dict(row),
+                "allowed_schedulers": safe_json_loads(row["allowed_schedulers_json"], []),
+                "optimizer_args_schema": safe_json_loads(row["optimizer_args_schema_json"], {}),
+                "compatibility_notes": safe_json_loads(row["compatibility_notes_json"], []),
+            }
+            for row in optimizers_v2
+        ],
         optimizer_profiles_v2=optimizer_profiles_v2,
         training_purposes=training_purposes,
         network_types=network_types,

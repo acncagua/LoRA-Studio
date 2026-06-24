@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased - Phase 12.2.1
+
+Phase 12.2.1 expands the built-in Recipe v2 master data and makes the Job creation Wizard put Recipe selection at the center of the screen, with different candidate views for purpose-first and optimizer-first workflows.
+
+### 主な変更
+
+- SDXL Character Face / Style / Costume と SD1.5向けのBuilt-in Recipeを追加しました。
+- 用途から選ぶ入口では、目的に合うRecipe候補をOptimizerカテゴリ別に表示するようにしました。
+- Optimizerから選ぶ入口では、選択Optimizerで使えるRecipe候補をPurpose別に表示するようにしました。
+- mode選択後は作成入口カードを折りたたみ、Recipe候補と選択中Recipeパネルを主役にしました。
+- フィルタoptionに候補件数を表示し、0件候補は選べないようにしました。
+- Recipeカードにtarget steps、key params、expected behavior、risk、選択ボタンを表示しました。
+- Optimizer入口にLR意味、default LR、target steps、risk、compatibility notesを確認できる説明パネルを追加しました。
+- 条件に合うRecipeがない場合のEmpty stateを追加しました。
+
 ## phase12.2 / v0.5.0-beta - 2026-06-23
 
 LoRA Studio Phase 12.2 improves the Recipe v2 Job creation experience with a wizard-style flow, Recipe cards, Parameter Editor v2, structured override diffs, and richer Recipe / Optimizer browsing.
