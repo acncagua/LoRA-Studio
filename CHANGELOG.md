@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased - Phase 12.3
+## phase12.3 / v0.5.2-beta - 2026-06-24
 
 Phase 12.3 adds an Optimizer Profile Validation / Smoke Test foundation so Recipe v2 entries can show whether their optimizer profile has been prepared or smoke-tested against sd-scripts.
 
