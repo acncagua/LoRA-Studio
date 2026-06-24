@@ -7,6 +7,8 @@
     <a class="button secondary" href="/training-recipes?optimizer={{ optimizer.id }}">関連Recipe</a>
   </div>
 </header>
+{% if message %}<p class="notice">{{ message }}</p>{% endif %}
+{% if error %}<p class="notice warning">{{ error }}</p>{% endif %}
 
 <section class="notice">
   <h2>Optimizer概要</h2>
@@ -43,19 +45,87 @@
 </section>
 
 <section>
-  <h2>Profiles</h2>
+  <h2>Optimizer Profile Validation</h2>
+  <p class="muted">Prepare / Smoke Testは品質評価ではなく、sd-scriptsで起動できるかを確認するための検証です。Smoke OKでも実用品質は保証しません。</p>
   <table class="wide-table compact-table">
-    <thead><tr><th>ID</th><th>model</th><th>profile</th><th>LR</th><th>scheduler</th><th>target</th><th>説明</th></tr></thead>
+    <thead><tr><th>ID</th><th>model</th><th>profile</th><th>検証</th><th>sd-scripts</th><th>LR</th><th>scheduler</th><th>target</th><th>説明</th><th>Test</th></tr></thead>
     <tbody>
       {% for item in profiles %}
+      {% set badge = profile_badges.get(item.id) %}
+      {% set last_result = profile_results.get(item.id) %}
+      {% set related = recipes|selectattr("optimizer_profile_id", "equalto", item.id)|list %}
       <tr>
         <td><code>{{ item.id }}</code></td>
         <td>{{ item.model_family }}</td>
         <td><span class="label {{ item.profile_type }}">{{ item.profile_type }}</span></td>
+        <td>
+          <span class="label {{ badge.class if badge else 'warning' }}">{{ badge.text if badge else item.validation_status }}</span>
+          {% if item.last_tested_at %}<br><small>{{ item.last_tested_at }}</small>{% endif %}
+          {% if last_result %}
+          <br><small>{{ last_result.test_type }} / {{ last_result.status }} / rc {{ last_result.return_code if last_result.return_code is not none else '-' }}</small>
+          {% if last_result.log_path %}<br><small>{{ last_result.log_path }}</small>{% endif %}
+          {% endif %}
+        </td>
+        <td>
+          <strong>{{ item.sd_scripts_optimizer_type or optimizer.sd_scripts_optimizer_type or item.optimizer_definition_id }}</strong>
+          {% if item.command_params_json %}<br><small>command params登録済み</small>{% endif %}
+          {% if item.smoke_params_json %}<br><small>smoke params登録済み</small>{% endif %}
+        </td>
         <td>{{ item.default_learning_rate if item.default_learning_rate is not none else '-' }} / {{ item.default_unet_lr if item.default_unet_lr is not none else '-' }} / {{ item.default_text_encoder_lr if item.default_text_encoder_lr is not none else '-' }}</td>
         <td>{{ item.default_scheduler or '-' }}</td>
         <td>{{ item.target_steps_min }} / {{ item.target_steps_recommended }} / {{ item.target_steps_max }}</td>
         <td>{{ item.description or '-' }}{% if item.risk_note %}<br><span class="warning">{{ item.risk_note }}</span>{% endif %}</td>
+        <td>
+          <form method="post" action="/optimizers/{{ optimizer.id }}/profiles/{{ item.id }}/prepare-test" class="compact-form">
+            <label>Dataset
+              <select name="dataset_id" required>
+                {% for dataset in datasets %}
+                <option value="{{ dataset.id }}">#{{ dataset.id }} {{ dataset.name }} ({{ dataset.image_count or 0 }})</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>Recipe
+              <select name="recipe_id">
+                <option value="">Profileの先頭Recipe</option>
+                {% for recipe in related %}
+                <option value="{{ recipe.id }}">{{ recipe.short_label or recipe.display_name }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>base model<input name="base_model_path" value="{{ default_base_model_path }}" required></label>
+            <button type="submit" class="small-button">Prepare Test Job</button>
+          </form>
+          <form method="post" action="/optimizers/{{ optimizer.id }}/profiles/{{ item.id }}/smoke-test" class="compact-form">
+            <label>Dataset
+              <select name="dataset_id" required>
+                {% for dataset in datasets %}
+                <option value="{{ dataset.id }}">#{{ dataset.id }} {{ dataset.name }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>Recipe
+              <select name="recipe_id">
+                <option value="">Profileの先頭Recipe</option>
+                {% for recipe in related %}
+                <option value="{{ recipe.id }}">{{ recipe.short_label or recipe.display_name }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>base model<input name="base_model_path" value="{{ default_base_model_path }}" required></label>
+            <button type="submit" class="small-button">Run 2-step Smoke Test</button>
+          </form>
+          <form method="post" action="/optimizers/{{ optimizer.id }}/profiles/{{ item.id }}/mini-pilot" class="compact-form">
+            <label>Recipe
+              <select name="recipe_id">
+                <option value="">Profileの先頭Recipe</option>
+                {% for recipe in related %}
+                <option value="{{ recipe.id }}">{{ recipe.short_label or recipe.display_name }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <button type="submit" class="small-button secondary">Run Mini Pilot</button>
+          </form>
+        </td>
       </tr>
       {% endfor %}
     </tbody>
@@ -65,18 +135,19 @@
 <section>
   <h2>関連Recipe</h2>
   <table class="wide-table compact-table">
-    <thead><tr><th>Recipe</th><th>用途</th><th>Network</th><th>type</th><th>target</th></tr></thead>
+    <thead><tr><th>Recipe</th><th>用途</th><th>Network</th><th>type</th><th>Smoke</th><th>target</th></tr></thead>
     <tbody>
       {% for recipe in recipes %}
       <tr>
-        <td><a href="/training-recipes/{{ recipe.id }}">{{ recipe.display_name }}</a></td>
+        <td><a href="/training-recipes/{{ recipe.id }}">{{ recipe.short_label or recipe.display_name }}</a></td>
         <td>{{ recipe.purpose_display_name or recipe.training_purpose_id or '-' }}</td>
         <td>{{ recipe.network_type_display_name or recipe.network_type_id or '-' }}</td>
         <td><span class="label {{ recipe.recipe_type }}">{{ recipe.recipe_type }}</span></td>
+        <td><span class="label {{ 'ok' if recipe.optimizer_profile_validation_status in ['smoke_ok', 'mini_pilot_ok'] else ('error' if recipe.optimizer_profile_validation_status == 'smoke_failed' else 'warning') }}">{{ recipe.optimizer_profile_validation_status or 'untested' }}</span></td>
         <td>{{ recipe.target_steps_min }} / {{ recipe.target_steps_recommended }} / {{ recipe.target_steps_max }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="5" class="muted">関連Recipeはありません。</td></tr>
+      <tr><td colspan="6" class="muted">関連Recipeはありません。</td></tr>
       {% endfor %}
     </tbody>
   </table>

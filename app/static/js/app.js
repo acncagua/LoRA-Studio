@@ -369,7 +369,14 @@ function recipeLabel(recipe) {
   if (!recipe) {
     return "Recipe未選択";
   }
-  return recipe.display_name || recipe.name || recipe.id;
+  return recipe.short_label || recipe.display_name || recipe.name || recipe.id;
+}
+
+function recipeFullLabel(recipe) {
+  if (!recipe) {
+    return "Recipe未選択";
+  }
+  return recipe.full_label || recipe.display_name || recipe.name || recipe.id;
 }
 
 function currentModeLabel(form) {
@@ -443,6 +450,18 @@ function wizardCompatibility(form, recipe, params, rawText = "") {
     }
     if (recipe.risk_note) {
       notes.push(recipe.risk_note);
+    }
+    const validationStatus = recipe.optimizer_profile_validation_status || "untested";
+    if (validationStatus === "untested") {
+      warnings.push("Optimizer ProfileはSmoke Test未検証です。AdamW8bit以外ではOptimizer詳細からSmoke Testを実行してから使うことを推奨します。");
+    } else if (validationStatus === "prepare_ok") {
+      warnings.push("Optimizer ProfileはPrepare TestのみOKです。2-step Smoke Testは未実行です。");
+    } else if (validationStatus === "smoke_failed") {
+      warnings.push("Optimizer Profileの前回Smoke Testが失敗しています。依存関係・optimizer指定・ログを確認してください。");
+    } else if (validationStatus === "disabled") {
+      warnings.push("Optimizer Profileはdisabled扱いです。通常運用では選択しないでください。");
+    } else if (validationStatus === "smoke_ok" || validationStatus === "mini_pilot_ok") {
+      notes.push(`Optimizer Profile validation: ${validationStatus}`);
     }
     const category = String(recipe.optimizer_category || "");
     if (category.includes("advanced") || category.includes("experimental")) {
@@ -528,6 +547,7 @@ function updateSelectedRecipePanel(form) {
     return;
   }
   const riskClass = String(recipe.optimizer_category || "").includes("experimental") ? "warning" : "";
+  const validation = recipeValidationBadge(recipe);
   summary.innerHTML = `
     <strong>${recipeLabel(recipe)}</strong>
     <dl>
@@ -536,6 +556,7 @@ function updateSelectedRecipePanel(form) {
       <dt>Target steps</dt><dd>${recipe.target_steps_min ?? "-"} / <strong>${recipe.target_steps_recommended ?? "-"}</strong> / ${recipe.target_steps_max ?? "-"}</dd>
       <dt>Expected steps</dt><dd>${stepTotal}</dd>
       <dt>Compatibility</dt><dd>${result.errors.length ? `ERROR ${result.errors.length}` : (result.warnings.length ? `WARNING ${result.warnings.length}` : "OK")}</dd>
+      <dt>Smoke</dt><dd><span class="label ${validation.klass}">${validation.text}</span></dd>
       <dt>Override</dt><dd>${overrideCount} 件</dd>
       <dt>Risk</dt><dd><span class="label ${riskClass}">${recipe.risk_note || recipe.optimizer_category || "-"}</span></dd>
     </dl>
@@ -644,6 +665,19 @@ function recipePurposeGroup(recipe) {
   return recipe.purpose_display_name || recipe.training_purpose_id || "Custom";
 }
 
+function recipeValidationBadge(recipe) {
+  const status = recipe?.optimizer_profile_validation_status || "untested";
+  const map = {
+    untested: { text: "Untested", klass: "warning" },
+    prepare_ok: { text: "Prepare OK", klass: "ok" },
+    smoke_ok: { text: "Smoke OK", klass: "ok" },
+    smoke_failed: { text: "Failed", klass: "error" },
+    mini_pilot_ok: { text: "Mini Pilot OK", klass: "ok" },
+    disabled: { text: "Disabled", klass: "error" },
+  };
+  return map[status] || { text: status, klass: "warning" };
+}
+
 function appendRecipeCard(form, grid, recipe) {
     const button = document.createElement("button");
     button.type = "button";
@@ -656,12 +690,15 @@ function appendRecipeCard(form, grid, recipe) {
     button.setAttribute("data-network-id", recipe.network_type_id || "");
     button.setAttribute("data-recipe-type", recipe.recipe_type || "");
     const risk = recipe.risk_note || recipe.optimizer_risk_note || "";
-    const recommended = recipe.recipe_type === "balanced" || recipe.recipe_type === "balanced_long";
+    const recommended = recipe.recommended_badge || ((recipe.recipe_type === "balanced" || recipe.recipe_type === "balanced_long") ? "おすすめ" : "");
+    const difficulty = recipe.difficulty_label || recipe.optimizer_category || "-";
+    const validation = recipeValidationBadge(recipe);
     button.innerHTML = `
-      ${recommended ? '<span class="recipe-recommend-badge">おすすめ</span>' : ''}
+      ${recommended ? `<span class="recipe-recommend-badge">${recommended}</span>` : ''}
       <strong>${recipeLabel(recipe)}</strong>
-      <span>${recipe.purpose_display_name || recipe.training_purpose_id || "-"} / ${recipe.optimizer_display_name || recipe.optimizer_definition_id || "-"}</span>
-      <small>${recipe.recipe_type || "-"} / ${recipe.optimizer_category || "-"} / target ${recipe.target_steps_min ?? "-"} / ${recipe.target_steps_recommended ?? "-"} / ${recipe.target_steps_max ?? "-"}</small>
+      <span>${recipe.card_subtitle || `${recipe.optimizer_display_name || recipe.optimizer_definition_id || "-"} / ${recipe.recipe_type || "-"}`}</span>
+      <small>${recipe.model_family || "-"} / ${recipe.purpose_display_name || recipe.training_purpose_id || "-"} / ${recipe.optimizer_display_name || recipe.optimizer_definition_id || "-"}</small>
+      <small><span class="label ${validation.klass}">${validation.text}</span> ${difficulty} / target ${recipe.target_steps_min ?? "-"} / ${recipe.target_steps_recommended ?? "-"} / ${recipe.target_steps_max ?? "-"}</small>
       <small>key params: ${recipeKeyParams(recipe)}</small>
       <small>${recipe.expected_behavior || "-"}</small>
       ${risk ? `<span class="label warning">${risk}</span>` : ''}
@@ -723,11 +760,13 @@ function renderRecipeCards(form, filters = {}) {
       heading.className = "recipe-card-group";
       heading.textContent = groupName;
       grid.appendChild(heading);
-      groups.get(groupName).forEach((recipe) => {
-        appendRecipeCard(form, grid, recipe);
-        const card = grid.querySelector(`[data-recipe-card="${CSS.escape(recipe.id)}"]`);
-        if (card) card.classList.toggle("active", card.getAttribute("data-recipe-card") === selectedId);
-      });
+      groups.get(groupName)
+        .sort((a, b) => Number(a.sort_order || 9999) - Number(b.sort_order || 9999) || recipeFullLabel(a).localeCompare(recipeFullLabel(b)))
+        .forEach((recipe) => {
+          appendRecipeCard(form, grid, recipe);
+          const card = grid.querySelector(`[data-recipe-card="${CSS.escape(recipe.id)}"]`);
+          if (card) card.classList.toggle("active", card.getAttribute("data-recipe-card") === selectedId);
+        });
     });
 }
 

@@ -42,7 +42,7 @@
   <h2>Optimizer Profiles</h2>
   <div class="table-scroll">
     <table class="wide-table compact-table">
-      <thead><tr><th>ID</th><th>Optimizer</th><th>model</th><th>profile</th><th>LR</th><th>target</th><th>risk</th></tr></thead>
+      <thead><tr><th>ID</th><th>Optimizer</th><th>model</th><th>profile</th><th>検証</th><th>LR</th><th>target</th><th>risk</th></tr></thead>
       <tbody>
         {% for item in profiles %}
         <tr>
@@ -50,6 +50,7 @@
           <td><a href="/optimizers/{{ item.optimizer_definition_id }}">{{ item.optimizer_display_name }}</a></td>
           <td>{{ item.model_family }}</td>
           <td><span class="label {{ item.profile_type }}">{{ item.profile_type }}</span></td>
+          <td><span class="label {{ 'ok' if item.validation_status in ['smoke_ok', 'mini_pilot_ok'] else ('error' if item.validation_status == 'smoke_failed' else 'warning') }}">{{ item.validation_status or 'untested' }}</span></td>
           <td>{{ item.default_learning_rate if item.default_learning_rate is not none else '-' }} / {{ item.default_unet_lr if item.default_unet_lr is not none else '-' }} / {{ item.default_text_encoder_lr if item.default_text_encoder_lr is not none else '-' }}</td>
           <td>{{ item.target_steps_min }} / <strong>{{ item.target_steps_recommended }}</strong> / {{ item.target_steps_max }}</td>
           <td>{{ item.risk_note or '-' }}</td>

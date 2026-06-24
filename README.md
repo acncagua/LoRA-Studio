@@ -22,7 +22,7 @@ than training itself.
 ## Status
 
 Current release: v0.5.1-beta
-Development phase: Phase 12.2.1
+Development phase: Phase 12.3
 
 The core workflow is operational and
 actively used for local LoRA production,
@@ -58,6 +58,47 @@ for the entire LoRA lifecycle.
 - Machine Review Assist
 - Storage Cleanup Support
 
+## Phase 12.3: Optimizer Profile Validation
+
+Phase 12.3 adds a validation layer for Optimizer Profiles and Recipe v2 entries.
+The goal is to check whether a registered optimizer profile can prepare and start
+through sd-scripts before users rely on it for real training.
+
+The built-in optimizer master now stores sd-scripts-facing profile parameters:
+
+- `sd_scripts_optimizer_type`
+- required / recommended params for each optimizer profile
+- command params used for normal Job preparation
+- smoke params used for 2-step startup checks
+- dependency notes such as `bitsandbytes`, `prodigyopt`, `transformers`, `lion-pytorch`, and `dadaptation`
+
+Seeded profiles include AdamW8bit Balanced, PagedAdamW8bit Balanced, Prodigy Soft,
+Adafactor Auto, Adafactor Fixed, Lion Soft, Lion Balanced Experimental,
+DAdaptAdam Auto, and DAdaptLion Auto.
+
+Optimizer detail pages now provide:
+
+- Prepare Test Job: generates `command_argv.json`, dataset config, and sample prompts without running training.
+- Run 2-step Smoke Test: creates a temporary low-dim Job and runs only two training steps.
+- Run Mini Pilot: reserved for longer explicit validation; Phase 12.3 records the action foundation.
+- View Last Test Result: shows the latest status, return code, command path, and log path.
+
+Smoke Test is a startup check, not a quality evaluation.
+`Smoke OK` means the command path can run in the current environment; it does not guarantee
+that the optimizer produces useful LoRA quality. AdamW8bit remains the stable baseline,
+while Prodigy, Adafactor, Lion, DAdaptAdam, and DAdaptLion should still be treated as
+Advanced or Experimental until validated in real projects.
+
+Optimizer LR meanings differ. AdamW8bit / PagedAdamW8bit / Lion use ordinary LR values.
+Prodigy / DAdaptAdam / DAdaptLion use `learning_rate=1.0` as an Auto-LR multiplier,
+not as AdamW-style `1e-4`. Adafactor Auto uses `relative_step=True` and omits
+`--learning_rate` / `--unet_lr`; Adafactor Fixed uses fixed LR with
+`max_grad_norm=0.0`.
+
+Recipe cards and the Job creation Wizard show validation badges such as `Untested`,
+`Prepare OK`, `Smoke OK`, and `Failed`. Selecting an untested or failed profile adds a
+Compatibility WARNING so the choice is visible before creating a draft Job.
+
 ## Phase 12.2: Recipe Wizard UX
 
 Phase 12.2 improves the Job creation flow on top of Recipe v2.
@@ -78,6 +119,16 @@ Legacy presets are still available under a collapsed legacy section, and existin
 
 Recipe Library and Optimizer Master also gained card-style browsing and detail pages.
 Jobs can be saved back as a Custom Recipe for later reuse.
+
+Phase 12.2.1 also separates Recipe labels by purpose. After Model Family is selected,
+Recipe cards use short labels such as `顔キャラ・標準` instead of repeating `SDXL` / `SD1.5`
+in every title. The full Model Family label is still kept for direct select/search.
+
+- `short_label`: compact card title used as the main visual target.
+- `full_label`: complete label for detail/search contexts.
+- `direct_select_label`: label used in the collapsed direct Recipe selector.
+- Purpose-first mode groups Recipe cards by optimizer category.
+- Optimizer-first mode groups Recipe cards by purpose.
 
 ## Phase 12.1: Training Recipe / Optimizer Master v2
 

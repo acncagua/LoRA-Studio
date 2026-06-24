@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased - Phase 12.3
+
+Phase 12.3 adds an Optimizer Profile Validation / Smoke Test foundation so Recipe v2 entries can show whether their optimizer profile has been prepared or smoke-tested against sd-scripts.
+
+### 主な変更
+
+- `optimizer_profile_test_results` を追加し、Prepare Test / 2-step Smoke Test / Mini Pilotの結果、command/log path、return code、環境情報を保存できるようにしました。
+- `optimizer_definitions_v2` / `optimizer_profiles_v2` にsd-scripts optimizer type、必須/推奨params、command params、smoke params、依存メモ、検証状態を保存できるようにしました。
+- AdamW8bit Balanced、PagedAdamW8bit Balanced、Prodigy Soft、Adafactor Auto / Fixed、Lion Soft / Balanced Experimental、DAdaptAdam Auto、DAdaptLion Autoの初期Profileを登録しました。
+- SDXL Character Face向けに、各Optimizer Profileへ対応するBuilt-in Recipeを追加しました。
+- Command BuilderでAdafactor Autoの `learning_rate=null` を許容し、nullの場合は `--learning_rate` / `--unet_lr` を出さないようにしました。
+- `optimizer_args` を `--optimizer_args decouple=True weight_decay=0.01 ...` の配列形式で出力するようにしました。
+- Optimizer詳細画面に `Prepare Test Job`、`Run 2-step Smoke Test`、`Run Mini Pilot`、最終結果表示の導線を追加しました。
+- Smoke Test用Jobは `max_train_steps=2`、低dim、最小サンプル設定で作成し、品質評価ではなく起動確認として扱います。
+- Recipeカード / Recipe Library / Job作成Wizardに `Untested` / `Prepare OK` / `Smoke OK` / `Failed` badgeを表示するようにしました。
+- Job作成Wizardで未検証・失敗済みOptimizer Profileを選んだ場合、Compatibility WARNINGを表示します。
+
+### 注意点
+
+- Smoke OKは実用品質を保証しません。sd-scriptsで起動できることを確認するための最小検証です。
+- AdamW8bit以外のProdigy / Adafactor / Lion / DAdapt系はAdvanced / Experimentalとして扱い、Smoke結果とログを確認してから使う想定です。
+- Prodigy / DAdapt系の `learning_rate=1.0` は通常LRではなくAuto-LR倍率です。Adafactor Autoはrelative_step運用、Adafactor Fixedは固定LR fallbackです。
+- Mini PilotはPhase 12.3では基盤のみで、明示的な長時間Runは自動実行しません。
+
 ## phase12.2.1 / v0.5.1-beta - 2026-06-24
 
 Phase 12.2.1 expands the built-in Recipe v2 master data and makes the Job creation Wizard put Recipe selection at the center of the screen, with different candidate views for purpose-first and optimizer-first workflows.
@@ -12,6 +36,8 @@ Phase 12.2.1 expands the built-in Recipe v2 master data and makes the Job creati
 - mode選択後は作成入口カードを折りたたみ、Recipe候補と選択中Recipeパネルを主役にしました。
 - フィルタoptionに候補件数を表示し、0件候補は選べないようにしました。
 - Recipeカードにtarget steps、key params、expected behavior、risk、選択ボタンを表示しました。
+- Recipe表示名に `short_label` / `full_label` / `direct_select_label` を追加し、Model Family選択後はカードタイトルからSDXL/SD1.5の繰り返しを省くようにしました。
+- 直接Recipe selectは折りたたみ内へ移動し、検索・確認用としてModel Familyを含むラベルを表示するようにしました。
 - Optimizer入口にLR意味、default LR、target steps、risk、compatibility notesを確認できる説明パネルを追加しました。
 - 条件に合うRecipeがない場合のEmpty stateを追加しました。
 

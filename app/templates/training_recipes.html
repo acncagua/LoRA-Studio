@@ -70,18 +70,21 @@
   <div class="recipe-card-grid">
     {% for recipe in recipes %}
     <article class="notice">
-      <h3><a href="/training-recipes/{{ recipe.id }}">{{ recipe.display_name }}</a></h3>
+      <h3><a href="/training-recipes/{{ recipe.id }}">{{ recipe.short_label or recipe.display_name }}</a></h3>
+      {% if recipe.card_subtitle %}<p class="muted">{{ recipe.card_subtitle }}</p>{% endif %}
       <p class="muted">{{ recipe.expected_behavior or '-' }}</p>
       <p>
         <span class="label {{ recipe.recipe_type }}">{{ recipe.recipe_type }}</span>
         <span class="label {{ recipe.optimizer_category|replace('/', '-') }}">{{ recipe.optimizer_category or '-' }}</span>
         <span class="label {{ recipe.network_type_availability }}">{{ recipe.network_type_availability or '-' }}</span>
+        <span class="label {{ 'ok' if recipe.optimizer_profile_validation_status in ['smoke_ok', 'mini_pilot_ok'] else ('error' if recipe.optimizer_profile_validation_status == 'smoke_failed' else 'warning') }}">{{ recipe.optimizer_profile_validation_status or 'untested' }}</span>
         {% if not recipe.is_builtin %}<span class="label warning">custom</span>{% endif %}
       </p>
       <dl>
         <dt>用途</dt><dd>{{ recipe.purpose_display_name or recipe.training_purpose_id or '-' }}</dd>
         <dt>Optimizer</dt><dd>{{ recipe.optimizer_display_name or recipe.optimizer_definition_id or '-' }}</dd>
         <dt>Network</dt><dd>{{ recipe.network_type_display_name or recipe.network_type_id or '-' }}</dd>
+        <dt>Profile検証</dt><dd>{{ recipe.optimizer_profile_validation_status or 'untested' }}</dd>
         <dt>target steps</dt><dd>{{ recipe.target_steps_min }} / <strong>{{ recipe.target_steps_recommended }}</strong> / {{ recipe.target_steps_max }}</dd>
       </dl>
       <p class="actions compact-actions"><a class="button small-button" href="/jobs/new?mode=purpose">このRecipeでJob作成</a></p>

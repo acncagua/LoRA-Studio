@@ -173,8 +173,15 @@ def build_command_argv(job: dict[str, Any], dataset_config: Path, sample_prompts
         elif value is not None:
             args.extend([f"--{key}", str(value)])
 
-    for key, value in (params.get("optimizer_args") or {}).items():
-        rendered = repr(value) if isinstance(value, bool) else str(value)
-        args.extend(["--optimizer_args", f"{key}={rendered}"])
+    optimizer_args = params.get("optimizer_args") or {}
+    rendered_optimizer_args: list[str] = []
+    if isinstance(optimizer_args, dict):
+        for key, value in optimizer_args.items():
+            rendered = repr(value) if isinstance(value, bool) else str(value)
+            rendered_optimizer_args.append(f"{key}={rendered}")
+    elif isinstance(optimizer_args, list):
+        rendered_optimizer_args = [str(value) for value in optimizer_args if value not in (None, "")]
+    if rendered_optimizer_args:
+        args.extend(["--optimizer_args", *rendered_optimizer_args])
 
     return [str(part) for part in args]

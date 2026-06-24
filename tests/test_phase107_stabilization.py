@@ -1218,10 +1218,76 @@ class Phase107StabilizationTests(IsolatedDbTest):
 
         argv = build_command_argv(job, self.root / "dataset.toml", self.root / "sample.txt")
 
-        optimizer_args = [argv[index + 1] for index, part in enumerate(argv) if part == "--optimizer_args"]
+        optimizer_args_index = argv.index("--optimizer_args")
+        optimizer_args = []
+        for part in argv[optimizer_args_index + 1 :]:
+            if part.startswith("--"):
+                break
+            optimizer_args.append(part)
         self.assertIn("decouple=True", optimizer_args)
         self.assertIn("use_bias_correction=False", optimizer_args)
         self.assertIn("weight_decay=0.01", optimizer_args)
+        self.assertEqual(argv.count("--optimizer_args"), 1)
+
+    def test_phase123_command_builder_handles_optimizer_profile_params(self) -> None:
+        from app.services.command_builder import build_command_argv
+
+        sd_scripts = self.root / "external" / "sd-scripts"
+        sd_scripts.mkdir(parents=True, exist_ok=True)
+        now = utc_now()
+        with connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO environments(
+                    name, sd_scripts_path, venv_python_path, mixed_precision,
+                    sd_scripts_commit_hash, status, created_at, updated_at
+                )
+                VALUES ('default', ?, ?, 'bf16', 'test', 'ok', ?, ?)
+                """,
+                (str(sd_scripts), sys.executable, now, now),
+            )
+
+        def argv_for_profile(profile_id: str) -> list[str]:
+            profile = fetch_one("SELECT command_params_json FROM optimizer_profiles_v2 WHERE id = ?", (profile_id,))
+            self.assertIsNotNone(profile)
+            params = json.loads(profile["command_params_json"] or "{}")
+            job = {
+                "params_json": json.dumps(params),
+                "training_script": "sdxl_train_network.py",
+                "base_model_path": "D:/models/base.safetensors",
+                "output_dir": str(self.root / "runs" / f"job_{profile_id}" / "models"),
+                "output_name": profile_id,
+                "run_dir": str(self.root / "runs" / f"job_{profile_id}"),
+                "vae_path": None,
+            }
+            return build_command_argv(job, self.root / f"{profile_id}.toml", self.root / f"{profile_id}.txt")
+
+        prodigy_argv = argv_for_profile("prodigy_sdxl_soft")
+        self.assertIn("Prodigy", prodigy_argv)
+        self.assertEqual(prodigy_argv.count("--optimizer_args"), 1)
+        prodigy_arg_index = prodigy_argv.index("--optimizer_args")
+        self.assertIn("d_coef=0.5", prodigy_argv[prodigy_arg_index + 1 : prodigy_arg_index + 5])
+
+        adafactor_auto_argv = argv_for_profile("adafactor_sdxl_auto")
+        self.assertIn("Adafactor", adafactor_auto_argv)
+        self.assertNotIn("--learning_rate", adafactor_auto_argv)
+        self.assertNotIn("--unet_lr", adafactor_auto_argv)
+        self.assertIn("adafactor", adafactor_auto_argv)
+
+        adafactor_fixed_argv = argv_for_profile("adafactor_sdxl_fixed")
+        self.assertIn("--learning_rate", adafactor_fixed_argv)
+        self.assertIn("0.0001", adafactor_fixed_argv)
+        self.assertIn("--max_grad_norm", adafactor_fixed_argv)
+        self.assertIn("0.0", adafactor_fixed_argv)
+
+        for profile_id, optimizer_type in {
+            "paged_adamw8bit_sdxl_balanced": "PagedAdamW8bit",
+            "lion_sdxl_soft": "Lion",
+            "dadaptadam_sdxl_auto": "DAdaptAdam",
+            "dadaptlion_sdxl_auto": "DAdaptLion",
+        }.items():
+            argv = argv_for_profile(profile_id)
+            self.assertIn(optimizer_type, argv)
 
     def test_training_failure_diagnosis_explains_access_violation(self) -> None:
         from app.services.training_runner import training_failure_diagnosis
@@ -2408,7 +2474,9 @@ class Phase107StabilizationTests(IsolatedDbTest):
             "sdxl_character_face_lion_soft_experimental",
             "sdxl_character_face_lion_balanced_experimental",
             "sdxl_character_face_adafactor_auto_advanced",
+            "sdxl_character_face_adafactor_fixed_advanced",
             "sdxl_character_face_dadapt_adam_auto_advanced",
+            "sdxl_character_face_dadapt_lion_auto_experimental",
             "sdxl_character_face_prodigy_soft_advanced",
             "sdxl_style_adamw8bit_soft",
             "sdxl_style_adamw8bit_balanced",
@@ -2423,6 +2491,40 @@ class Phase107StabilizationTests(IsolatedDbTest):
             "sd15_style_adamw8bit_balanced",
         }:
             self.assertIn(recipe_id, recipes)
+
+        profiles = {row["id"] for row in fetch_all("SELECT id FROM optimizer_profiles_v2")}
+        for profile_id in {
+            "adamw8bit_sdxl_balanced",
+            "paged_adamw8bit_sdxl_balanced",
+            "prodigy_sdxl_soft",
+            "adafactor_sdxl_auto",
+            "adafactor_sdxl_fixed",
+            "lion_sdxl_soft",
+            "lion_sdxl_balanced_experimental",
+            "dadaptadam_sdxl_auto",
+            "dadaptlion_sdxl_auto",
+        }:
+            self.assertIn(profile_id, profiles)
+
+        prodigy = fetch_one("SELECT * FROM optimizer_definitions_v2 WHERE id = 'Prodigy'")
+        self.assertEqual(prodigy["sd_scripts_optimizer_type"], "Prodigy")
+        self.assertIn("prodigyopt", prodigy["required_dependencies_json"])
+        self.assertIn("倍率", prodigy["lr_semantics_help"])
+
+        adafactor = fetch_one("SELECT * FROM optimizer_definitions_v2 WHERE id = 'Adafactor'")
+        self.assertIn("AdaFactor", adafactor["aliases_json"])
+
+        adafactor_auto = fetch_one("SELECT * FROM optimizer_profiles_v2 WHERE id = 'adafactor_sdxl_auto'")
+        auto_command = json.loads(adafactor_auto["command_params_json"])
+        auto_smoke = json.loads(adafactor_auto["smoke_params_json"])
+        self.assertNotIn("learning_rate", auto_command)
+        self.assertNotIn("unet_lr", auto_command)
+        self.assertEqual(auto_smoke["max_train_steps"], 2)
+
+        adafactor_fixed = fetch_one("SELECT * FROM optimizer_profiles_v2 WHERE id = 'adafactor_sdxl_fixed'")
+        fixed_command = json.loads(adafactor_fixed["command_params_json"])
+        self.assertEqual(fixed_command["learning_rate"], 0.0001)
+        self.assertEqual(fixed_command["max_grad_norm"], 0.0)
 
     def test_phase1221_recipe_seed_supports_purpose_and_optimizer_entry_filters(self) -> None:
         character_face_rows = fetch_all(
@@ -2468,6 +2570,132 @@ class Phase107StabilizationTests(IsolatedDbTest):
             """
         )
         self.assertGreaterEqual(len(style_rows), 5)
+
+    def test_phase1221_recipe_display_labels_are_seeded(self) -> None:
+        recipe = fetch_one(
+            """
+            SELECT display_name, short_label, full_label, card_subtitle,
+                   direct_select_label, difficulty_label, recommended_badge
+            FROM training_recipes_v2
+            WHERE id = 'sdxl_character_face_adamw8bit_balanced'
+            """
+        )
+        self.assertEqual(recipe["short_label"], "顔キャラ・標準")
+        self.assertIn("[SDXL]", recipe["full_label"])
+        self.assertIn("[SDXL]", recipe["direct_select_label"])
+        self.assertIn("AdamW8bit", recipe["card_subtitle"])
+        self.assertEqual(recipe["difficulty_label"], "stable")
+        self.assertEqual(recipe["recommended_badge"], "おすすめ")
+
+        prodigy = fetch_one(
+            "SELECT short_label, card_subtitle, difficulty_label FROM training_recipes_v2 WHERE id = 'sdxl_character_face_prodigy_soft_advanced'"
+        )
+        self.assertEqual(prodigy["short_label"], "顔キャラ・Prodigy弱め")
+        self.assertIn("Auto-LR", prodigy["card_subtitle"])
+        self.assertEqual(prodigy["difficulty_label"], "advanced")
+
+    def test_phase123_optimizer_profile_compatibility_warnings(self) -> None:
+        from app.services.recipe_optimizer_catalog import compatibility_check
+
+        prodigy = compatibility_check({"optimizer_type": "Prodigy", "lr_scheduler": "cosine", "learning_rate": 0.5})
+        self.assertTrue(any("lr_scheduler=constant" in message for message in prodigy["warnings"]))
+        self.assertTrue(any("1.0" in message for message in prodigy["warnings"]))
+
+        adafactor_auto = compatibility_check(
+            {
+                "optimizer_type": "Adafactor",
+                "lr_scheduler": "constant",
+                "learning_rate": 0.0001,
+                "optimizer_args": {"relative_step": True},
+            }
+        )
+        self.assertTrue(any("learning_rate" in message for message in adafactor_auto["warnings"]))
+        self.assertTrue(any("lr_scheduler=adafactor" in message for message in adafactor_auto["warnings"]))
+
+        adafactor_fixed = compatibility_check(
+            {
+                "optimizer_type": "Adafactor",
+                "lr_scheduler": "constant",
+                "learning_rate": 0.0001,
+                "optimizer_args": {"relative_step": False},
+                "max_grad_norm": 1.0,
+            }
+        )
+        self.assertTrue(any("constant_with_warmup" in message for message in adafactor_fixed["warnings"]))
+        self.assertTrue(any("max_grad_norm=0.0" in message for message in adafactor_fixed["warnings"]))
+
+        lion = compatibility_check({"optimizer_type": "Lion", "lr_scheduler": "constant", "learning_rate": 0.0002})
+        self.assertTrue(any("Experimental" in message for message in lion["warnings"]))
+        self.assertTrue(any("0.0001" in message for message in lion["warnings"]))
+
+        dadapt = compatibility_check({"optimizer_type": "DAdaptAdam", "lr_scheduler": "constant", "learning_rate": 0.5})
+        self.assertTrue(any("1.0" in message for message in dadapt["warnings"]))
+
+    def test_phase123_optimizer_profile_validation_result_updates_profile(self) -> None:
+        from app.services.optimizer_profile_validation import record_profile_test_result
+
+        prepare_result_id = record_profile_test_result(
+            "adamw8bit_sdxl_balanced",
+            recipe_id="sdxl_character_face_adamw8bit_balanced",
+            test_type="prepare",
+            status="ok",
+            test_job_id=123,
+            command_path="D:/tmp/command_argv.json",
+            log_path="D:/tmp/train.log",
+        )
+        profile = fetch_one("SELECT validation_status, last_test_result_id FROM optimizer_profiles_v2 WHERE id = ?", ("adamw8bit_sdxl_balanced",))
+        self.assertEqual(profile["validation_status"], "prepare_ok")
+        self.assertEqual(profile["last_test_result_id"], prepare_result_id)
+
+        smoke_result_id = record_profile_test_result(
+            "adamw8bit_sdxl_balanced",
+            recipe_id="sdxl_character_face_adamw8bit_balanced",
+            test_type="smoke",
+            status="ok",
+            test_job_id=124,
+            return_code=0,
+            elapsed_seconds=2,
+        )
+        profile = fetch_one("SELECT validation_status, last_test_result_id FROM optimizer_profiles_v2 WHERE id = ?", ("adamw8bit_sdxl_balanced",))
+        definition = fetch_one("SELECT validation_status, last_test_result_id, validated_optimizer_type FROM optimizer_definitions_v2 WHERE id = ?", ("AdamW8bit",))
+        result = fetch_one("SELECT * FROM optimizer_profile_test_results WHERE id = ?", (smoke_result_id,))
+        self.assertEqual(profile["validation_status"], "smoke_ok")
+        self.assertEqual(profile["last_test_result_id"], smoke_result_id)
+        self.assertEqual(definition["validation_status"], "smoke_ok")
+        self.assertEqual(definition["last_test_result_id"], smoke_result_id)
+        self.assertEqual(definition["validated_optimizer_type"], "AdamW8bit")
+        self.assertEqual(result["optimizer_definition_id"], "AdamW8bit")
+        self.assertEqual(result["test_type"], "smoke")
+        self.assertEqual(result["status"], "ok")
+
+        record_profile_test_result(
+            "adamw8bit_sdxl_balanced",
+            recipe_id="sdxl_character_face_adamw8bit_balanced",
+            test_type="mini_pilot",
+            status="skipped",
+            error_message="manual skip",
+        )
+        profile = fetch_one("SELECT validation_status FROM optimizer_profiles_v2 WHERE id = ?", ("adamw8bit_sdxl_balanced",))
+        self.assertEqual(profile["validation_status"], "smoke_ok")
+
+    def test_phase123_recipe_cards_include_profile_validation_badge(self) -> None:
+        from app.main import job_new, training_recipes_library
+        from app.services.optimizer_profile_validation import record_profile_test_result
+
+        record_profile_test_result(
+            "adamw8bit_sdxl_balanced",
+            recipe_id="sdxl_character_face_adamw8bit_balanced",
+            test_type="smoke",
+            status="ok",
+            return_code=0,
+        )
+
+        body = job_new(request=None, project_id="", mode="purpose").body.decode("utf-8")
+        recipes_body = training_recipes_library(request=None, model_family="", purpose="", optimizer="", optimizer_category="", network_type="", source="", recipe_type="").body.decode("utf-8")
+        js_source = Path("app/static/js/app.js").read_text(encoding="utf-8")
+        self.assertIn('"optimizer_profile_validation_status": "smoke_ok"', body)
+        self.assertIn("Smoke OK", js_source)
+        self.assertIn("smoke_ok", recipes_body)
 
     def test_phase121_recipe_v2_job_creation_saves_snapshots(self) -> None:
         from app.db import create_job
@@ -2582,7 +2810,8 @@ class Phase107StabilizationTests(IsolatedDbTest):
         optimizers_body = optimizers_library(request=None).body.decode("utf-8")
 
         self.assertIn("Training Recipe Library", recipes_body)
-        self.assertIn("SDXL Character Face / AdamW8bit Standard 10 Epoch", recipes_body)
+        self.assertIn("顔キャラ・標準10epoch", recipes_body)
+        self.assertIn("Profile検証", recipes_body)
         self.assertIn("Optimizer Master", optimizers_body)
         self.assertIn("Prodigy", optimizers_body)
 
@@ -2601,10 +2830,16 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertIn("data-selected-recipe-panel", body)
         self.assertIn("data-recipe-result-count", body)
         self.assertIn("data-optimizer-info-panel", body)
+        self.assertIn("Recipeを直接選択", body)
+        self.assertIn("[SDXL] 顔キャラ・標準 / AdamW8bit", body)
+        self.assertNotIn("<strong>SDXL Character Face / AdamW8bit Balanced</strong>", body)
         self.assertIn("この条件に合うRecipeはまだ登録されていません。", body)
         self.assertIn("/jobs/new?mode=custom", body)
-        self.assertIn("SDXL Character Face / AdamW8bit Standard 10 Epoch", recipe_body)
+        self.assertIn("顔キャラ・標準10epoch", recipe_body)
+        self.assertIn("[SDXL] 顔キャラ・標準10epoch / AdamW8bit", recipe_body)
         self.assertIn("learning_rate=1.0", optimizer_body)
+        self.assertIn("Optimizer Profile Validation", optimizer_body)
+        self.assertIn("Run 2-step Smoke Test", optimizer_body)
 
     def test_phase122_structured_user_override_diff_is_saved(self) -> None:
         from app.db import create_job

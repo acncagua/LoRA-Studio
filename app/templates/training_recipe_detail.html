@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% block content %}
-<nav class="breadcrumbs"><a href="/training-recipes">Recipe Library</a><span>{{ recipe.display_name }}</span></nav>
+<nav class="breadcrumbs"><a href="/training-recipes">Recipe Library</a><span>{{ recipe.short_label or recipe.display_name }}</span></nav>
 <header class="page-head">
-  <h1>{{ recipe.display_name }}</h1>
+  <h1>{{ recipe.short_label or recipe.display_name }}</h1>
   <div class="actions compact-actions">
     <a class="button" href="/jobs/new?mode=purpose">このRecipeを使う</a>
     <a class="button secondary" href="/optimizers/{{ recipe.optimizer_definition_id }}">Optimizer詳細</a>
@@ -16,11 +16,17 @@
     <div><span>用途</span><strong>{{ recipe.purpose_display_name or recipe.training_purpose_id or '-' }}</strong></div>
     <div><span>Optimizer</span><strong>{{ recipe.optimizer_display_name or recipe.optimizer_definition_id or '-' }}</strong></div>
     <div><span>Profile</span><strong>{{ recipe.optimizer_profile_display_name or recipe.optimizer_profile_id or '-' }}</strong></div>
+    <div><span>Profile検証</span><strong>{{ recipe.optimizer_profile_validation_status or 'untested' }}</strong></div>
     <div><span>Network</span><strong>{{ recipe.network_type_display_name or recipe.network_type_id or '-' }}</strong></div>
     <div><span>type</span><strong>{{ recipe.recipe_type }}</strong></div>
     <div><span>target steps</span><strong>{{ recipe.target_steps_min }} / {{ recipe.target_steps_recommended }} / {{ recipe.target_steps_max }}</strong></div>
   </div>
+  <p class="muted">{{ recipe.full_label or recipe.display_name }}</p>
   <p>{{ recipe.expected_behavior or '-' }}</p>
+  {% if recipe.card_subtitle %}<p class="muted">{{ recipe.card_subtitle }}</p>{% endif %}
+  {% if recipe.optimizer_profile_validation_status not in ['smoke_ok', 'mini_pilot_ok'] %}
+  <p class="notice warning">このOptimizer ProfileはSmoke OKではありません。Optimizer詳細からPrepare / 2-step Smoke Testを実行できます。</p>
+  {% endif %}
   {% if recipe.risk_note %}<p class="warning">{{ recipe.risk_note }}</p>{% endif %}
 </section>
 

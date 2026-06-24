@@ -213,13 +213,18 @@ OPTIMIZER_DEFINITIONS_V2 = [
 
 
 OPTIMIZER_PROFILES_V2 = [
-    ("adamw8bit_sdxl_balanced", "AdamW8bit", "SDXL", "balanced", "AdamW8bit SDXL Balanced", 0.0001, 0.0001, 0, "cosine", {}, 2500, 5000, 8000, "SDXL標準の比較基準。", "安定した初期値です。"),
+    ("adamw8bit_sdxl_balanced", "AdamW8bit", "SDXL", "balanced", "AdamW8bit Balanced", 0.0001, 0.0001, 0, "constant", {}, 2500, 5000, 8000, "SDXL標準の比較基準。", "安定した標準Optimizer。最初の比較基準。"),
     ("paged_adamw8bit_sdxl_memory", "PagedAdamW8bit", "SDXL", "memory_saving", "PagedAdamW8bit SDXL Memory", 0.0001, 0.0001, 0, "cosine", {}, 2500, 5000, 8000, "省メモリ寄りのAdamW候補。", "環境依存に注意。"),
-    ("adafactor_sdxl_auto", "Adafactor", "SDXL", "auto_lr", "Adafactor SDXL Auto", None, None, 0, "adafactor", {"relative_step": True, "scale_parameter": True, "warmup_init": True}, 2500, 4000, 8000, "Adafactor relative_step運用。", "通常LRとは意味が異なります。"),
-    ("adafactor_sdxl_fixed", "Adafactor", "SDXL", "advanced", "Adafactor SDXL Fixed", 0.0001, 0.0001, 0, "constant_with_warmup", {"relative_step": False, "scale_parameter": False, "warmup_init": False}, 2500, 5000, 8000, "Adafactor固定LR運用。", "AdamWとは挙動が異なります。"),
+    ("paged_adamw8bit_sdxl_balanced", "PagedAdamW8bit", "SDXL", "memory_saving", "PagedAdamW8bit Balanced", 0.0001, 0.0001, 0, "constant", {}, 2500, 5000, 8000, "AdamW8bitに近い省メモリ候補。", "まずSmokeで環境対応を確認。"),
+    ("adafactor_sdxl_auto", "Adafactor", "SDXL", "auto_lr", "Adafactor Auto", None, None, 0, "adafactor", {"relative_step": True, "scale_parameter": True, "warmup_init": True}, 2500, 4000, 8000, "Adafactor relative_step運用。", "通常LRとは意味が異なります。"),
+    ("adafactor_sdxl_fixed", "Adafactor", "SDXL", "advanced", "Adafactor Fixed", 0.0001, 0.0001, 0, "constant_with_warmup", {"relative_step": False, "scale_parameter": False, "warmup_init": False}, 2500, 5000, 8000, "Adafactor固定LR運用。", "max_grad_norm=0.0推奨。AdamWとは挙動が異なります。"),
+    ("lion_sdxl_soft", "Lion", "SDXL", "experimental", "Lion Soft", 0.00005, 0.00005, 0, "constant", {"weight_decay": 0.01}, 2500, 4000, 8000, "Lionを弱めに試す実験profile。", "実験的Optimizer。最初はLR低め。"),
     ("lion_sdxl_balanced", "Lion", "SDXL", "balanced", "Lion SDXL Balanced", 0.00005, 0.00005, 0, "cosine", {"weight_decay": 0.01}, 2500, 4000, 8000, "Lionを弱めに試すbalanced profile。", "実験的です。"),
+    ("lion_sdxl_balanced_experimental", "Lion", "SDXL", "experimental", "Lion Balanced Experimental", 0.0001, 0.0001, 0, "constant", {"weight_decay": 0.01}, 2500, 4000, 8000, "Lionの標準寄り実験profile。", "Softで弱い場合に比較。"),
     ("dadapt_adam_sdxl_auto", "DAdaptAdam", "SDXL", "auto_lr", "DAdaptAdam SDXL Auto", 1.0, 1.0, 0, "constant", {"decouple": True, "weight_decay": 0.01}, 2500, 4000, 8000, "DAdaptAdam自動LR倍率運用。", "learning_rate=1.0は倍率です。"),
+    ("dadaptadam_sdxl_auto", "DAdaptAdam", "SDXL", "auto_lr", "DAdaptAdam Auto", 1.0, 1.0, 0, "constant", {"decouple": True, "weight_decay": 0.01}, 2500, 4000, 8000, "DAdaptAdam自動LR倍率運用。AdamW-style decoupled decay。", "learning_rate=1.0は通常LRではなく倍率です。"),
     ("dadapt_lion_sdxl_auto", "DAdaptLion", "SDXL", "experimental", "DAdaptLion SDXL Auto", 1.0, 1.0, 0, "constant", {"weight_decay": 0.01}, 2500, 4000, 8000, "DAdaptLion実験profile。", "実験的です。"),
+    ("dadaptlion_sdxl_auto", "DAdaptLion", "SDXL", "experimental", "DAdaptLion Auto", 1.0, 1.0, 0, "constant", {"weight_decay": 0.01}, 2500, 4000, 8000, "DAdapt + Lion系の実験profile。", "DAdaptAdamより検証優先度は低め。"),
     ("prodigy_sdxl_auto", "Prodigy", "SDXL", "auto_lr", "Prodigy SDXL Auto", 1.0, 1.0, 0, "constant", {"decouple": True, "weight_decay": 0.01, "d_coef": 1.0, "use_bias_correction": True}, 2500, 4000, 8000, "Prodigy自動LR運用。", "強く効くことがあります。"),
     ("prodigy_sdxl_soft", "Prodigy", "SDXL", "advanced", "Prodigy SDXL Soft", 1.0, 1.0, 0, "constant", {"decouple": True, "weight_decay": 0.01, "d_coef": 0.5, "use_bias_correction": True}, 2500, 4000, 8000, "Prodigyを弱めに試すprofile。", "固定化に注意してください。"),
     ("adamw8bit_sd15_balanced", "AdamW8bit", "SD15", "balanced", "AdamW8bit SD1.5 Balanced", 0.0001, 0.0001, 0, "cosine", {}, 2000, 4000, 7000, "SD1.5標準の比較基準。", "SDXLより軽めのstep目安です。"),
@@ -282,6 +287,149 @@ def sd15_params(**overrides: Any) -> dict[str, Any]:
     params = dict(COMMON_SD15_PARAMS)
     params.update(overrides)
     return params
+
+
+OPTIMIZER_DEFINITION_EXTRAS: dict[str, dict[str, Any]] = {
+    "AdamW8bit": {
+        "sd_scripts_optimizer_type": "AdamW8bit",
+        "aliases": [],
+        "required_dependencies": ["bitsandbytes"],
+        "lr_semantics_help": "通常learning rateです。1e-4前後を基準にします。",
+        "smoke_test_priority": 1,
+    },
+    "PagedAdamW8bit": {
+        "sd_scripts_optimizer_type": "PagedAdamW8bit",
+        "aliases": [],
+        "required_dependencies": ["bitsandbytes"],
+        "lr_semantics_help": "AdamW8bitに近い通常LRです。省メモリ候補として扱います。",
+        "smoke_test_priority": 2,
+    },
+    "Prodigy": {
+        "sd_scripts_optimizer_type": "Prodigy",
+        "aliases": [],
+        "required_dependencies": ["prodigyopt"],
+        "lr_semantics_help": "learning_rate=1.0は通常LRではなくAuto-LR倍率です。",
+        "smoke_test_priority": 3,
+    },
+    "Adafactor": {
+        "sd_scripts_optimizer_type": "Adafactor",
+        "aliases": ["AdaFactor", "adafactor"],
+        "required_dependencies": ["transformers"],
+        "lr_semantics_help": "relative_step=Trueではlearning_rateをAdafactorが自動調整します。",
+        "smoke_test_priority": 4,
+    },
+    "Lion": {
+        "sd_scripts_optimizer_type": "Lion",
+        "aliases": [],
+        "required_dependencies": ["lion-pytorch"],
+        "lr_semantics_help": "通常LR型ですがExperimentalです。AdamWと挙動が異なります。",
+        "smoke_test_priority": 6,
+    },
+    "DAdaptAdam": {
+        "sd_scripts_optimizer_type": "DAdaptAdam",
+        "aliases": [],
+        "required_dependencies": ["dadaptation"],
+        "lr_semantics_help": "learning_rate=1.0はDAdaptationが推定したLRへの倍率です。",
+        "smoke_test_priority": 7,
+    },
+    "DAdaptLion": {
+        "sd_scripts_optimizer_type": "DAdaptLion",
+        "aliases": [],
+        "required_dependencies": ["dadaptation"],
+        "lr_semantics_help": "learning_rate=1.0はAuto-LR倍率です。DAdapt + LionのExperimental候補です。",
+        "smoke_test_priority": 8,
+    },
+}
+
+
+def optimizer_definition_extra(item: dict[str, Any]) -> dict[str, Any]:
+    extra = OPTIMIZER_DEFINITION_EXTRAS.get(item["id"], {})
+    required_schema = {
+        "optimizer_type": extra.get("sd_scripts_optimizer_type") or item["id"],
+        "lr_scheduler": item.get("default_scheduler"),
+        "optimizer_args": item.get("optimizer_args_schema") or {},
+    }
+    recommended_schema = {
+        "target_steps_min": item.get("target_steps_min"),
+        "target_steps_recommended": item.get("target_steps_recommended"),
+        "target_steps_max": item.get("target_steps_max"),
+    }
+    return {
+        "sd_scripts_optimizer_type": extra.get("sd_scripts_optimizer_type") or item["id"],
+        "aliases": extra.get("aliases", []),
+        "required_dependencies": extra.get("required_dependencies", []),
+        "required_params_schema": required_schema,
+        "recommended_params_schema": recommended_schema,
+        "lr_semantics_help": extra.get("lr_semantics_help") or item.get("description") or "",
+        "smoke_test_priority": extra.get("smoke_test_priority", 999),
+        "validated_optimizer_type": None,
+        "validation_status": "untested",
+    }
+
+
+def optimizer_profile_param_bundle(row: tuple[Any, ...]) -> dict[str, Any]:
+    (
+        _profile_id,
+        optimizer_definition_id,
+        _model_family,
+        _profile_type,
+        _display_name,
+        learning_rate,
+        unet_lr,
+        text_encoder_lr,
+        scheduler,
+        args,
+        target_min,
+        target_recommended,
+        target_max,
+        _description,
+        _risk_note,
+    ) = row
+    definition_extra = OPTIMIZER_DEFINITION_EXTRAS.get(optimizer_definition_id, {})
+    optimizer_type = definition_extra.get("sd_scripts_optimizer_type") or optimizer_definition_id
+    required_params = {
+        "optimizer_type": optimizer_type,
+        "learning_rate": learning_rate,
+        "unet_lr": unet_lr,
+        "text_encoder_lr": text_encoder_lr,
+        "lr_scheduler": scheduler,
+        "optimizer_args": args,
+    }
+    command_params = {
+        "optimizer_type": optimizer_type,
+        "lr_scheduler": scheduler,
+        "text_encoder_lr1": text_encoder_lr,
+        "text_encoder_lr2": 0 if text_encoder_lr == 0 else text_encoder_lr,
+        "optimizer_args": args,
+    }
+    if learning_rate is not None:
+        command_params["learning_rate"] = learning_rate
+    if unet_lr is not None:
+        command_params["unet_lr"] = unet_lr
+    if optimizer_definition_id == "Adafactor" and args.get("relative_step") is False:
+        command_params["max_grad_norm"] = 0.0
+    recommended_params = {
+        "target_steps_min": target_min,
+        "target_steps_recommended": target_recommended,
+        "target_steps_max": target_max,
+        "optimizer_args": args,
+    }
+    smoke_params = {
+        **command_params,
+        "max_train_steps": 2,
+        "network_dim": 4,
+        "network_alpha": 2,
+        "save_every_n_steps": 1,
+        "sample_every_n_steps": 1,
+        "resolution": [512, 512],
+    }
+    return {
+        "sd_scripts_optimizer_type": optimizer_type,
+        "required_params": required_params,
+        "recommended_params": recommended_params,
+        "command_params": command_params,
+        "smoke_params": smoke_params,
+    }
 
 
 TRAINING_RECIPES_V2 = [
@@ -387,10 +535,10 @@ TRAINING_RECIPES_V2 = [
         "model_family": "SDXL",
         "training_purpose_id": "character_face",
         "optimizer_definition_id": "Lion",
-        "optimizer_profile_id": "lion_sdxl_balanced",
+        "optimizer_profile_id": "lion_sdxl_balanced_experimental",
         "network_type_id": "standard_lora",
         "recipe_type": "experimental",
-        "params": sdxl_params(optimizer_type="Lion", lr_scheduler="cosine", learning_rate=0.00005, unet_lr=0.00005, text_encoder_lr1=0, text_encoder_lr2=0, optimizer_args={"weight_decay": 0.01}, network_train_unet_only=True, cache_text_encoder_outputs=True, network_dim=32, network_alpha=16, train_batch_size=1, repeats=8, max_train_epochs=8),
+        "params": sdxl_params(optimizer_type="Lion", lr_scheduler="constant", learning_rate=0.0001, unet_lr=0.0001, text_encoder_lr1=0, text_encoder_lr2=0, optimizer_args={"weight_decay": 0.01}, network_train_unet_only=True, cache_text_encoder_outputs=True, network_dim=32, network_alpha=16, train_batch_size=1, repeats=8, max_train_epochs=8),
         "basic_params": {"network_dim": 32, "network_alpha": 16, "train_batch_size": 1, "repeats": 8, "max_train_epochs": 8},
         "advanced_params": {"optimizer_args": {"weight_decay": 0.01}},
         "raw_args": {},
@@ -419,13 +567,32 @@ TRAINING_RECIPES_V2 = [
         "sort_order": 110,
     },
     {
+        "id": "sdxl_character_face_adafactor_fixed_advanced",
+        "name": "sdxl_character_face_adafactor_fixed_advanced",
+        "display_name": "SDXL Character Face / Adafactor Fixed / Advanced",
+        "model_family": "SDXL",
+        "training_purpose_id": "character_face",
+        "optimizer_definition_id": "Adafactor",
+        "optimizer_profile_id": "adafactor_sdxl_fixed",
+        "network_type_id": "standard_lora",
+        "recipe_type": "advanced",
+        "params": sdxl_params(optimizer_type="Adafactor", lr_scheduler="constant_with_warmup", learning_rate=0.0001, unet_lr=0.0001, text_encoder_lr1=0, text_encoder_lr2=0, max_grad_norm=0.0, optimizer_args={"relative_step": False, "scale_parameter": False, "warmup_init": False}, network_train_unet_only=True, cache_text_encoder_outputs=True, network_dim=32, network_alpha=16, train_batch_size=1, repeats=8, max_train_epochs=8),
+        "basic_params": {"network_dim": 32, "network_alpha": 16, "train_batch_size": 1, "repeats": 8, "max_train_epochs": 8},
+        "advanced_params": {"max_grad_norm": 0.0, "optimizer_args": {"relative_step": False, "scale_parameter": False, "warmup_init": False}},
+        "raw_args": {},
+        "target": (2500, 5000, 8000, 6),
+        "expected_behavior": "Adafactorを固定LRで使うfallback候補。",
+        "risk_note": "Advanced。Autoが不安定な場合の比較候補です。",
+        "sort_order": 112,
+    },
+    {
         "id": "sdxl_character_face_dadapt_adam_auto_advanced",
         "name": "sdxl_character_face_dadapt_adam_auto_advanced",
         "display_name": "SDXL Character Face / DAdaptAdam Auto / Advanced",
         "model_family": "SDXL",
         "training_purpose_id": "character_face",
         "optimizer_definition_id": "DAdaptAdam",
-        "optimizer_profile_id": "dadapt_adam_sdxl_auto",
+        "optimizer_profile_id": "dadaptadam_sdxl_auto",
         "network_type_id": "standard_lora",
         "recipe_type": "advanced",
         "params": sdxl_params(optimizer_type="DAdaptAdam", lr_scheduler="constant", learning_rate=1.0, unet_lr=1.0, text_encoder_lr1=0, text_encoder_lr2=0, optimizer_args={"decouple": True, "weight_decay": 0.01}, network_train_unet_only=True, cache_text_encoder_outputs=True, network_dim=32, network_alpha=16, train_batch_size=1, repeats=8, max_train_epochs=8),
@@ -436,6 +603,25 @@ TRAINING_RECIPES_V2 = [
         "expected_behavior": "DAdaptAdamを比較する。",
         "risk_note": "Advanced。learning_rate=1.0は倍率です。",
         "sort_order": 120,
+    },
+    {
+        "id": "sdxl_character_face_dadapt_lion_auto_experimental",
+        "name": "sdxl_character_face_dadapt_lion_auto_experimental",
+        "display_name": "SDXL Character Face / DAdaptLion Auto / Experimental",
+        "model_family": "SDXL",
+        "training_purpose_id": "character_face",
+        "optimizer_definition_id": "DAdaptLion",
+        "optimizer_profile_id": "dadaptlion_sdxl_auto",
+        "network_type_id": "standard_lora",
+        "recipe_type": "experimental",
+        "params": sdxl_params(optimizer_type="DAdaptLion", lr_scheduler="constant", learning_rate=1.0, unet_lr=1.0, text_encoder_lr1=0, text_encoder_lr2=0, optimizer_args={"weight_decay": 0.01}, network_train_unet_only=True, cache_text_encoder_outputs=True, network_dim=32, network_alpha=16, train_batch_size=1, repeats=8, max_train_epochs=8),
+        "basic_params": {"network_dim": 32, "network_alpha": 16, "train_batch_size": 1, "repeats": 8, "max_train_epochs": 8},
+        "advanced_params": {"optimizer_args": {"weight_decay": 0.01}},
+        "raw_args": {},
+        "target": (2500, 4000, 8000, 6),
+        "expected_behavior": "DAdapt + Lion系を比較する実験候補。",
+        "risk_note": "Experimental。DAdaptAdamより検証優先度は低めです。",
+        "sort_order": 125,
     },
     {
         "id": "sdxl_character_face_prodigy_soft_advanced",
@@ -525,10 +711,10 @@ TRAINING_RECIPES_V2.extend(
             "model_family": "SDXL",
             "training_purpose_id": "character_face",
             "optimizer_definition_id": "PagedAdamW8bit",
-            "optimizer_profile_id": "paged_adamw8bit_sdxl_memory",
+            "optimizer_profile_id": "paged_adamw8bit_sdxl_balanced",
             "network_type_id": "standard_lora",
             "recipe_type": "balanced",
-            "params": sdxl_params(optimizer_type="PagedAdamW8bit", lr_scheduler="cosine", learning_rate=0.0001, unet_lr=0.0001, text_encoder_lr1=0, text_encoder_lr2=0, network_train_unet_only=True, cache_text_encoder_outputs=True, network_dim=32, network_alpha=16, train_batch_size=1, repeats=10, max_train_epochs=8),
+            "params": sdxl_params(optimizer_type="PagedAdamW8bit", lr_scheduler="constant", learning_rate=0.0001, unet_lr=0.0001, text_encoder_lr1=0, text_encoder_lr2=0, network_train_unet_only=True, cache_text_encoder_outputs=True, network_dim=32, network_alpha=16, train_batch_size=1, repeats=10, max_train_epochs=8),
             "basic_params": {"network_dim": 32, "network_alpha": 16, "train_batch_size": 1, "repeats": 10, "max_train_epochs": 8},
             "advanced_params": {},
             "raw_args": {},
@@ -544,10 +730,10 @@ TRAINING_RECIPES_V2.extend(
             "model_family": "SDXL",
             "training_purpose_id": "character_face",
             "optimizer_definition_id": "Lion",
-            "optimizer_profile_id": "lion_sdxl_balanced",
+            "optimizer_profile_id": "lion_sdxl_soft",
             "network_type_id": "standard_lora",
             "recipe_type": "experimental",
-            "params": sdxl_params(optimizer_type="Lion", lr_scheduler="cosine", learning_rate=0.000035, unet_lr=0.000035, text_encoder_lr1=0, text_encoder_lr2=0, optimizer_args={"weight_decay": 0.01}, network_train_unet_only=True, cache_text_encoder_outputs=True, network_dim=24, network_alpha=12, train_batch_size=1, repeats=8, max_train_epochs=8),
+            "params": sdxl_params(optimizer_type="Lion", lr_scheduler="constant", learning_rate=0.00005, unet_lr=0.00005, text_encoder_lr1=0, text_encoder_lr2=0, optimizer_args={"weight_decay": 0.01}, network_train_unet_only=True, cache_text_encoder_outputs=True, network_dim=24, network_alpha=12, train_batch_size=1, repeats=8, max_train_epochs=8),
             "basic_params": {"network_dim": 24, "network_alpha": 12, "train_batch_size": 1, "repeats": 8, "max_train_epochs": 8},
             "advanced_params": {"optimizer_args": {"weight_decay": 0.01}},
             "raw_args": {},
@@ -771,6 +957,7 @@ TRAINING_RECIPES_V2.extend(
 
 def optimizer_definition_v2_rows(now: str):
     for item in OPTIMIZER_DEFINITIONS_V2:
+        extra = optimizer_definition_extra(item)
         yield (
             item["id"],
             item["name"],
@@ -790,6 +977,15 @@ def optimizer_definition_v2_rows(now: str):
             item["description"],
             item["risk_note"],
             json_dumps(item["compatibility_notes"]),
+            extra["sd_scripts_optimizer_type"],
+            json_dumps(extra["aliases"]),
+            json_dumps(extra["required_dependencies"]),
+            json_dumps(extra["required_params_schema"]),
+            json_dumps(extra["recommended_params_schema"]),
+            extra["lr_semantics_help"],
+            extra["smoke_test_priority"],
+            extra["validated_optimizer_type"],
+            extra["validation_status"],
             1,
             1,
             now,
@@ -799,6 +995,7 @@ def optimizer_definition_v2_rows(now: str):
 
 def optimizer_profile_v2_rows(now: str):
     for row in OPTIMIZER_PROFILES_V2:
+        bundle = optimizer_profile_param_bundle(row)
         (
             profile_id,
             optimizer_definition_id,
@@ -832,6 +1029,11 @@ def optimizer_profile_v2_rows(now: str):
             target_max,
             description,
             risk_note,
+            bundle["sd_scripts_optimizer_type"],
+            json_dumps(bundle["required_params"]),
+            json_dumps(bundle["recommended_params"]),
+            json_dumps(bundle["command_params"]),
+            json_dumps(bundle["smoke_params"]),
             1,
             1,
             now,
@@ -864,13 +1066,120 @@ def training_purpose_rows(now: str):
         )
 
 
+PURPOSE_SHORT_LABELS = {
+    "character_face": "顔キャラ",
+    "character_full_body": "全身キャラ",
+    "style": "画風",
+    "costume": "衣装",
+    "object": "物体",
+    "concept": "概念",
+    "custom": "Custom",
+}
+
+RECIPE_TYPE_SHORT_LABELS = {
+    "smoke": "動作確認",
+    "pilot": "Pilot",
+    "soft": "弱め汎用",
+    "balanced": "標準",
+    "balanced_long": "標準10epoch",
+    "strong": "強め",
+    "generalize": "汎化寄り",
+    "advanced": "Advanced",
+    "experimental": "実験",
+    "custom": "Custom",
+}
+
+
+def difficulty_label_for_recipe(recipe: dict[str, Any]) -> str:
+    category = str(recipe.get("optimizer_definition_category") or "")
+    recipe_type = str(recipe.get("recipe_type") or "")
+    optimizer_id = str(recipe.get("optimizer_definition_id") or "")
+    if "experimental" in category or recipe_type == "experimental" or optimizer_id in {"Lion", "Lion8bit", "PagedLion8bit", "DAdaptLion"}:
+        return "experimental"
+    if "advanced" in category or "auto_lr" in category or recipe_type == "advanced" or optimizer_id in {"Prodigy", "DAdaptAdam", "Adafactor"}:
+        return "advanced"
+    if recipe_type == "custom":
+        return "custom"
+    return "stable"
+
+
+def recipe_display_labels(recipe: dict[str, Any]) -> dict[str, str]:
+    purpose = PURPOSE_SHORT_LABELS.get(recipe.get("training_purpose_id"), recipe.get("training_purpose_id") or "Recipe")
+    recipe_type = str(recipe.get("recipe_type") or "")
+    optimizer = recipe.get("optimizer_definition_id") or "Optimizer"
+    params = recipe.get("params") or {}
+    epochs = params.get("max_train_epochs") or recipe.get("max_train_epochs") or "-"
+    dim = params.get("network_dim") or "-"
+    lr = params.get("learning_rate") or params.get("unet_lr")
+    target_min, target_recommended, target_max, _checkpoint_count = recipe["target"]
+    type_label = RECIPE_TYPE_SHORT_LABELS.get(recipe_type, recipe_type or "Recipe")
+
+    display_name = str(recipe.get("display_name") or "")
+    if optimizer == "Prodigy" and ("Soft" in display_name or recipe_type in {"soft", "advanced"}):
+        short_label = f"{purpose}・Prodigy弱め"
+    elif optimizer == "Lion":
+        short_label = f"{purpose}・Lion弱め実験" if "Soft" in display_name else f"{purpose}・Lion実験"
+    elif optimizer == "Adafactor":
+        short_label = f"{purpose}・Adafactor固定LR" if "Fixed" in display_name else f"{purpose}・Adafactor省メモリ"
+    elif optimizer.startswith("DAdapt"):
+        short_label = f"{purpose}・DAdaptLion実験" if optimizer == "DAdaptLion" else f"{purpose}・DAdapt自動LR"
+    elif optimizer in {"Lion8bit", "PagedLion8bit"}:
+        short_label = f"{purpose}・Lion実験"
+    elif optimizer == "PagedAdamW8bit":
+        short_label = f"{purpose}・省メモリ標準"
+    else:
+        short_label = f"{purpose}・{type_label}"
+
+    subtitle_parts = [optimizer, "Standard LoRA", f"{epochs}epoch", f"dim{dim}", f"{target_recommended}step目安"]
+    if recipe_type == "soft":
+        subtitle_parts.append("LR低め")
+    if optimizer == "Prodigy":
+        d_coef = (params.get("optimizer_args") or {}).get("d_coef") if isinstance(params.get("optimizer_args"), dict) else None
+        subtitle_parts = ["Auto-LR", "Advanced", f"d_coef {d_coef or '-'}", "過学習注意"]
+    elif optimizer == "Lion":
+        subtitle_parts = ["Lion", "Experimental", "LR低め", "比較用"]
+    elif optimizer == "Adafactor":
+        if "Fixed" in display_name:
+            subtitle_parts = ["Adafactor", "Advanced", "固定LR", "max_grad_norm 0.0"]
+        else:
+            subtitle_parts = ["Adafactor", "Advanced", "relative_step", "LR自動調整"]
+    elif optimizer.startswith("DAdapt"):
+        subtitle_parts = ["Auto-LR", "Experimental" if optimizer == "DAdaptLion" else "Advanced", "倍率LR", "過学習注意"]
+    elif recipe_type == "strong":
+        subtitle_parts.append("効き強め")
+    elif lr:
+        subtitle_parts.append(f"LR {lr}")
+
+    full_label = f"[{recipe['model_family']}] {short_label} / {optimizer} / {epochs}epoch / {target_recommended}step目安"
+    direct_select_label = f"[{recipe['model_family']}] {short_label} / {optimizer} / {epochs}ep / dim{dim}"
+    difficulty = difficulty_label_for_recipe(recipe)
+    recommended_badge = "おすすめ" if recipe_type in {"balanced", "balanced_long"} and difficulty == "stable" else ""
+    return {
+        "short_label": short_label,
+        "full_label": full_label,
+        "card_subtitle": " / ".join(str(part) for part in subtitle_parts if part not in {None, ""}),
+        "direct_select_label": direct_select_label,
+        "group_label": "",
+        "recommended_badge": recommended_badge,
+        "difficulty_label": difficulty,
+    }
+
+
 def training_recipe_v2_rows(now: str):
     for recipe in TRAINING_RECIPES_V2:
         target_min, target_recommended, target_max, checkpoint_count = recipe["target"]
+        labels = recipe_display_labels(recipe)
         yield (
             recipe["id"],
             recipe["name"],
             recipe["display_name"],
+            labels["short_label"],
+            labels["full_label"],
+            labels["card_subtitle"],
+            labels["direct_select_label"],
+            labels["group_label"],
+            labels["recommended_badge"],
+            labels["difficulty_label"],
             recipe["model_family"],
             recipe["training_purpose_id"],
             recipe["optimizer_definition_id"],
@@ -943,14 +1252,36 @@ def compatibility_check(params: dict[str, Any], *, network_type: dict[str, Any] 
         lr = params.get("learning_rate")
         try:
             lr_value = float(lr)
-            if abs(lr_value - 1.0) > 0.5:
-                warnings.append(f"{optimizer_type} の learning_rate は通常LRではなく倍率です。1.0から大きく外れています。")
+            if abs(lr_value - 1.0) > 1e-9:
+                warnings.append(f"{optimizer_type} の learning_rate は通常LRではなく倍率です。1.0を基準にしてください。")
         except (TypeError, ValueError):
             pass
     if optimizer_type == "Adafactor":
         args = params.get("optimizer_args") if isinstance(params.get("optimizer_args"), dict) else {}
-        if args.get("relative_step") and params.get("learning_rate") not in (None, ""):
+        relative_step = args.get("relative_step")
+        if relative_step and params.get("learning_rate") not in (None, ""):
             warnings.append("Adafactor relative_step=Trueではlearning_rate指定の意味が通常と異なります。")
+        if relative_step and scheduler != "adafactor":
+            warnings.append("Adafactor Autoは lr_scheduler=adafactor を推奨します。")
+        if relative_step is False:
+            if scheduler != "constant_with_warmup":
+                warnings.append("Adafactor Fixedは lr_scheduler=constant_with_warmup を推奨します。")
+            try:
+                if float(params.get("max_grad_norm") if params.get("max_grad_norm") is not None else 1.0) != 0.0:
+                    warnings.append("Adafactor Fixedは max_grad_norm=0.0 を推奨します。")
+            except (TypeError, ValueError):
+                warnings.append("Adafactor Fixedは max_grad_norm=0.0 を推奨します。")
+        if relative_step is None:
+            warnings.append("Adafactorは optimizer_args.relative_step を明示してください。")
+    if optimizer_type == "Lion":
+        warnings.append("LionはExperimentalです。Smoke Test結果を確認してから使ってください。")
+        try:
+            if float(params.get("learning_rate") or 0) > 0.0001:
+                warnings.append("Lionのlearning_rateは0.0001以下を推奨します。")
+        except (TypeError, ValueError):
+            pass
+    if optimizer_type == "DAdaptLion":
+        warnings.append("DAdaptLionはExperimentalです。DAdaptAdamより低優先の比較候補として扱います。")
     if optimizer_type in {"AdamW8bit", "PagedAdamW8bit", "Lion", "Lion8bit", "PagedLion8bit"}:
         try:
             if float(params.get("learning_rate") or 0) > 0.0002:

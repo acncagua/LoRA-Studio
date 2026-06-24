@@ -88,6 +88,12 @@ from app.services.performance_profile import format_seconds, performance_summary
 from app.services.recommendations import create_draft_job_from_recommendation, list_recommendations, regenerate_recommendations, set_recommendation_status, write_recommendation_report
 from app.services.review_candidates import ensure_epoch_candidates, regenerate_epoch_candidates
 from app.services.retry_signal import retry_signal_for_job, retry_signal_for_profile, retry_signal_for_project, retry_signal_for_review_session
+from app.services.optimizer_profile_validation import (
+    profile_validation_badge,
+    record_mini_pilot_skipped,
+    run_prepare_test,
+    run_smoke_test,
+)
 from app.services.step_estimator import calculate_required_repeats, estimate_steps, suggest_target_steps, target_config_from_catalog
 from app.services.review_sessions import (
     create_neighbor_review_session,
@@ -3086,6 +3092,9 @@ def job_new(request: Request, project_id: str = Query(""), mode: str = Query("")
                op.display_name AS optimizer_profile_display_name,
                op.profile_type AS optimizer_profile_type,
                op.description AS optimizer_profile_description,
+               op.validation_status AS optimizer_profile_validation_status,
+               op.last_tested_at AS optimizer_profile_last_tested_at,
+               op.last_test_result_id AS optimizer_profile_last_test_result_id,
                nt.display_name AS network_type_display_name,
                nt.availability AS network_type_availability,
                nt.description AS network_type_description
@@ -3216,11 +3225,14 @@ def training_recipes_library(
                od.display_name AS optimizer_display_name,
                od.category AS optimizer_category,
                od.lr_semantics AS optimizer_lr_semantics,
+               op.validation_status AS optimizer_profile_validation_status,
+               op.last_tested_at AS optimizer_profile_last_tested_at,
                nt.display_name AS network_type_display_name,
                nt.availability AS network_type_availability
         FROM training_recipes_v2 r
         LEFT JOIN training_purposes p ON p.id = r.training_purpose_id
         LEFT JOIN optimizer_definitions_v2 od ON od.id = r.optimizer_definition_id
+        LEFT JOIN optimizer_profiles_v2 op ON op.id = r.optimizer_profile_id
         LEFT JOIN network_type_definitions nt ON nt.id = r.network_type_id
         WHERE {" AND ".join(where)}
         ORDER BY r.model_family DESC, p.sort_order, r.sort_order, r.display_name
@@ -3254,6 +3266,8 @@ def training_recipe_detail(request: Request, recipe_id: str) -> HTMLResponse:
                od.lr_semantics AS optimizer_lr_semantics,
                op.display_name AS optimizer_profile_display_name,
                op.profile_type AS optimizer_profile_type,
+               op.validation_status AS optimizer_profile_validation_status,
+               op.last_tested_at AS optimizer_profile_last_tested_at,
                nt.display_name AS network_type_display_name,
                nt.availability AS network_type_availability
         FROM training_recipes_v2 r
@@ -3300,7 +3314,7 @@ def optimizers_library(request: Request) -> HTMLResponse:
 
 
 @app.get("/optimizers/{optimizer_id}", response_class=HTMLResponse)
-def optimizer_detail(request: Request, optimizer_id: str) -> HTMLResponse:
+def optimizer_detail(request: Request, optimizer_id: str, message: str = Query(""), error: str = Query("")) -> HTMLResponse:
     optimizer = fetch_one("SELECT * FROM optimizer_definitions_v2 WHERE id = ?", (optimizer_id,))
     if optimizer is None:
         raise HTTPException(status_code=404, detail="Optimizer not found")
@@ -3310,25 +3324,89 @@ def optimizer_detail(request: Request, optimizer_id: str) -> HTMLResponse:
     )
     recipes = fetch_all(
         """
-        SELECT r.*, p.display_name AS purpose_display_name, nt.display_name AS network_type_display_name
+        SELECT r.*, p.display_name AS purpose_display_name, nt.display_name AS network_type_display_name,
+               op.validation_status AS optimizer_profile_validation_status
         FROM training_recipes_v2 r
         LEFT JOIN training_purposes p ON p.id = r.training_purpose_id
         LEFT JOIN network_type_definitions nt ON nt.id = r.network_type_id
+        LEFT JOIN optimizer_profiles_v2 op ON op.id = r.optimizer_profile_id
         WHERE r.optimizer_definition_id = ?
         ORDER BY r.model_family DESC, p.sort_order, r.sort_order, r.display_name
         """,
         (optimizer_id,),
     )
+    profile_ids = [row["id"] for row in profiles]
+    latest_results: dict[str, Any] = {}
+    if profile_ids:
+        placeholders = ",".join("?" for _ in profile_ids)
+        for row in fetch_all(
+            f"""
+            SELECT *
+            FROM optimizer_profile_test_results
+            WHERE id IN (
+                SELECT MAX(id)
+                FROM optimizer_profile_test_results
+                WHERE optimizer_profile_id IN ({placeholders})
+                GROUP BY optimizer_profile_id
+            )
+            """,
+            tuple(profile_ids),
+        ):
+            latest_results[row["optimizer_profile_id"]] = row
+    datasets = fetch_all("SELECT id, name, image_count FROM datasets ORDER BY id DESC")
     return render(
         request,
         "optimizer_detail.html",
         optimizer=optimizer,
         profiles=profiles,
         recipes=recipes,
+        profile_badges={row["id"]: profile_validation_badge(row) for row in profiles},
+        profile_results=latest_results,
+        datasets=datasets,
+        default_base_model_path=str(settings.ROOT_DIR / "models"),
+        message=message,
+        error=error,
         notes=safe_json_loads(optimizer["compatibility_notes_json"], []),
         allowed_schedulers=safe_json_loads(optimizer["allowed_schedulers_json"], []),
         args_schema=json.dumps(safe_json_loads(optimizer["optimizer_args_schema_json"], {}), ensure_ascii=False, indent=2),
     )
+
+
+@app.post("/optimizers/{optimizer_id}/profiles/{profile_id}/prepare-test")
+def optimizer_profile_prepare_test(
+    optimizer_id: str,
+    profile_id: str,
+    dataset_id: int = Form(...),
+    base_model_path: str = Form(...),
+    recipe_id: str = Form(""),
+) -> RedirectResponse:
+    result = run_prepare_test(profile_id, recipe_id=recipe_id.strip() or None, dataset_id=dataset_id, base_model_path=base_model_path)
+    params = {"message" if result["ok"] else "error": f"Prepare Test {'OK' if result['ok'] else 'Failed'}: result #{result['result_id']} / job #{result.get('job_id') or '-'}"}
+    return RedirectResponse(f"/optimizers/{optimizer_id}?{urlencode(params)}", status_code=303)
+
+
+@app.post("/optimizers/{optimizer_id}/profiles/{profile_id}/smoke-test")
+def optimizer_profile_smoke_test(
+    optimizer_id: str,
+    profile_id: str,
+    dataset_id: int = Form(...),
+    base_model_path: str = Form(...),
+    recipe_id: str = Form(""),
+) -> RedirectResponse:
+    result = run_smoke_test(profile_id, recipe_id=recipe_id.strip() or None, dataset_id=dataset_id, base_model_path=base_model_path)
+    params = {"message" if result["ok"] else "error": f"2-step Smoke Test {'OK' if result['ok'] else 'Failed'}: result #{result['result_id']} / job #{result.get('job_id') or '-'}"}
+    return RedirectResponse(f"/optimizers/{optimizer_id}?{urlencode(params)}", status_code=303)
+
+
+@app.post("/optimizers/{optimizer_id}/profiles/{profile_id}/mini-pilot")
+def optimizer_profile_mini_pilot(
+    optimizer_id: str,
+    profile_id: str,
+    recipe_id: str = Form(""),
+) -> RedirectResponse:
+    result = record_mini_pilot_skipped(profile_id, recipe_id=recipe_id.strip() or None)
+    params = {"message": f"Mini PilotはPhase 12.3ではスキップ記録のみ保存しました: result #{result['result_id']}"}
+    return RedirectResponse(f"/optimizers/{optimizer_id}?{urlencode(params)}", status_code=303)
 
 
 @app.post("/jobs")
@@ -4503,23 +4581,36 @@ def job_save_custom_recipe(
     }
     basic_params = {key: params[key] for key in basic_keys if key in params}
     advanced_params = {key: value for key, value in params.items() if key not in basic_keys}
+    custom_short_label = recipe_display
+    custom_full_label = f"[{job['model_family'] or '-'}] {recipe_display} / Custom / Job #{job_id}"
+    custom_direct_label = f"[{job['model_family'] or '-'}] {recipe_display} / Custom"
+    custom_card_subtitle = f"Custom / {job['optimizer_definition_id'] or '-'} / {job['network_type_id'] or 'standard_lora'}"
     with connect() as conn:
         conn.execute(
             """
             INSERT INTO training_recipes_v2(
-                id, name, display_name, model_family, training_purpose_id,
+                id, name, display_name, short_label, full_label, card_subtitle,
+                direct_select_label, group_label, recommended_badge, difficulty_label,
+                model_family, training_purpose_id,
                 optimizer_definition_id, optimizer_profile_id, network_type_id,
                 recipe_type, params_json, basic_params_json, advanced_params_json,
                 raw_args_json, compatibility_rules_json, target_steps_min,
                 target_steps_recommended, target_steps_max, target_checkpoint_count,
                 expected_behavior, risk_note, sort_order, is_builtin, is_active,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?)
             """,
             (
                 clean_name,
                 clean_name,
                 recipe_display,
+                custom_short_label,
+                custom_full_label,
+                custom_card_subtitle,
+                custom_direct_label,
+                "Custom",
+                "",
+                "custom",
                 job["model_family"],
                 job["training_purpose_id"],
                 job["optimizer_definition_id"],

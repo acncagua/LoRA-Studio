@@ -223,6 +223,58 @@ def run_migrations(conn: sqlite3.Connection) -> None:
     )
     ensure_columns(
         conn,
+        "training_recipes_v2",
+        {
+            "short_label": "TEXT",
+            "full_label": "TEXT",
+            "card_subtitle": "TEXT",
+            "direct_select_label": "TEXT",
+            "group_label": "TEXT",
+            "recommended_badge": "TEXT",
+            "difficulty_label": "TEXT",
+        },
+    )
+    ensure_columns(
+        conn,
+        "optimizer_profiles_v2",
+        {
+            "sd_scripts_optimizer_type": "TEXT",
+            "required_params_json": "TEXT",
+            "recommended_params_json": "TEXT",
+            "command_params_json": "TEXT",
+            "smoke_params_json": "TEXT",
+            "validation_status": "TEXT NOT NULL DEFAULT 'untested'",
+            "last_tested_at": "TEXT",
+            "last_test_result_id": "INTEGER",
+        },
+    )
+    ensure_columns(
+        conn,
+        "optimizer_definitions_v2",
+        {
+            "sd_scripts_optimizer_type": "TEXT",
+            "aliases_json": "TEXT",
+            "required_dependencies_json": "TEXT",
+            "required_params_schema_json": "TEXT",
+            "recommended_params_schema_json": "TEXT",
+            "lr_semantics_help": "TEXT",
+            "smoke_test_priority": "INTEGER",
+            "validated_optimizer_type": "TEXT",
+            "validation_status": "TEXT NOT NULL DEFAULT 'untested'",
+            "last_tested_at": "TEXT",
+            "last_test_result_id": "INTEGER",
+        },
+    )
+    ensure_columns(
+        conn,
+        "optimizer_profile_test_results",
+        {
+            "optimizer_definition_id": "TEXT",
+            "memo": "TEXT",
+        },
+    )
+    ensure_columns(
+        conn,
         "training_metrics",
         {
             "learning_rate": "REAL",
@@ -912,9 +964,12 @@ def seed_recipe_optimizer_catalog_v2(conn: sqlite3.Connection, now: str | None =
             allowed_schedulers_json, optimizer_args_schema_json,
             target_steps_min, target_steps_recommended, target_steps_max,
             target_steps_confidence, description, risk_note, compatibility_notes_json,
-            is_builtin, is_active, created_at, updated_at
+            sd_scripts_optimizer_type, aliases_json, required_dependencies_json,
+            required_params_schema_json, recommended_params_schema_json,
+            lr_semantics_help, smoke_test_priority, validated_optimizer_type,
+            validation_status, is_builtin, is_active, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             name=excluded.name,
             display_name=excluded.display_name,
@@ -933,6 +988,15 @@ def seed_recipe_optimizer_catalog_v2(conn: sqlite3.Connection, now: str | None =
             description=excluded.description,
             risk_note=excluded.risk_note,
             compatibility_notes_json=excluded.compatibility_notes_json,
+            sd_scripts_optimizer_type=excluded.sd_scripts_optimizer_type,
+            aliases_json=excluded.aliases_json,
+            required_dependencies_json=excluded.required_dependencies_json,
+            required_params_schema_json=excluded.required_params_schema_json,
+            recommended_params_schema_json=excluded.recommended_params_schema_json,
+            lr_semantics_help=excluded.lr_semantics_help,
+            smoke_test_priority=excluded.smoke_test_priority,
+            validated_optimizer_type=COALESCE(optimizer_definitions_v2.validated_optimizer_type, excluded.validated_optimizer_type),
+            validation_status=COALESCE(optimizer_definitions_v2.validation_status, excluded.validation_status),
             is_builtin=excluded.is_builtin,
             is_active=excluded.is_active,
             updated_at=excluded.updated_at
@@ -946,9 +1010,10 @@ def seed_recipe_optimizer_catalog_v2(conn: sqlite3.Connection, now: str | None =
             default_learning_rate, default_unet_lr, default_text_encoder_lr,
             default_scheduler, optimizer_args_json, target_steps_min,
             target_steps_recommended, target_steps_max, description, risk_note,
-            is_builtin, is_active, created_at, updated_at
+            sd_scripts_optimizer_type, required_params_json, recommended_params_json,
+            command_params_json, smoke_params_json, is_builtin, is_active, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             optimizer_definition_id=excluded.optimizer_definition_id,
             model_family=excluded.model_family,
@@ -964,6 +1029,11 @@ def seed_recipe_optimizer_catalog_v2(conn: sqlite3.Connection, now: str | None =
             target_steps_max=excluded.target_steps_max,
             description=excluded.description,
             risk_note=excluded.risk_note,
+            sd_scripts_optimizer_type=excluded.sd_scripts_optimizer_type,
+            required_params_json=excluded.required_params_json,
+            recommended_params_json=excluded.recommended_params_json,
+            command_params_json=excluded.command_params_json,
+            smoke_params_json=excluded.smoke_params_json,
             is_builtin=excluded.is_builtin,
             is_active=excluded.is_active,
             updated_at=excluded.updated_at
@@ -1021,7 +1091,9 @@ def seed_recipe_optimizer_catalog_v2(conn: sqlite3.Connection, now: str | None =
     conn.executemany(
         """
         INSERT INTO training_recipes_v2(
-            id, name, display_name, model_family, training_purpose_id,
+            id, name, display_name, short_label, full_label, card_subtitle,
+            direct_select_label, group_label, recommended_badge, difficulty_label,
+            model_family, training_purpose_id,
             optimizer_definition_id, optimizer_profile_id, network_type_id,
             recipe_type, params_json, basic_params_json, advanced_params_json,
             raw_args_json, compatibility_rules_json, target_steps_min,
@@ -1029,10 +1101,17 @@ def seed_recipe_optimizer_catalog_v2(conn: sqlite3.Connection, now: str | None =
             expected_behavior, risk_note, sort_order, is_builtin, is_active,
             created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             name=excluded.name,
             display_name=excluded.display_name,
+            short_label=excluded.short_label,
+            full_label=excluded.full_label,
+            card_subtitle=excluded.card_subtitle,
+            direct_select_label=excluded.direct_select_label,
+            group_label=excluded.group_label,
+            recommended_badge=excluded.recommended_badge,
+            difficulty_label=excluded.difficulty_label,
             model_family=excluded.model_family,
             training_purpose_id=excluded.training_purpose_id,
             optimizer_definition_id=excluded.optimizer_definition_id,
@@ -2111,7 +2190,11 @@ CREATE TABLE IF NOT EXISTS optimizer_definitions_v2 (
     default_scheduler TEXT, allowed_schedulers_json TEXT, optimizer_args_schema_json TEXT,
     target_steps_min INTEGER, target_steps_recommended INTEGER, target_steps_max INTEGER,
     target_steps_confidence TEXT, description TEXT, risk_note TEXT,
-    compatibility_notes_json TEXT, is_builtin INTEGER NOT NULL DEFAULT 0,
+    compatibility_notes_json TEXT, sd_scripts_optimizer_type TEXT, aliases_json TEXT,
+    required_dependencies_json TEXT, required_params_schema_json TEXT,
+    recommended_params_schema_json TEXT, lr_semantics_help TEXT, smoke_test_priority INTEGER,
+    validated_optimizer_type TEXT, validation_status TEXT NOT NULL DEFAULT 'untested',
+    last_tested_at TEXT, last_test_result_id INTEGER, is_builtin INTEGER NOT NULL DEFAULT 0,
     is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS optimizer_profiles_v2 (
@@ -2120,8 +2203,30 @@ CREATE TABLE IF NOT EXISTS optimizer_profiles_v2 (
     default_learning_rate REAL, default_unet_lr REAL, default_text_encoder_lr REAL,
     default_scheduler TEXT, optimizer_args_json TEXT,
     target_steps_min INTEGER, target_steps_recommended INTEGER, target_steps_max INTEGER,
-    description TEXT, risk_note TEXT, is_builtin INTEGER NOT NULL DEFAULT 0,
-    is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    description TEXT, risk_note TEXT, sd_scripts_optimizer_type TEXT,
+    required_params_json TEXT, recommended_params_json TEXT, command_params_json TEXT,
+    smoke_params_json TEXT, is_builtin INTEGER NOT NULL DEFAULT 0,
+    is_active INTEGER NOT NULL DEFAULT 1, validation_status TEXT NOT NULL DEFAULT 'untested',
+    last_tested_at TEXT, last_test_result_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS optimizer_profile_test_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    optimizer_definition_id TEXT,
+    optimizer_profile_id TEXT NOT NULL,
+    recipe_id TEXT,
+    test_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    test_job_id INTEGER,
+    command_path TEXT,
+    log_path TEXT,
+    return_code INTEGER,
+    elapsed_seconds INTEGER,
+    error_message TEXT,
+    sd_scripts_commit TEXT,
+    torch_version TEXT,
+    cuda_version TEXT,
+    created_at TEXT NOT NULL,
+    memo TEXT
 );
 CREATE TABLE IF NOT EXISTS network_type_definitions (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, display_name TEXT NOT NULL,
@@ -2140,6 +2245,8 @@ CREATE TABLE IF NOT EXISTS training_purposes (
 );
 CREATE TABLE IF NOT EXISTS training_recipes_v2 (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, display_name TEXT NOT NULL,
+    short_label TEXT, full_label TEXT, card_subtitle TEXT, direct_select_label TEXT,
+    group_label TEXT, recommended_badge TEXT, difficulty_label TEXT,
     model_family TEXT NOT NULL, training_purpose_id TEXT, optimizer_definition_id TEXT,
     optimizer_profile_id TEXT, network_type_id TEXT, recipe_type TEXT NOT NULL,
     params_json TEXT NOT NULL, basic_params_json TEXT, advanced_params_json TEXT,

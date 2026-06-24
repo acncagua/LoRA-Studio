@@ -174,22 +174,6 @@
       </label>
     </div>
     <div class="notice compact" data-optimizer-info-panel hidden></div>
-    <label class="compact-recipe-select">Training Recipe v2
-      <select name="recipe_v2_id" data-recipe-select>
-        <option value="">旧形式プリセット / Custom</option>
-        {% for recipe in recipes_v2 %}
-        <option value="{{ recipe.id }}"
-          data-model-family="{{ recipe.model_family }}"
-          data-purpose-id="{{ recipe.training_purpose_id or '' }}"
-          data-optimizer-id="{{ recipe.optimizer_definition_id or '' }}"
-          data-profile-id="{{ recipe.optimizer_profile_id or '' }}"
-          data-network-id="{{ recipe.network_type_id or '' }}"
-          data-recipe-type="{{ recipe.recipe_type or '' }}">
-          {{ recipe.display_name }} / {{ recipe.purpose_display_name or '-' }} / {{ recipe.optimizer_display_name or '-' }} / {{ recipe.recipe_type }}
-        </option>
-        {% endfor %}
-      </select>
-    </label>
     <div class="recipe-selection-layout">
       <section class="recipe-candidates-panel" aria-label="Recipe候補">
         <div class="recipe-candidates-head">
@@ -208,6 +192,26 @@
         <button type="submit" data-wizard-submit data-selected-create-button disabled>Jobを作成</button>
       </aside>
     </div>
+    <details class="wide-field">
+      <summary>Recipeを直接選択（検索・確認用）</summary>
+      <p class="muted">カード選択が主導線です。直接選択ではModel Familyを含むfull labelを表示します。</p>
+      <label class="compact-recipe-select">Training Recipe v2
+        <select name="recipe_v2_id" data-recipe-select>
+          <option value="">旧形式プリセット / Custom</option>
+          {% for recipe in recipes_v2 %}
+          <option value="{{ recipe.id }}"
+            data-model-family="{{ recipe.model_family }}"
+            data-purpose-id="{{ recipe.training_purpose_id or '' }}"
+            data-optimizer-id="{{ recipe.optimizer_definition_id or '' }}"
+            data-profile-id="{{ recipe.optimizer_profile_id or '' }}"
+            data-network-id="{{ recipe.network_type_id or '' }}"
+            data-recipe-type="{{ recipe.recipe_type or '' }}">
+            {{ recipe.direct_select_label or recipe.full_label or recipe.display_name }} / {{ recipe.recipe_type }}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+    </details>
     <details class="wide-field">
       <summary>旧形式プリセット（legacy）</summary>
       <label>学習プリセット
