@@ -226,6 +226,7 @@ async function refreshStepEstimate(form, withSuggestions = false) {
     }
     const data = await response.json();
     updateStepEstimatePanel(panel, data.estimate || {});
+    updateSelectedRecipePanel(form);
     if (withSuggestions) {
       applyAutoRepeat(form, data.auto_repeat || {});
       updateStepSuggestions(form, data.suggestions || []);
@@ -764,7 +765,10 @@ function updateModeSummary(form, { expanded = false } = {}) {
   const cards = form.querySelector("[data-mode-cards]");
   if (label) label.textContent = currentModeLabel(form);
   if (cards) {
-    cards.classList.toggle("collapsed", !expanded);
+    if (arguments.length > 1) {
+      cards.dataset.expanded = expanded ? "true" : "false";
+    }
+    cards.classList.toggle("collapsed", cards.dataset.expanded !== "true");
   }
 }
 
@@ -957,7 +961,7 @@ function initRecipeSelectors() {
             select.dispatchEvent(new Event("change", { bubbles: true }));
           }
         }
-        updateModeSummary(form);
+        updateModeSummary(form, { expanded: false });
         applyRecipeFilters(form);
         refreshStepEstimate(form);
       });
