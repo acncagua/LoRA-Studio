@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased - Phase 12.2.1
+## phase12.2.1 / v0.5.1-beta - 2026-06-24
 
 Phase 12.2.1 expands the built-in Recipe v2 master data and makes the Job creation Wizard put Recipe selection at the center of the screen, with different candidate views for purpose-first and optimizer-first workflows.
 
