@@ -103,6 +103,7 @@ from app.services.optimizer_master_checks import (
     latest_master_check_run,
     master_check_run_detail,
     record_image_smoke_result,
+    run_image_smoke_for_item,
     run_prepare_checks,
     run_smoke_checks,
     suggested_action,
@@ -3404,6 +3405,19 @@ def optimizer_master_check_image_smoke(item_id: int, weight0_path: str = Form(..
     try:
         result = record_image_smoke_result(item_id, weight0_path, weight1_path)
         params = {"message" if result["status"] != "failed" else "error": f"Image Smoke: {result['status']}"}
+    except Exception as exc:
+        params = {"error": str(exc)}
+    return RedirectResponse(f"/optimizer-master-checks?run_id={item['check_run_id']}&{urlencode(params)}", status_code=303)
+
+
+@app.post("/optimizer-master-check-items/{item_id}/run-image-smoke")
+def optimizer_master_check_run_image_smoke(item_id: int, base_model_path: str = Form("")) -> RedirectResponse:
+    item = fetch_one("SELECT check_run_id FROM optimizer_master_check_items WHERE id = ?", (item_id,))
+    if item is None:
+        raise HTTPException(status_code=404, detail="Optimizer Master Check item not found")
+    try:
+        result = run_image_smoke_for_item(item_id, base_model_path=base_model_path.strip() or None)
+        params = {"message" if result.get("status") != "failed" else "error": f"Image Smoke: {result.get('status')} / {result.get('elapsed_seconds', '-')}s"}
     except Exception as exc:
         params = {"error": str(exc)}
     return RedirectResponse(f"/optimizer-master-checks?run_id={item['check_run_id']}&{urlencode(params)}", status_code=303)

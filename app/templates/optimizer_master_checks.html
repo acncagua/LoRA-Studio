@@ -130,6 +130,10 @@
           {% if item.failure_category %}<br><small>{{ suggested_action(item.failure_category, item.error_message) }}</small>{% endif %}
         </td>
         <td>
+          <form method="post" action="/optimizer-master-check-items/{{ item.id }}/run-image-smoke" class="compact-form">
+            <label>base model<input name="base_model_path" placeholder="空ならSmoke Jobのbase model"></label>
+            <button type="submit" class="small-button">Run LoRA Load/Image Smoke</button>
+          </form>
           <form method="post" action="/optimizer-master-check-items/{{ item.id }}/image-smoke" class="compact-form">
             <label>weight0<input name="weight0_path" value="{{ item.generated_weight0_image_path or '' }}"></label>
             <label>weight1<input name="weight1_path" value="{{ item.generated_weight1_image_path or '' }}"></label>

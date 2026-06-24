@@ -31,6 +31,7 @@ def profile_validation_badge(profile: Any | None) -> dict[str, str]:
         "prepare_ok": ("Prepare OK", "ok"),
         "smoke_ok": ("Smoke OK", "ok"),
         "smoke_failed": ("Failed", "error"),
+        "dependency_missing": ("Dependency Missing", "error"),
         "mini_pilot_ok": ("Mini Pilot OK", "ok"),
         "disabled": ("Disabled", "error"),
     }

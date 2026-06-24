@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -8,7 +9,7 @@ from typing import Any
 from PIL import Image, ImageStat
 
 from app import settings
-from app.db import connect, fetch_all, fetch_one, utc_now
+from app.db import connect, fetch_all, fetch_one, latest_environment, utc_now
 from app.services.optimizer_profile_validation import (
     SMOKE_TARGET_PROFILES,
     record_profile_test_result,
@@ -17,6 +18,8 @@ from app.services.optimizer_profile_validation import (
     select_recipe_for_profile,
 )
 from app.services.output_collector import collect_job_results, safe_sha256_file
+from app.services.training_runner import sd_scripts_subprocess_env
+from app.services.validation_generation import common_gen_img_args
 
 
 MASTER_CHECK_PROFILES = [
@@ -165,8 +168,12 @@ def master_check_run_detail(run_id: int) -> dict[str, Any]:
 
 
 def update_run_counts(run_id: int) -> None:
-    rows = fetch_all("SELECT status, failure_category FROM optimizer_master_check_items WHERE check_run_id = ?", (run_id,))
-    prepare_ok = sum(1 for row in rows if row["status"] in {"prepare_ok", "smoke_ok", "image_smoke_ok", "image_smoke_warning"})
+    rows = fetch_all("SELECT status, failure_category, prepare_job_id FROM optimizer_master_check_items WHERE check_run_id = ?", (run_id,))
+    prepare_ok = sum(
+        1
+        for row in rows
+        if row["prepare_job_id"] or row["status"] in {"prepare_ok", "smoke_ok", "image_smoke_ok", "image_smoke_warning"}
+    )
     smoke_ok = sum(1 for row in rows if row["status"] in {"smoke_ok", "image_smoke_ok", "image_smoke_warning"})
     failed = sum(1 for row in rows if row["status"] in {"failed", "smoke_failed"})
     dependency_missing = sum(1 for row in rows if row["failure_category"] == "missing_dependency")
@@ -180,6 +187,33 @@ def update_run_counts(run_id: int) -> None:
             """,
             (prepare_ok, smoke_ok, failed, dependency_missing, run_id),
         )
+
+
+def mark_profile_dependency_missing(profile_id: str, result_id: int | None = None) -> None:
+    profile = fetch_one("SELECT optimizer_definition_id FROM optimizer_profiles_v2 WHERE id = ?", (profile_id,))
+    now = utc_now()
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE optimizer_profiles_v2
+            SET validation_status = 'dependency_missing',
+                last_tested_at = ?, last_test_result_id = COALESCE(?, last_test_result_id),
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (now, result_id, now, profile_id),
+        )
+        if profile:
+            conn.execute(
+                """
+                UPDATE optimizer_definitions_v2
+                SET validation_status = 'dependency_missing',
+                    last_tested_at = ?, last_test_result_id = COALESCE(?, last_test_result_id),
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (now, result_id, now, profile["optimizer_definition_id"]),
+            )
 
 
 def _mark_run_started(run_id: int) -> float:
@@ -267,8 +301,16 @@ def run_smoke_checks(run_id: int, *, dataset_id: int, base_model_path: str, prof
             artifact_status = artifact["status"]
         else:
             status = "smoke_failed"
+            log_text = ""
+            if result.get("job_id"):
+                job = fetch_one("SELECT run_dir FROM training_jobs WHERE id = ?", (int(result["job_id"]),))
+                log_path = Path(job["run_dir"]) / "logs" / "train.log" if job else None
+                if log_path and log_path.exists():
+                    log_text = log_path.read_text(encoding="utf-8", errors="replace")[-8000:]
             error_message = result.get("error") or f"Smoke failed rc={result.get('return_code')}"
-            failure_category = classify_failure(error_message)
+            failure_category = classify_failure(log_text + "\n" + error_message)
+            if failure_category == "missing_dependency":
+                mark_profile_dependency_missing(item["optimizer_profile_id"], result.get("result_id"))
             artifact = {}
             artifact_status = None
         with connect() as conn:
@@ -350,15 +392,14 @@ def check_lora_artifact(path_value: str | None) -> dict[str, Any]:
                 if key.startswith(("lora_", "network_", "diffusion_model.", "text_model.")):
                     expected_prefix = True
                 tensor = handle.get_tensor(key)
-                if tensor_count <= 16:
-                    if bool(tensor.isnan().any()) or bool(tensor.isinf().any()):
-                        return {**result, "status": "failed", "tensor_count": tensor_count, "error": f"NaN/Inf tensor: {key}"}
-                    try:
-                        if float(tensor.abs().max()) == 0.0:
-                            result["status"] = "warning"
-                            result["error"] = "some tensors are all zero"
-                    except Exception:
-                        pass
+                if bool(tensor.isnan().any()) or bool(tensor.isinf().any()):
+                    return {**result, "status": "failed", "tensor_count": tensor_count, "error": f"NaN/Inf tensor: {key}"}
+                try:
+                    if float(tensor.abs().max()) == 0.0:
+                        result["status"] = "warning"
+                        result["error"] = "some tensors are all zero"
+                except Exception:
+                    pass
         if tensor_count <= 0:
             return {**result, "status": "failed", "tensor_count": 0, "error": "no tensors"}
         if not expected_prefix:
@@ -367,9 +408,72 @@ def check_lora_artifact(path_value: str | None) -> dict[str, Any]:
         result["tensor_count"] = tensor_count
         return result
     except ModuleNotFoundError:
+        external_check = _check_safetensors_with_environment(path)
+        if external_check:
+            return {**result, **external_check}
         return {**result, "status": "warning", "error": "safetensors package is not available"}
     except Exception as exc:
         return {**result, "status": "failed", "error": f"safetensors read failed: {exc}"}
+
+
+def _check_safetensors_with_environment(path: Path) -> dict[str, Any] | None:
+    environment = latest_environment()
+    if environment is None or not environment["venv_python_path"]:
+        return None
+    python_path = Path(environment["venv_python_path"])
+    if not python_path.exists():
+        return None
+    code = r"""
+import json
+import sys
+
+result = {"status": "ok"}
+try:
+    from safetensors import safe_open
+    tensor_count = 0
+    expected_prefix = False
+    failed = False
+    with safe_open(sys.argv[1], framework="pt", device="cpu") as handle:
+        for key in handle.keys():
+            tensor_count += 1
+            if key.startswith(("lora_", "network_", "diffusion_model.", "text_model.")):
+                expected_prefix = True
+            tensor = handle.get_tensor(key)
+            if bool(tensor.isnan().any()) or bool(tensor.isinf().any()):
+                result = {"status": "failed", "tensor_count": tensor_count, "error": f"NaN/Inf tensor: {key}"}
+                failed = True
+                break
+            try:
+                if float(tensor.abs().max()) == 0.0 and result.get("status") == "ok":
+                    result = {"status": "warning", "error": "some tensors are all zero"}
+            except Exception:
+                pass
+    if not failed:
+        if tensor_count <= 0:
+            result = {"status": "failed", "tensor_count": 0, "error": "no tensors"}
+        elif not expected_prefix:
+            result = {"status": "warning", "tensor_count": tensor_count, "error": "expected key prefix not found"}
+        else:
+            result["tensor_count"] = tensor_count
+except Exception as exc:
+    result = {"status": "failed", "error": f"safetensors read failed: {exc}"}
+print(json.dumps(result, ensure_ascii=False))
+"""
+    completed = subprocess.run(
+        [str(python_path), "-c", code, str(path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if completed.returncode != 0:
+        return {"status": "warning", "error": "safetensors package is not available"}
+    try:
+        return json.loads(completed.stdout.strip() or "{}")
+    except json.JSONDecodeError:
+        return {"status": "failed", "error": completed.stderr.strip() or completed.stdout.strip()}
 
 
 def check_image_smoke(weight0_path: str | None, weight1_path: str | None) -> dict[str, Any]:
@@ -446,6 +550,105 @@ def record_image_smoke_result(item_id: int, weight0_path: str, weight1_path: str
                 item_id,
             ),
         )
+    return result
+
+
+def run_image_smoke_for_item(item_id: int, *, base_model_path: str | None = None) -> dict[str, Any]:
+    item = fetch_one("SELECT * FROM optimizer_master_check_items WHERE id = ?", (item_id,))
+    if item is None:
+        raise ValueError(f"Optimizer Master Check item not found: {item_id}")
+    if not item["output_lora_path"] or not Path(item["output_lora_path"]).exists():
+        raise ValueError("Smoke OKのLoRA artifactが見つかりません。先に2-step Smokeを実行してください。")
+    environment = latest_environment()
+    if environment is None:
+        raise RuntimeError("sd-scripts environment is not registered.")
+    sd_scripts_path = Path(environment["sd_scripts_path"])
+    venv_python = Path(environment["venv_python_path"])
+    gen_img = sd_scripts_path / "gen_img.py"
+    if not gen_img.exists():
+        raise RuntimeError(f"gen_img.py が存在しません: {gen_img}")
+    if not venv_python.exists():
+        raise RuntimeError(f"venv python が存在しません: {venv_python}")
+    smoke_dir = settings.RUNS_DIR / "optimizer_master_checks" / f"run_{int(item['check_run_id']):06d}" / f"item_{item_id:06d}"
+    out_dir = smoke_dir / "images"
+    smoke_dir.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    prompt = "zho, 1girl, upper body, looking at viewer, simple background"
+    negative = "low quality, worst quality, blurry, bad anatomy"
+    baseline_prompt = smoke_dir / "weight0_prompt.txt"
+    lora_prompt = smoke_dir / "weight1_prompt.txt"
+    baseline_name = "weight0_baseline.png"
+    lora_name = "weight1_lora.png"
+    baseline_prompt.write_text(
+        f"{prompt} --n {negative} --d 111111 --w 512 --h 512 --s 20 --l 7 --f {baseline_name}\n",
+        encoding="utf-8",
+    )
+    lora_prompt.write_text(
+        f"{prompt} --n {negative} --d 111111 --w 512 --h 512 --s 20 --l 7 --am 1 --f {lora_name}\n",
+        encoding="utf-8",
+    )
+    condition = {"width": 512, "height": 512, "cfg_scale": 7, "steps": 20, "sampler": "euler_a"}
+    model_path = Path(base_model_path) if base_model_path else None
+    if not model_path or not model_path.exists():
+        smoke_job = fetch_one("SELECT base_model_path FROM training_jobs WHERE id = ?", (item["smoke_job_id"],)) if item["smoke_job_id"] else None
+        model_path = Path(smoke_job["base_model_path"]) if smoke_job and smoke_job["base_model_path"] else None
+    if not model_path or not model_path.exists():
+        raise RuntimeError("base model pathが見つかりません。")
+    base_args = common_gen_img_args(
+        venv_python=venv_python,
+        gen_img=gen_img,
+        base_model_path=model_path,
+        out_dir=out_dir,
+        model_family="SDXL",
+        mixed_precision=str(environment["mixed_precision"] or "bf16"),
+        condition=condition,
+    )
+    commands = [
+        [*base_args, "--from_file", str(baseline_prompt)],
+        [
+            *base_args,
+            "--from_file",
+            str(lora_prompt),
+            "--network_module",
+            "networks.lora",
+            "--network_weights",
+            str(item["output_lora_path"]),
+        ],
+    ]
+    log_path = smoke_dir / "image_smoke.log"
+    started = time.monotonic()
+    with log_path.open("wb") as handle:
+        for command in commands:
+            completed = subprocess.run(
+                command,
+                cwd=str(sd_scripts_path),
+                stdout=handle,
+                stderr=subprocess.STDOUT,
+                shell=False,
+                env=sd_scripts_subprocess_env(),
+                check=False,
+            )
+            if int(completed.returncode) != 0:
+                error = f"Image Smoke failed with return_code={completed.returncode}"
+                category = classify_failure(log_path.read_text(encoding="utf-8", errors="replace")[-4000:] + "\n" + error)
+                with connect() as conn:
+                    conn.execute(
+                        """
+                        UPDATE optimizer_master_check_items
+                        SET image_smoke_status = 'failed', failure_category = ?,
+                            error_message = ?, log_path = ?, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (category, error, str(log_path), utc_now(), item_id),
+                    )
+                return {"ok": False, "status": "failed", "error": error, "log_path": str(log_path)}
+    weight0_path = out_dir / baseline_name
+    weight1_path = out_dir / lora_name
+    result = record_image_smoke_result(item_id, str(weight0_path), str(weight1_path))
+    with connect() as conn:
+        conn.execute("UPDATE optimizer_master_check_items SET log_path = ?, updated_at = ? WHERE id = ?", (str(log_path), utc_now(), item_id))
+    result["elapsed_seconds"] = int(time.monotonic() - started)
+    result["log_path"] = str(log_path)
     return result
 
 
