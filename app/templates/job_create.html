@@ -252,7 +252,6 @@
       <label>train_batch_size<input name="train_batch_size" data-param-editor-key="train_batch_size"></label>
       <label>gradient_accumulation_steps<input name="gradient_accumulation_steps" data-param-editor-key="gradient_accumulation_steps"></label>
       <label>save_every_n_epochs<input name="save_every_n_epochs" data-param-editor-key="save_every_n_epochs"></label>
-      <label>sample_every_n_epochs<input name="sample_every_n_epochs" data-param-editor-key="sample_every_n_epochs"></label>
     </div>
     <details>
       <summary>Advanced Params</summary>
@@ -276,7 +275,12 @@
         <label>network_train_unet_only
           <select name="network_train_unet_only" data-param-editor-key="network_train_unet_only"><option value="">Recipe標準</option><option value="1">有効</option><option value="0">無効</option></select>
         </label>
+        <label class="checkbox-line">
+          <input type="checkbox" name="generate_training_samples" value="1" data-param-editor-key="generate_training_samples">
+          学習中サンプル画像を生成する
+        </label>
       </div>
+      <p class="muted">OFFの場合はsd-scriptsにsample_promptsを渡しません。ONの場合、サンプル間隔は1 epoch固定です。採用判断は学習後Review Pipelineを使います。</p>
     </details>
     <details>
       <summary>Raw Args</summary>

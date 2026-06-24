@@ -868,10 +868,11 @@ class Phase107StabilizationTests(IsolatedDbTest):
         restored = fetch_one("SELECT archived_at FROM training_jobs WHERE id = ?", (job_id,))
         self.assertIsNone(restored["archived_at"])
 
-        job_delete(job_id, "未実行のため削除", "db_only")
+        response = job_delete(job_id, "未実行のため削除", "db_only", "/jobs?view=active")
         deleted = fetch_one("SELECT deleted_at, delete_reason FROM training_jobs WHERE id = ?", (job_id,))
         self.assertTrue(deleted["deleted_at"])
         self.assertEqual(deleted["delete_reason"], "未実行のため削除")
+        self.assertEqual(response.headers["location"], "/jobs?view=active")
 
     def test_selected_completed_job_delete_is_rejected(self) -> None:
         project_id, dataset_id, version_id = self.create_project_fixture()
@@ -1139,6 +1140,88 @@ class Phase107StabilizationTests(IsolatedDbTest):
 
         index = argv.index("--text_encoder_lr")
         self.assertEqual(argv[index + 1 : index + 3], ["5e-06", "5e-06"])
+
+    def test_command_builder_omits_sample_prompts_when_training_samples_disabled(self) -> None:
+        from app.services.command_builder import build_command_argv
+
+        now = utc_now()
+        sd_scripts = self.root / "external" / "sd-scripts"
+        sd_scripts.mkdir(parents=True, exist_ok=True)
+        with connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO environments(
+                    name, sd_scripts_path, venv_python_path, mixed_precision,
+                    sd_scripts_commit_hash, status, created_at, updated_at
+                )
+                VALUES ('default', ?, ?, 'bf16', 'test', 'ok', ?, ?)
+                """,
+                (str(sd_scripts), sys.executable, now, now),
+            )
+        job = {
+            "params_json": json.dumps(
+                {
+                    "generate_training_samples": False,
+                    "sample_every_n_epochs": 1,
+                    "sample_at_first": True,
+                }
+            ),
+            "training_script": "sdxl_train_network.py",
+            "base_model_path": "D:/models/base.safetensors",
+            "output_dir": str(self.root / "runs" / "job_000001" / "models"),
+            "output_name": "test",
+            "run_dir": str(self.root / "runs" / "job_000001"),
+            "vae_path": None,
+        }
+
+        argv = build_command_argv(job, self.root / "dataset.toml", self.root / "sample.txt")
+
+        self.assertNotIn("--sample_prompts", argv)
+        self.assertNotIn("--sample_every_n_epochs", argv)
+        self.assertNotIn("--sample_at_first", argv)
+
+    def test_command_builder_renders_optimizer_bool_args_as_python_literals(self) -> None:
+        from app.services.command_builder import build_command_argv
+
+        now = utc_now()
+        sd_scripts = self.root / "external" / "sd-scripts"
+        sd_scripts.mkdir(parents=True, exist_ok=True)
+        with connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO environments(
+                    name, sd_scripts_path, venv_python_path, mixed_precision,
+                    sd_scripts_commit_hash, status, created_at, updated_at
+                )
+                VALUES ('default', ?, ?, 'bf16', 'test', 'ok', ?, ?)
+                """,
+                (str(sd_scripts), sys.executable, now, now),
+            )
+        job = {
+            "params_json": json.dumps(
+                {
+                    "optimizer_type": "Prodigy",
+                    "optimizer_args": {
+                        "decouple": True,
+                        "use_bias_correction": False,
+                        "weight_decay": 0.01,
+                    },
+                }
+            ),
+            "training_script": "sdxl_train_network.py",
+            "base_model_path": "D:/models/base.safetensors",
+            "output_dir": str(self.root / "runs" / "job_000001" / "models"),
+            "output_name": "test",
+            "run_dir": str(self.root / "runs" / "job_000001"),
+            "vae_path": None,
+        }
+
+        argv = build_command_argv(job, self.root / "dataset.toml", self.root / "sample.txt")
+
+        optimizer_args = [argv[index + 1] for index, part in enumerate(argv) if part == "--optimizer_args"]
+        self.assertIn("decouple=True", optimizer_args)
+        self.assertIn("use_bias_correction=False", optimizer_args)
+        self.assertIn("weight_decay=0.01", optimizer_args)
 
     def test_training_failure_diagnosis_explains_access_violation(self) -> None:
         from app.services.training_runner import training_failure_diagnosis
@@ -2383,6 +2466,54 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertTrue(any("cache_text_encoder_outputs" in message for message in result["errors"]))
         self.assertTrue(any("network_train_unet_only" in message for message in result["errors"]))
 
+    def test_phase121_create_job_rejects_planned_network_type_recipe(self) -> None:
+        from app.db import create_job
+
+        now = utc_now()
+        project_id, dataset_id, version_id = self.create_project_fixture()
+        with connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO training_recipes_v2 (
+                    id, name, display_name, model_family, training_purpose_id,
+                    optimizer_definition_id, optimizer_profile_id, network_type_id,
+                    recipe_type, params_json, basic_params_json, advanced_params_json,
+                    raw_args_json, compatibility_rules_json, target_steps_min,
+                    target_steps_recommended, target_steps_max, target_checkpoint_count,
+                    expected_behavior, risk_note, sort_order, is_builtin, is_active,
+                    created_at, updated_at
+                )
+                SELECT
+                    'test_locon_planned_recipe', 'test_locon_planned_recipe', 'Test LoCon Planned',
+                    model_family, training_purpose_id, optimizer_definition_id, optimizer_profile_id,
+                    'locon', recipe_type, params_json, basic_params_json, advanced_params_json,
+                    raw_args_json, compatibility_rules_json, target_steps_min,
+                    target_steps_recommended, target_steps_max, target_checkpoint_count,
+                    expected_behavior, 'planned network type test', 9999, 0, 1, ?, ?
+                FROM training_recipes_v2
+                WHERE id = 'sdxl_character_face_adamw8bit_standard_10epoch'
+                """,
+                (now, now),
+            )
+
+        with self.assertRaises(ValueError) as raised:
+            create_job(
+                {
+                    "project_id": project_id,
+                    "name": "planned network recipe",
+                    "dataset_id": dataset_id,
+                    "dataset_version_id": version_id,
+                    "preset_id": "sdxl_2d_face_adamw8bit_standard",
+                    "recipe_v2_id": "test_locon_planned_recipe",
+                    "base_model_path": "D:/models/base.safetensors",
+                    "output_name": "planned_network_recipe",
+                    "params": {"repeats": 10, "max_train_epochs": 10, "train_batch_size": 1},
+                }
+            )
+
+        self.assertIn("planned", str(raised.exception))
+        self.assertIn("実行できません", str(raised.exception))
+
     def test_phase121_recipe_and_optimizer_pages_render(self) -> None:
         from app.main import optimizers_library, training_recipes_library
 
@@ -2438,6 +2569,32 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertEqual(overrides["repeats"]["from"], 10)
         self.assertEqual(overrides["repeats"]["to"], 12)
         self.assertEqual(overrides["repeats"]["reason"], "target step assistant")
+
+    def test_phase122_edit_step_estimate_uses_recipe_v2_target(self) -> None:
+        from app.db import create_job
+        from app.main import job_edit
+
+        project_id, dataset_id, version_id = self.create_project_fixture()
+        job_id = create_job(
+            {
+                "project_id": project_id,
+                "name": "prodigy edit estimate",
+                "dataset_id": dataset_id,
+                "dataset_version_id": version_id,
+                "preset_id": "sdxl_2d_face_adamw8bit_standard",
+                "recipe_v2_id": "sdxl_character_face_prodigy_soft_advanced",
+                "base_model_path": "D:/models/base.safetensors",
+                "output_name": "prodigy_edit_estimate",
+                "params": {"repeats": 11, "max_train_epochs": 10, "train_batch_size": 1},
+            }
+        )
+
+        body = job_edit(request=None, job_id=job_id).body.decode("utf-8")
+
+        self.assertIn('name="recipe_v2_id" value="sdxl_character_face_prodigy_soft_advanced"', body)
+        self.assertIn('data-step-field="optimizer_name">Prodigy', body)
+        self.assertIn('data-step-field="recipe_name">sdxl_character_face_prodigy_soft_advanced', body)
+        self.assertIn('data-step-field="target_source">recipe', body)
 
     def test_weight_calibration_pipeline_start_recreates_missing_conditions(self) -> None:
         from app.services.validation_generation import start_weight_calibration_pipeline
@@ -2802,6 +2959,7 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertIn("選択weightを追加生成して不足レビューも再計算", matrix_html)
         self.assertIn("不足レビューだけ再計算", matrix_html)
         self.assertIn(f"/validation-runs/{run_id}/matrix/missing-review", matrix_html)
+        self.assertIn(f'name="run_ids" value="{run_id}"', matrix_html)
 
     def test_validation_matrix_weight_post_adds_conditions_and_starts_missing_generation(self) -> None:
         from app.main import validation_matrix_add_weights
@@ -2812,7 +2970,7 @@ class Phase107StabilizationTests(IsolatedDbTest):
 
         added_weight = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ? AND lora_weight = 0.9", (run_id,))
         self.assertEqual(response.status_code, 303)
-        self.assertIn(f"/validation-runs/{run_id}/matrix?weight_message=", response.headers["location"])
+        self.assertIn(f"/validation-runs/{run_id}/matrix?weight_notice=weights_started", response.headers["location"])
         self.assertEqual(added_weight["count"], 9)
         start_mock.assert_called_once_with(run_id, run_missing_review_after=True)
 
@@ -2824,7 +2982,7 @@ class Phase107StabilizationTests(IsolatedDbTest):
             response = validation_matrix_missing_review(run_id)
 
         self.assertEqual(response.status_code, 303)
-        self.assertIn(f"/validation-runs/{run_id}/matrix?weight_message=", response.headers["location"])
+        self.assertIn(f"/validation-runs/{run_id}/matrix?weight_notice=missing_review_started", response.headers["location"])
         start_mock.assert_called_once_with(run_id)
 
     def test_epoch_cross_matrix_missing_review_post_starts_sequences(self) -> None:
@@ -2840,7 +2998,7 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertIn("/jobs/1/validation-runs/epoch-matrix?", location)
         self.assertIn(f"run_ids={run_id}", location)
         self.assertIn(f"run_ids={second_run_id}", location)
-        self.assertIn("matrix_message=", location)
+        self.assertIn("matrix_notice=missing_review_started", location)
         start_mock.assert_called_once_with([run_id, second_run_id])
 
     def test_epoch_cross_matrix_weight_post_adds_conditions_and_starts_sequence(self) -> None:
@@ -2864,7 +3022,7 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertIn(f"/jobs/{run['job_id']}/validation-runs/epoch-matrix?", location)
         self.assertIn(f"run_ids={run_id}", location)
         self.assertIn(f"run_ids={second_run_id}", location)
-        self.assertIn("matrix_message=", location)
+        self.assertIn("matrix_notice=weights_started", location)
         added_first = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ? AND lora_weight = 0.9", (run_id,))
         added_second = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ? AND lora_weight = 0.9", (second_run_id,))
         self.assertEqual(added_first["count"], 9)

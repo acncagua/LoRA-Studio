@@ -19,6 +19,7 @@
 
 <form method="post" action="/jobs/{{ job.id }}/edit" class="form-grid wide">
   <input type="hidden" name="repeats_auto_calculated" value="0" data-repeats-auto-calculated>
+  <input type="hidden" name="recipe_v2_id" value="{{ job.recipe_v2_id or '' }}">
   <section class="notice wide-field">
     <h2>Parameter Editor v2</h2>
     <p class="muted">この編集画面ではBasic ParamsとAdvanced Paramsを直接編集できます。Raw Args相当の低レベル指定はAdvanced JSONで確認し、変更差分は保存後のJob詳細で確認してください。</p>
@@ -93,15 +94,15 @@
     <label>network_alpha<input name="network_alpha" value="{{ params.network_alpha or '' }}"></label>
     <label>resolution<input name="resolution" value="{{ params.resolution|join(',') if params.resolution is sequence and params.resolution is not string else params.resolution or '' }}"></label>
     <label>save_every_n_epochs<input name="save_every_n_epochs" value="{{ params.save_every_n_epochs or '' }}"></label>
-    <label>sample_every_n_epochs<input name="sample_every_n_epochs" value="{{ params.sample_every_n_epochs or '' }}"></label>
   </fieldset>
 
   <fieldset class="form-fieldset">
     <legend>Advanced Params</legend>
     <label>optimizer_type<input name="optimizer_type" value="{{ params.optimizer_type or '' }}"></label>
     <label>lr_scheduler<input name="lr_scheduler" value="{{ params.lr_scheduler or '' }}"></label>
+    <label class="checkbox-line"><input type="checkbox" name="generate_training_samples" value="1" {{ 'checked' if params.generate_training_samples is not defined or params.generate_training_samples else '' }}> 学習中サンプル画像を生成する</label>
     <label class="checkbox-line"><input type="checkbox" name="no_metadata" value="1" {{ 'checked' if params.no_metadata else '' }}> no_metadata</label>
-    <p class="muted wide-field">Optimizerやscheduler、metadataなど、Recipe標準から外れる可能性がある項目です。</p>
+    <p class="muted wide-field">学習中サンプルをOFFにするとsample_promptsをsd-scriptsに渡しません。採用判断は学習後Review Pipelineを使います。</p>
   </fieldset>
 
   <fieldset class="form-fieldset" data-review-automation-settings>

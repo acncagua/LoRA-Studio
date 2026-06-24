@@ -23,8 +23,6 @@
   <p class="muted">
     保存間隔提案:
     <span data-step-field="save_every_n_epochs_proposal">{{ step_estimate.save_every_n_epochs_proposal if step_estimate else '-' }}</span> epoch /
-    サンプル間隔提案:
-    <span data-step-field="sample_every_n_epochs_proposal">{{ step_estimate.sample_every_n_epochs_proposal if step_estimate else '-' }}</span> epoch /
     推定checkpoint数:
     <span data-step-field="estimated_output_checkpoint_count">{{ step_estimate.estimated_output_checkpoint_count if step_estimate and step_estimate.estimated_output_checkpoint_count is not none else '-' }}</span>
   </p>

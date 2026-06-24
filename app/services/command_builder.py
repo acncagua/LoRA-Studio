@@ -127,6 +127,7 @@ def build_command_argv(job: dict[str, Any], dataset_config: Path, sample_prompts
     if environment is None:
         raise RuntimeError("sd-scripts environment is not registered.")
     script = Path(environment["sd_scripts_path"]) / job["training_script"]
+    generate_training_samples = params.get("generate_training_samples", True) is not False
     args: list[str] = [
         environment["venv_python_path"],
         "-m",
@@ -136,14 +137,17 @@ def build_command_argv(job: dict[str, Any], dataset_config: Path, sample_prompts
         "--dataset_config", str(dataset_config),
         "--output_dir", job["output_dir"],
         "--output_name", job["output_name"],
-        "--sample_prompts", str(sample_prompts),
         "--logging_dir", str(Path(job["run_dir"]) / "metrics"),
         "--log_with", "tensorboard",
     ]
+    if generate_training_samples:
+        args.extend(["--sample_prompts", str(sample_prompts)])
     if job.get("vae_path"):
         args.extend(["--vae", job["vae_path"]])
 
-    skip_keys = {"resolution", "repeats", "optimizer_args", "train_batch_size", "text_encoder_lr1", "text_encoder_lr2"}
+    skip_keys = {"resolution", "repeats", "optimizer_args", "train_batch_size", "text_encoder_lr1", "text_encoder_lr2", "generate_training_samples"}
+    if not generate_training_samples:
+        skip_keys.update({"sample_every_n_epochs", "sample_every_n_steps", "sample_at_first", "sample_sampler"})
     text_encoder_lr_values = [params.get("text_encoder_lr1"), params.get("text_encoder_lr2")]
     active_text_encoder_lrs = [
         value
@@ -170,7 +174,7 @@ def build_command_argv(job: dict[str, Any], dataset_config: Path, sample_prompts
             args.extend([f"--{key}", str(value)])
 
     for key, value in (params.get("optimizer_args") or {}).items():
-        rendered = str(value).lower() if isinstance(value, bool) else str(value)
+        rendered = repr(value) if isinstance(value, bool) else str(value)
         args.extend(["--optimizer_args", f"{key}={rendered}"])
 
     return [str(part) for part in args]

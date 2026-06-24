@@ -5,6 +5,7 @@ from typing import Any
 
 from app.db import fetch_all, fetch_one
 from app.services.review_sessions import review_machine_candidate_summary
+from app.services.step_estimator import optional_int, target_config_from_catalog
 
 
 ACCEPTABLE = "ACCEPTABLE"
@@ -84,15 +85,19 @@ def build_retry_signal(
     if job is None:
         return empty_signal("学習Jobの情報が見つかりません。")
 
-    step_status = str(job["step_status_at_creation"] or "")
-    expected_steps = job["expected_total_steps_at_creation"] or job["expected_total_steps"]
-    target_steps = job["target_steps_recommended_at_creation"]
+    step_context = retry_step_context(job)
+    step_status = step_context["step_status"]
+    expected_steps = step_context["expected_steps"]
+    target_steps = step_context["target_steps_recommended"]
+    target_steps_min = step_context["target_steps_min"]
     evidence["expected_steps"] = expected_steps
     evidence["target_steps_recommended"] = target_steps
-    if step_status in {"TOO_LOW", "LOW"}:
+    evidence["target_steps_min"] = target_steps_min
+    evidence["step_status"] = step_status
+    if step_status == "TOO_LOW" or (target_steps_min is not None and expected_steps is not None and expected_steps < target_steps_min):
         label = UNDERTRAINED_STEP_SHORTAGE
         confidence = "medium"
-        reasons.append(f"想定Stepが目標Stepに対して {step_status} です。")
+        reasons.append(f"想定Stepが目標Step範囲に対して {step_status} です。")
         actions.append("まずrepeats / epochs / batchを見直し、target stepsに近づける案を検討してください。")
 
     dataset_issue = dataset_or_caption_issue(job, project)
@@ -184,6 +189,65 @@ def empty_signal(reason: str) -> dict[str, Any]:
         "recommended_next_actions": ["必要な結果データが揃ってから再確認してください。"],
         "evidence": {},
     }
+
+
+def retry_step_context(job: Any) -> dict[str, Any]:
+    expected_steps = optional_int(job["expected_total_steps_at_creation"] if "expected_total_steps_at_creation" in job.keys() else None)
+    if expected_steps is None and "expected_total_steps" in job.keys():
+        expected_steps = optional_int(job["expected_total_steps"])
+    target = target_context_for_job(job)
+    target_min = optional_int(target.get("target_steps_min"))
+    target_recommended = optional_int(target.get("target_steps_recommended"))
+    target_max = optional_int(target.get("target_steps_max"))
+    stored_status = str(job["step_status_at_creation"] or "")
+    step_status = stored_status or "UNKNOWN"
+    if expected_steps is not None:
+        if target_min is not None and expected_steps < target_min:
+            step_status = "LOW"
+        elif target_max is not None and expected_steps > target_max * 1.25:
+            step_status = "TOO_HIGH"
+        elif target_max is not None and expected_steps > target_max:
+            step_status = "HIGH"
+        elif target_min is not None and target_recommended is not None and expected_steps >= target_min:
+            step_status = "OK"
+    return {
+        "expected_steps": expected_steps,
+        "target_steps_min": target_min,
+        "target_steps_recommended": target_recommended,
+        "target_steps_max": target_max,
+        "step_status": step_status,
+    }
+
+
+def target_context_for_job(job: Any) -> dict[str, Any]:
+    preset = fetch_one("SELECT * FROM presets WHERE id = ?", (job["preset_id"],)) if job["preset_id"] else None
+    recipe = None
+    profile = None
+    definition = None
+    recipe_v2_id = job["recipe_v2_id"] if "recipe_v2_id" in job.keys() else None
+    if recipe_v2_id:
+        recipe = fetch_one("SELECT * FROM training_recipes_v2 WHERE id = ?", (recipe_v2_id,))
+        if recipe is not None:
+            if recipe["optimizer_profile_id"]:
+                profile = fetch_one("SELECT * FROM optimizer_profiles_v2 WHERE id = ?", (recipe["optimizer_profile_id"],))
+            if recipe["optimizer_definition_id"]:
+                definition = fetch_one("SELECT * FROM optimizer_definitions_v2 WHERE id = ?", (recipe["optimizer_definition_id"],))
+            return target_config_from_catalog(
+                training_recipe=recipe,
+                optimizer_profile=profile,
+                optimizer_definition=definition,
+                preset=preset,
+            )
+    params = json_loads(job["params_json"], {})
+    optimizer_type = str(params.get("optimizer_type") or "")
+    if optimizer_type:
+        definition = fetch_one("SELECT * FROM optimizer_definitions_v2 WHERE id = ?", (optimizer_type,))
+    return target_config_from_catalog(
+        training_recipe=None,
+        optimizer_profile=None,
+        optimizer_definition=definition,
+        preset=preset,
+    )
 
 
 def dataset_or_caption_issue(job: Any, project: Any | None) -> str:

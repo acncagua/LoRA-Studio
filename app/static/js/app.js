@@ -155,7 +155,6 @@ function stepEstimatorParams(form) {
     "train_batch_size",
     "gradient_accumulation_steps",
     "save_every_n_epochs",
-    "sample_every_n_epochs",
     "learning_rate",
     "unet_lr",
     "text_encoder_lr1",
@@ -175,13 +174,13 @@ function stepEstimatorParams(form) {
       }
     }
   });
-  ["cache_latents", "cache_text_encoder_outputs", "network_train_unet_only"].forEach((name) => {
+  ["cache_latents", "cache_text_encoder_outputs", "network_train_unet_only", "generate_training_samples"].forEach((name) => {
     const input = form.querySelector(`[name='${name}']`);
     if (!input) {
       return;
     }
-    if (input.type === "checkbox" && input.checked) {
-      params[name] = true;
+    if (input.type === "checkbox") {
+      params[name] = input.checked;
     } else if (input.value === "1") {
       params[name] = true;
     } else if (input.value === "0") {
@@ -309,7 +308,7 @@ function updateStepSuggestions(form, suggestions) {
     return;
   }
   const table = document.createElement("table");
-  table.innerHTML = "<thead><tr><th>repeats</th><th>epochs</th><th>steps</th><th>save/sample</th><th>反映</th></tr></thead><tbody></tbody>";
+  table.innerHTML = "<thead><tr><th>repeats</th><th>epochs</th><th>steps</th><th>保存間隔</th><th>反映</th></tr></thead><tbody></tbody>";
   const tbody = table.querySelector("tbody");
   suggestions.forEach((item) => {
     const tr = document.createElement("tr");
@@ -321,11 +320,9 @@ function updateStepSuggestions(form, suggestions) {
       const repeats = form.querySelector("[name='repeats']");
       const epochs = form.querySelector("[name='max_train_epochs']");
       const saveEvery = form.querySelector("[name='save_every_n_epochs']");
-      const sampleEvery = form.querySelector("[name='sample_every_n_epochs']");
       if (repeats) repeats.value = item.repeats;
       if (epochs) epochs.value = item.max_train_epochs;
-      if (saveEvery && !saveEvery.value) saveEvery.value = item.save_every_n_epochs_proposal;
-      if (sampleEvery && !sampleEvery.value) sampleEvery.value = item.sample_every_n_epochs_proposal;
+      if (saveEvery) saveEvery.value = item.save_every_n_epochs_proposal;
       refreshStepEstimate(form);
     });
     tr.lastElementChild.appendChild(button);
@@ -340,7 +337,7 @@ function initStepEstimators() {
       return;
     }
     form.addEventListener("input", (event) => {
-      if (event.target.matches("[name='repeats'], [name='max_train_epochs'], [name='train_batch_size'], [name='gradient_accumulation_steps'], [name='save_every_n_epochs'], [name='sample_every_n_epochs'], [name='learning_rate'], [name='unet_lr'], [name='text_encoder_lr1'], [name='text_encoder_lr2'], [name='network_dim'], [name='network_alpha'], [name='optimizer_type'], [name='lr_scheduler'], [data-param-editor-raw]")) {
+      if (event.target.matches("[name='repeats'], [name='max_train_epochs'], [name='train_batch_size'], [name='gradient_accumulation_steps'], [name='save_every_n_epochs'], [name='learning_rate'], [name='unet_lr'], [name='text_encoder_lr1'], [name='text_encoder_lr2'], [name='network_dim'], [name='network_alpha'], [name='optimizer_type'], [name='lr_scheduler'], [data-param-editor-raw]")) {
         if (event.target.matches("[name='repeats']")) {
           const autoFlag = form.querySelector("[data-repeats-auto-calculated]");
           if (autoFlag) {
@@ -405,12 +402,17 @@ function setListItems(list, items) {
   });
 }
 
-function wizardCompatibility(recipe, params, rawText = "") {
+function wizardCompatibility(form, recipe, params, rawText = "") {
   const errors = [];
   const warnings = [];
   const notes = [];
+  const mode = form.querySelector("[data-recipe-mode-input]")?.value || "purpose";
   if (!recipe) {
-    notes.push("Recipe v2未選択です。旧形式プリセットまたはCustom扱いで作成します。");
+    if (mode === "custom") {
+      notes.push("Recipe v2未選択です。完全カスタムとして作成します。");
+    } else {
+      errors.push("Training Recipe v2が未選択です。フィルタだけでは設定は反映されません。Recipeカードを選択してください。");
+    }
   } else {
     notes.push(`Recipe: ${recipeLabel(recipe)}`);
     notes.push(`Target steps: ${recipe.target_steps_min ?? "-"} / ${recipe.target_steps_recommended ?? "-"} / ${recipe.target_steps_max ?? "-"}`);
@@ -464,7 +466,13 @@ function updateRecipeDetail(form) {
   const recipe = currentRecipe(form);
   if (!detail) return;
   if (!recipe) {
-    detail.innerHTML = "<strong>Recipe未選択</strong><p class=\"muted\">旧形式プリセットまたは完全カスタムとして作成します。</p>";
+    const mode = form.querySelector("[data-recipe-mode-input]")?.value || "purpose";
+    const visibleCards = Array.from(form.querySelectorAll("[data-recipe-card]")).filter((card) => !card.hidden).length;
+    const message = visibleCards
+      ? "フィルタは候補の絞り込みです。実際に使うRecipeカードを選択してください。"
+      : "現在のフィルタ条件に合うRecipeがありません。Optimizer ProfileやNetwork Typeを変更してください。";
+    const customNote = mode === "custom" ? "完全カスタムではRecipe未選択のまま作成できます。" : message;
+    detail.innerHTML = `<strong>Recipe未選択</strong><p class="muted">${customNote}</p>`;
     return;
   }
   detail.innerHTML = `
@@ -484,11 +492,16 @@ function updateRecipeDetail(form) {
 
 function updateParamDiff(form) {
   const recipe = currentRecipe(form);
+  const mode = form.querySelector("[data-recipe-mode-input]")?.value || "purpose";
   const base = (recipe && recipe.params) || {};
   const resolved = resolveWizardParams(form);
   const preview = form.querySelector("[data-resolved-params-preview]");
   if (preview) {
-    preview.textContent = JSON.stringify(resolved, null, 2);
+    if (!recipe && mode !== "custom") {
+      preview.textContent = "Recipe未選択です。フィルタだけでは学習パラメータは確定しません。Recipeカードを選択してください。";
+    } else {
+      preview.textContent = JSON.stringify(resolved, null, 2);
+    }
   }
   const changed = Object.keys(resolved)
     .filter((key) => !paramsEqual(base[key], resolved[key]))
@@ -511,7 +524,7 @@ function updateCompatibilityPanel(form) {
   const recipe = currentRecipe(form);
   const params = resolveWizardParams(form);
   const rawText = form.querySelector("[data-param-editor-raw]")?.value || "";
-  const result = wizardCompatibility(recipe, params, rawText);
+  const result = wizardCompatibility(form, recipe, params, rawText);
   const panel = form.querySelector("[data-compatibility-panel]");
   if (!panel) return result;
   panel.classList.toggle("warning", result.errors.length > 0 || result.warnings.length > 0);
@@ -588,12 +601,47 @@ function buildRecipeCards(form) {
   });
 }
 
+function syncOptimizerProfileFilter(form) {
+  const optimizerSelect = form.querySelector("[data-recipe-filter='optimizer_definition_id']");
+  const profileSelect = form.querySelector("[data-recipe-filter='optimizer_profile_id']");
+  if (!optimizerSelect || !profileSelect) {
+    return;
+  }
+  const recipeSelect = form.querySelector("[data-recipe-select]");
+  const optimizerId = optimizerSelect.value || "";
+  const modelFamily = form.querySelector("[data-recipe-filter='model_family']")?.value || "";
+  const recipeType = form.querySelector("[data-recipe-filter='recipe_type']")?.value || "";
+  const networkType = form.querySelector("[data-recipe-filter='network_type_id']")?.value || "";
+  const recipeOptions = recipeSelect ? Array.from(recipeSelect.options).filter((option) => option.value) : [];
+  let selectedVisible = false;
+  Array.from(profileSelect.options).forEach((option) => {
+    const profileOptimizerId = option.getAttribute("data-optimizer-id") || "";
+    const hasMatchingRecipe = !option.value || recipeOptions.some((recipeOption) => {
+      return recipeOption.getAttribute("data-profile-id") === option.value
+        && (!optimizerId || recipeOption.getAttribute("data-optimizer-id") === optimizerId)
+        && (!modelFamily || recipeOption.getAttribute("data-model-family") === modelFamily)
+        && (!recipeType || recipeOption.getAttribute("data-recipe-type") === recipeType)
+        && (!networkType || recipeOption.getAttribute("data-network-id") === networkType);
+    });
+    const visible = !option.value || ((!optimizerId || profileOptimizerId === optimizerId) && hasMatchingRecipe);
+    option.hidden = !visible;
+    option.disabled = !visible;
+    if (visible && option.selected) {
+      selectedVisible = true;
+    }
+  });
+  if (!selectedVisible) {
+    profileSelect.value = "";
+  }
+}
+
 function applyRecipeFilters(form) {
   const mode = form.querySelector("[data-recipe-mode-input]")?.value || "purpose";
   const recipeSelect = form.querySelector("[data-recipe-select]");
   if (!recipeSelect) {
     return;
   }
+  syncOptimizerProfileFilter(form);
   const purposeField = form.querySelector("[data-purpose-filter-field]");
   const optimizerField = form.querySelector("[data-optimizer-filter-field]");
   const profileField = form.querySelector("[data-profile-filter-field]");
@@ -648,6 +696,9 @@ function applyRecipeFilters(form) {
   if (!selectedVisible && recipeSelect.value) {
     recipeSelect.value = "";
   }
+  form.querySelectorAll("[data-recipe-card]").forEach((card) => {
+    card.classList.toggle("active", card.getAttribute("data-recipe-card") === recipeSelect.value);
+  });
   form.querySelectorAll("[data-recipe-card]").forEach((card) => {
     const visible = Object.entries(filters).every(([key, value]) => {
       const attr = {
@@ -1957,7 +2008,7 @@ function applyValidationGenerationStatus(row, payload) {
     document.body.setAttribute("data-validation-generation-refreshing", "1");
     showPageNotice("検証画像生成の状態が変わりました。次のRunを確認するため画面を更新します。");
     schedulePageRefresh({
-      paramsToDelete: ["generation_error", "generation_message"],
+      paramsToDelete: ["generation_error", "generation_message", "generation_notice"],
       hash: "#validation-runs",
       delayMs: 1200,
     });

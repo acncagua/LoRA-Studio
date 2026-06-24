@@ -53,6 +53,7 @@
             {% if job.actions.delete %}
             <form method="post" action="/jobs/{{ job.id }}/delete-draft" onsubmit="return confirm('この未実行の下書き学習ジョブを削除します。runsファイルは削除されません。よろしいですか？');">
               <input type="hidden" name="delete_reason" value="未実行の下書き整理">
+              <input type="hidden" name="return_to" value="/jobs?view={{ view }}">
               <button class="small-button danger" type="submit">削除</button>
             </form>
             {% endif %}
@@ -84,6 +85,7 @@
             {% if job.actions.delete %}
             <form method="post" action="/jobs/{{ job.id }}/delete-draft" onsubmit="return confirm('この未実行の下書き学習ジョブを削除します。runsファイルは削除されません。よろしいですか？');">
               <input type="hidden" name="delete_reason" value="整理候補から削除">
+              <input type="hidden" name="return_to" value="/jobs?view={{ view }}">
               <button class="small-button danger" type="submit">削除</button>
             </form>
             {% elif job.actions.archive %}

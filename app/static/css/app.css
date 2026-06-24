@@ -628,6 +628,16 @@ tr.reference-candidate-added td {
   outline: 3px solid rgba(47, 120, 104, .24);
   border-color: var(--accent);
   background: #eff8f3;
+  color: var(--ink);
+}
+.choice-card.active strong,
+.recipe-choice-card.active strong {
+  color: var(--ink);
+}
+.choice-card.active span,
+.recipe-choice-card.active span,
+.recipe-choice-card.active small {
+  color: #33433d;
 }
 .compatibility-panel.warning {
   background: #fbf4e8;

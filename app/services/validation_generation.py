@@ -1842,8 +1842,8 @@ def matrix_weight_controls(run_id: int) -> str:
     default_options = "".join(option(index / 10) for index in range(0, 11))
     extra_options = "".join(option(index / 10) for index in range(11, 21))
     return (
-        f"<form id=\"matrix-weight-form\" method=\"post\" action=\"/validation-runs/{run_id}/matrix/weights\"></form>"
-        f"<form id=\"matrix-missing-review-form\" method=\"post\" action=\"/validation-runs/{run_id}/matrix/missing-review\"></form>"
+        f"<form id=\"matrix-weight-form\" method=\"post\" action=\"/validation-runs/{run_id}/matrix/weights\"><input type=\"hidden\" name=\"run_ids\" value=\"{run_id}\"></form>"
+        f"<form id=\"matrix-missing-review-form\" method=\"post\" action=\"/validation-runs/{run_id}/matrix/missing-review\"><input type=\"hidden\" name=\"run_ids\" value=\"{run_id}\"></form>"
         "<div class=\"matrix-weight-panel\">"
         "<div class=\"matrix-weight-head\">"
         "<strong>weight選択</strong>"
@@ -1868,6 +1868,7 @@ def matrix_missing_review_controls(run_id: int) -> str:
         "<strong>機械補助レビュー</strong>"
         "<span class=\"matrix-scale-note\">画像生成済みの未計算Embedding / Machine Reviewだけを実行します。</span>"
         f"<form method=\"post\" action=\"/validation-runs/{run_id}/matrix/missing-review\">"
+        f"<input type=\"hidden\" name=\"run_ids\" value=\"{run_id}\">"
         "<button class=\"matrix-review-submit\" type=\"submit\">不足レビューだけ再計算</button>"
         "</form>"
         "</div>"
@@ -2166,12 +2167,39 @@ def matrix_display_script() -> str:
   function stripMatrixMessageAndReload() {
     const url = new URL(window.location.href);
     url.searchParams.delete("run_id");
-    if (!url.searchParams.has("matrix_message")) {
+    if (
+      !url.searchParams.has("matrix_message") &&
+      !url.searchParams.has("matrix_notice") &&
+      !url.searchParams.has("weight_message") &&
+      !url.searchParams.has("weight_notice")
+    ) {
       window.location.replace(url.toString());
       return;
     }
     url.searchParams.delete("matrix_message");
+    url.searchParams.delete("matrix_notice");
+    url.searchParams.delete("weight_message");
+    url.searchParams.delete("weight_notice");
     window.location.replace(url.toString());
+  }
+
+  function matrixActionButtons() {
+    return Array.from(document.querySelectorAll(
+      'button[form="matrix-weight-form"], button[form="matrix-missing-review-form"], button[form="cross-matrix-weight-form"], button[form="cross-matrix-missing-review-form"], .matrix-review-panel button[type="submit"], #matrix-weight-form button[type="submit"], #matrix-missing-review-form button[type="submit"], #cross-matrix-weight-form button[type="submit"], #cross-matrix-missing-review-form button[type="submit"]'
+    ));
+  }
+
+  function setMatrixBusy(isBusy) {
+    matrixActionButtons().forEach((button) => {
+      if (!button.dataset.originalText) button.dataset.originalText = button.textContent;
+      button.disabled = isBusy;
+      button.classList.toggle("disabled", isBusy);
+      if (isBusy) {
+        button.textContent = "処理中...";
+      } else {
+        button.textContent = button.dataset.originalText || button.textContent;
+      }
+    });
   }
 
   async function pollMatrixGeneration() {
@@ -2192,10 +2220,16 @@ def matrix_display_script() -> str:
     const active = results.filter((row) => ["running", "queued"].includes(row.status));
     if (active.length) {
       window.__matrixHadActiveGeneration = true;
+      setMatrixBusy(true);
       return;
     }
     const url = new URL(window.location.href);
-    const hasStartMessage = (url.searchParams.get("matrix_message") || "").includes("開始");
+    const notice = url.searchParams.get("matrix_notice") || url.searchParams.get("weight_notice") || "";
+    const hasStartMessage =
+      (url.searchParams.get("matrix_message") || "").includes("開始") ||
+      (url.searchParams.get("weight_message") || "").includes("開始") ||
+      notice.endsWith("_started");
+    setMatrixBusy(false);
     if (window.__matrixHadActiveGeneration || hasStartMessage) {
       stripMatrixMessageAndReload();
     }
@@ -2247,15 +2281,23 @@ def matrix_display_script() -> str:
   });
 
   document.addEventListener("submit", (event) => {
-    const form = event.target.closest("#cross-matrix-weight-form, #cross-matrix-display-form, #cross-matrix-missing-review-form");
+    const form = event.target.closest("#matrix-weight-form, #matrix-missing-review-form, #cross-matrix-weight-form, #cross-matrix-display-form, #cross-matrix-missing-review-form, .matrix-review-panel form");
     if (!form) return;
     syncMatrixRunInputsForSubmit(form);
+    if (form.id === "matrix-weight-form" || form.id === "matrix-missing-review-form" || form.id === "cross-matrix-weight-form" || form.id === "cross-matrix-missing-review-form" || form.closest(".matrix-review-panel")) {
+      setMatrixBusy(true);
+    }
   });
 
   syncDisplayWeightInputs();
   restoreMatrixWeightState();
   applyScale();
   applyHiresMode();
+  {
+    const params = new URL(window.location.href).searchParams;
+    const notice = params.get("matrix_notice") || params.get("weight_notice") || "";
+    if (notice.endsWith("_started")) setMatrixBusy(true);
+  }
   pollMatrixGeneration();
   window.setInterval(pollMatrixGeneration, 10000);
 })();

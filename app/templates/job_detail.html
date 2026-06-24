@@ -45,6 +45,8 @@
       </form>
       {% elif job.status == 'running' and action_state.stop %}
       <form method="post" action="/jobs/{{ job.id }}/stop"><button type="submit" class="danger">停止</button></form>
+      {% elif job.status == 'completed' and candidate_standard_ready_group and not selected_output %}
+      <a class="button" href="/jobs/{{ job.id }}/candidate-comparisons/{{ candidate_standard_ready_group.id }}/matrix">標準候補比較Matrixを開く</a>
       {% elif review_preparation.current and review_preparation.current.primary_action == 'progress' %}
       <a class="button" href="#review-preparation">レビュー準備の進捗を確認</a>
       {% elif job.status == 'completed' and review_preparation.current and review_preparation.current.primary_action == 'open_matrix' and not selected_output %}
@@ -72,6 +74,8 @@
       採用LoRAは選択済みです。次の全体工程はweight検証です。
       {% if review_preparation.current and review_preparation.current.can_open_matrix %}
       採用前レビューを確認したい場合は、Reviewタブの<a href="/jobs/{{ job.id }}/review-sessions/{{ review_preparation.current.session_id }}/matrix">Review Matrixを開く</a>から確認できます。
+      {% elif candidate_standard_ready_group %}
+      採用前レビューを確認したい場合は、Reviewタブの<a href="/jobs/{{ job.id }}/candidate-comparisons/{{ candidate_standard_ready_group.id }}/matrix">標準候補比較Matrixを開く</a>から確認できます。
       {% else %}
       採用前レビューを確認したい場合は、ReviewタブでReview Matrixを確認してください。
       {% endif %}
@@ -139,6 +143,13 @@
 <section id="review-preparation" class="notice" {% if review_current %}data-review-preparation-session-id="{{ review_current.session_id }}" data-review-preparation-session-status="{{ review_current_status }}"{% endif %}>
   <h2>レビュー準備</h2>
   <p>採用前に候補epochを比較するための準備です。loss候補epochの前後を少数prompt / weightで生成し、横断Matrixで見比べます。採用後の45枚標準検証はweight検証Runとして別に実行します。</p>
+  {% if candidate_standard_ready_group and not selected_output %}
+  <p class="notice">
+    標準候補比較 group #{{ candidate_standard_ready_group.id }} は完了済みです。Job全体では候補レビュー済みとして扱います。
+    横断Matrixで候補epochを確認し、採用LoRAを選択してください。
+    <a href="/jobs/{{ job.id }}/candidate-comparisons/{{ candidate_standard_ready_group.id }}/matrix">標準候補比較Matrixを開く</a>
+  </p>
+  {% endif %}
   <div class="summary-grid">
     <div><span>Project既定</span><strong>{{ {'manual': '手動', 'plan_only': '計画のみ', 'quick_auto': 'クイック自動', 'standard_auto': '標準自動'}.get(project.post_training_review_mode if project else 'plan_only', project.post_training_review_mode if project else '計画のみ') }}</strong></div>
     <div><span>Job側設定</span><strong>{{ {'manual': '手動', 'plan_only': '計画のみ', 'quick_auto': 'クイック自動', 'standard_auto': '標準自動'}.get(job.post_training_review_mode, 'Project既定を使用') }}</strong></div>
@@ -152,9 +163,13 @@
     <div class="panel-grid three-column">
       <div class="notice">
         <h4>クイック候補レビュー</h4>
-        <p class="muted">採用epochを決める軽量レビューです。少数prompt / seed / weightで候補epochを素早く横断確認します。</p>
+        <p class="muted">
+          採用epochを決める軽量レビューです。少数prompt / seed / weightで候補epochを素早く横断確認します。
+          {% if candidate_standard_ready_group %}標準候補比較が完了済みの場合は、追加確認が必要な時だけ使います。{% endif %}
+        </p>
         <form method="post" action="/jobs/{{ job.id }}/review-preparation/run" data-review-preparation-run-form>
-          <button type="submit" data-review-preparation-run-button {% if outputs|length == 0 %}disabled{% endif %}>クイック候補レビューを開始</button>
+          {% if candidate_standard_ready_group %}<input type="hidden" name="additional_quick_review" value="1">{% endif %}
+          <button type="submit" data-review-preparation-run-button {% if outputs|length == 0 %}disabled{% endif %}>{% if candidate_standard_ready_group %}追加クイック候補レビューを開始{% else %}クイック候補レビューを開始{% endif %}</button>
         </form>
       </div>
       <div class="notice">
@@ -254,7 +269,9 @@
   <h3>このReview Sessionでの次アクション</h3>
   <div class="actions compact-actions review-preparation-actions">
     <div class="action-group primary-action-group">
-    {% if not review_preparation.current %}
+    {% if candidate_standard_ready_group and not selected_output %}
+    <a class="button" href="/jobs/{{ job.id }}/candidate-comparisons/{{ candidate_standard_ready_group.id }}/matrix">標準候補比較Matrixを開く</a>
+    {% elif not review_preparation.current %}
     <form method="post" action="/jobs/{{ job.id }}/review-preparation/run" data-review-preparation-run-form>
       <button type="submit" data-review-preparation-run-button {% if outputs|length == 0 %}disabled{% endif %}>候補レビューを作成</button>
     </form>
@@ -292,6 +309,7 @@
       <summary>詳細操作</summary>
       <div class="inline-actions">
         <form method="post" action="/jobs/{{ job.id }}/review-preparation/run" data-review-preparation-run-form>
+          {% if candidate_standard_ready_group %}<input type="hidden" name="additional_quick_review" value="1">{% endif %}
           <button type="submit" class="danger" data-review-preparation-run-button {% if outputs|length == 0 or (review_current and review_current_status in review_running_statuses) %}disabled{% endif %}>候補レビューを再実行</button>
         </form>
         <span class="button small-button disabled" title="レビューセッションのアーカイブ / 削除は未実装です">セッションをアーカイブ / 削除</span>

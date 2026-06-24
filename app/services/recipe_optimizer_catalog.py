@@ -251,6 +251,7 @@ COMMON_SDXL_PARAMS = {
     "save_model_as": "safetensors",
     "save_every_n_epochs": 1,
     "sample_every_n_epochs": 1,
+    "generate_training_samples": True,
     "sample_sampler": "euler_a",
     "mixed_precision": "bf16",
     "save_precision": "bf16",

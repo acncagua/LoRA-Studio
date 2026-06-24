@@ -2484,7 +2484,9 @@ def preset_detail(request: Request, preset_id: str) -> HTMLResponse:
         profile = fetch_one("SELECT * FROM optimizer_profiles WHERE id = ?", (profile_id,))
     definition_id = profile["optimizer_definition_id"] if profile else None
     if definition_id:
-        definition = fetch_one("SELECT * FROM optimizer_definitions WHERE id = ?", (definition_id,))
+        definition = fetch_one("SELECT * FROM optimizer_definitions_v2 WHERE id = ?", (definition_id,))
+        if definition is None:
+            definition = fetch_one("SELECT * FROM optimizer_definitions WHERE id = ?", (definition_id,))
     return render(request, "preset_detail.html", preset=preset, recipe=recipe, optimizer_profile=profile, optimizer_definition=definition)
 
 
@@ -3027,7 +3029,7 @@ def job_delete_preview_page(request: Request, job_id: int) -> HTMLResponse:
 
 
 @app.post("/jobs/{job_id}/delete-draft")
-def job_delete_draft(job_id: int, delete_reason: str = Form("")) -> RedirectResponse:
+def job_delete_draft(job_id: int, delete_reason: str = Form(""), return_to: str = Form("")) -> RedirectResponse:
     preview = job_delete_preview(job_id)
     job = preview["job"]
     if job["status"] not in DELETABLE_JOB_STATUSES:
@@ -3044,11 +3046,11 @@ def job_delete_draft(job_id: int, delete_reason: str = Form("")) -> RedirectResp
             """,
             (settings_now(), reason, settings_now(), job_id),
         )
-    return RedirectResponse("/jobs?view=deleted", status_code=303)
+    return RedirectResponse(safe_local_redirect(return_to, "/jobs?view=deleted"), status_code=303)
 
 
 @app.post("/jobs/{job_id}/delete")
-def job_delete(job_id: int, delete_reason: str = Form(""), delete_mode: str = Form("db_only")) -> RedirectResponse:
+def job_delete(job_id: int, delete_reason: str = Form(""), delete_mode: str = Form("db_only"), return_to: str = Form("")) -> RedirectResponse:
     preview = job_delete_preview(job_id)
     if delete_mode != "db_only":
         raise HTTPException(status_code=400, detail="ファイル削除は初期版では未実装です。DBのみ削除を選んでください。")
@@ -3063,7 +3065,7 @@ def job_delete(job_id: int, delete_reason: str = Form(""), delete_mode: str = Fo
             """,
             (settings_now(), delete_reason.strip(), settings_now(), job_id),
         )
-    return RedirectResponse("/jobs?view=deleted", status_code=303)
+    return RedirectResponse(safe_local_redirect(return_to, "/jobs?view=deleted"), status_code=303)
 
 
 @app.get("/jobs/new", response_class=HTMLResponse)
@@ -3358,6 +3360,7 @@ def job_create(
     parent_job_id: str = Form(""),
     save_every_n_epochs: str = Form(""),
     sample_every_n_epochs: str = Form(""),
+    generate_training_samples: str = Form(""),
     repeats_auto_calculated: str = Form("0"),
     post_training_review_mode: str = Form("plan_only"),
     max_auto_images: str = Form("18"),
@@ -3454,9 +3457,10 @@ def job_create(
                 "optimizer_type": optimizer_type,
                 "lr_scheduler": lr_scheduler,
                 "save_every_n_epochs": save_every_n_epochs,
-                "sample_every_n_epochs": sample_every_n_epochs,
             },
         )
+        params["generate_training_samples"] = generate_training_samples == "1"
+        params["sample_every_n_epochs"] = 1
         if cache_latents.strip():
             params["cache_latents"] = cache_latents == "1"
         if cache_text_encoder_outputs.strip():
@@ -3690,6 +3694,26 @@ def normalize_review_prepare_message(
     return None
 
 
+def ready_candidate_standard_group(groups: list[dict[str, Any]]) -> dict[str, Any] | None:
+    ready = [group for group in groups if group.get("matrix_ready")]
+    if not ready:
+        return None
+    for group in ready:
+        expected = int(group.get("expected_total_images") or 0)
+        if (
+            expected > 0
+            and int(group.get("registered_image_count") or 0) >= expected
+            and int(group.get("embedding_ready_count") or 0) >= expected
+            and int(group.get("machine_review_score_count") or 0) >= expected
+        ):
+            return group
+    return ready[0]
+
+
+def candidate_standard_ready_for_job(job_id: int) -> dict[str, Any] | None:
+    return ready_candidate_standard_group(latest_candidate_comparison_groups(job_id))
+
+
 @app.get("/jobs/{job_id}", response_class=HTMLResponse)
 def job_detail(
     request: Request,
@@ -3699,6 +3723,7 @@ def job_detail(
     preflight: str | None = None,
     generation_error: str | None = None,
     generation_message: str | None = None,
+    generation_notice: str = Query(""),
     review_prepare: str | None = None,
     review_prepare_error: str | None = None,
     review_filter: str = Query("candidates"),
@@ -3755,18 +3780,28 @@ def job_detail(
     review_preparation = review_session_summary(job_id, current_session_id=review_session_id)
     candidate_standard_estimate_data = candidate_standard_estimate(job_id)
     candidate_standard_groups = latest_candidate_comparison_groups(job_id)
+    candidate_standard_ready_group = ready_candidate_standard_group(candidate_standard_groups)
     review_prepare = normalize_review_prepare_message(review_prepare, review_preparation)
     operation_monitor = job_operation_monitor(job, review_preparation, candidate_standard_estimate_data)
     machine_score_map = score_map_for_samples(job_id)
     machine_epoch_summary = epoch_machine_summary(job_id)
     dataset_version = fetch_one("SELECT * FROM dataset_versions WHERE id = ?", (job["dataset_version_id"],)) if job["dataset_version_id"] else None
     params = json.loads(job["params_json"])
-    step_estimate = step_estimate_for_selection(job["dataset_id"], job["preset_id"], params, job["dataset_version_id"])
+    step_estimate = step_estimate_for_selection(job["dataset_id"], job["preset_id"], params, job["dataset_version_id"], recipe_v2_id=job["recipe_v2_id"])
     step_estimate_snapshot = json.loads(job["step_estimate_snapshot_json"] or "{}") if "step_estimate_snapshot_json" in job.keys() and job["step_estimate_snapshot_json"] else {}
     project = fetch_one("SELECT * FROM lora_projects WHERE id = ?", (job["project_id"],)) if "project_id" in job.keys() and job["project_id"] else None
     project_jobs = fetch_all("SELECT id, name, status FROM training_jobs WHERE project_id = ? ORDER BY id", (project["id"],)) if project else []
     project_selected_job = fetch_one("SELECT id, name FROM training_jobs WHERE id = ?", (project["selected_job_id"],)) if project and project["selected_job_id"] else None
     pilot_guidance = pilot_recommendation(project) if project else None
+    next_action = recommended_next_action(job, selected_output)
+    if job["status"] == "completed" and selected_output is None and candidate_standard_ready_group:
+        next_action = "次にやること: 標準候補比較は完了済みです。横断Matrixを確認し、採用LoRAを選択してください。"
+    generation_notice_messages = {
+        "bulk_generation_started": "選択した検証Runの画像生成を順番に開始しました。生成完了後に不足Embedding / 不足Machine Reviewを自動で再計算します。",
+        "bulk_assist_started": "選択した検証RunのEmbedding / 機械補助レビューを順番に開始しました。",
+    }
+    if generation_notice and not generation_message:
+        generation_message = generation_notice_messages.get(generation_notice, "")
     return render(
         request,
         "job_detail.html",
@@ -3805,6 +3840,7 @@ def job_detail(
         review_preparation=review_preparation,
         candidate_standard_estimate=candidate_standard_estimate_data,
         candidate_standard_groups=candidate_standard_groups,
+        candidate_standard_ready_group=candidate_standard_ready_group,
         operation_monitor=operation_monitor,
         rubric_options=rubric_options(),
         validation_pack_path=validation_pack_path(job_id),
@@ -3820,7 +3856,7 @@ def job_detail(
         pilot_preset_id=PILOT_PRESET_ID,
         standard_preset_id=STANDARD_PRESET_ID,
         action_state=job_action_state(job, selected_output),
-        next_action=recommended_next_action(job, selected_output),
+        next_action=next_action,
         retry_signal=retry_signal_for_job(job_id),
         status_labels=STATUS_LABELS,
         created=created,
@@ -3935,8 +3971,13 @@ def _tail_file(path_value: str | None, max_lines: int = 20) -> str:
 
 
 @app.post("/jobs/{job_id}/review-preparation/run")
-def job_review_preparation_run(request: Request, job_id: int):
+def job_review_preparation_run(request: Request, job_id: int, additional_quick_review: str = Form("")):
     try:
+        if candidate_standard_ready_for_job(job_id) and additional_quick_review != "1":
+            message = "標準候補比較は完了済みです。追加のクイック候補レビューは詳細操作から明示的に開始してください。"
+            if _wants_json(request):
+                return JSONResponse({"ok": False, "message": message}, status_code=409)
+            return RedirectResponse(f"/jobs/{job_id}?review_prepare={quote(message)}#candidate-standard-comparison", status_code=303)
         session = ensure_candidate_review_plan(job_id, force=True)
         if session is None:
             if _wants_json(request):
@@ -4208,7 +4249,13 @@ def job_edit(request: Request, job_id: int) -> HTMLResponse:
     dataset_version_dicts = [dict(row) for row in dataset_versions]
     editable = job["status"] in EDITABLE_JOB_STATUSES
     params = json.loads(job["params_json"])
-    step_estimate = step_estimate_for_selection(job["dataset_id"], job["preset_id"], params, job["dataset_version_id"])
+    step_estimate = step_estimate_for_selection(
+        job["dataset_id"],
+        job["preset_id"],
+        params,
+        job["dataset_version_id"],
+        recipe_v2_id=job["recipe_v2_id"],
+    )
     return render(
         request,
         "job_edit.html",
@@ -4253,6 +4300,7 @@ def job_edit_save(
     resolution: str = Form(""),
     save_every_n_epochs: str = Form(""),
     sample_every_n_epochs: str = Form(""),
+    generate_training_samples: str = Form(""),
     optimizer_type: str = Form(""),
     lr_scheduler: str = Form(""),
     no_metadata: str = Form(""),
@@ -4312,13 +4360,14 @@ def job_edit_save(
                     "network_alpha": network_alpha,
                     "resolution": resolution,
                     "save_every_n_epochs": save_every_n_epochs,
-                    "sample_every_n_epochs": sample_every_n_epochs,
                     "optimizer_type": optimizer_type,
                     "lr_scheduler": lr_scheduler,
                 },
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=f"主要パラメータの値が不正です: {exc}") from exc
+        params["generate_training_samples"] = generate_training_samples == "1"
+        params["sample_every_n_epochs"] = 1
         params["no_metadata"] = bool(no_metadata)
     selected_version_id = optional_int(dataset_version_id)
     if selected_version_id is None:
@@ -4442,7 +4491,6 @@ def job_save_custom_recipe(
         "network_dim",
         "network_alpha",
         "save_every_n_epochs",
-        "sample_every_n_epochs",
     }
     basic_params = {key: params[key] for key in basic_keys if key in params}
     advanced_params = {key: value for key, value in params.items() if key not in basic_keys}
@@ -5486,8 +5534,7 @@ def job_validation_generation_run_selected(job_id: int, run_ids: list[int] = For
         )
     except (ValueError, RuntimeError) as exc:
         return RedirectResponse(f"/jobs/{job_id}?generation_error={quote(str(exc))}#validation-runs", status_code=303)
-    message = f"選択した検証Run {count} 件の画像生成を順番に開始しました。生成完了後に不足Embedding / 不足Machine Reviewを自動で再計算します。"
-    return RedirectResponse(f"/jobs/{job_id}?generation_message={quote(message)}#validation-runs", status_code=303)
+    return RedirectResponse(f"/jobs/{job_id}?generation_notice=bulk_generation_started#validation-runs", status_code=303)
 
 
 @app.post("/jobs/{job_id}/validation-runs/assist/run-selected")
@@ -5521,7 +5568,7 @@ def job_validation_assist_run_selected(request: Request, job_id: int, run_ids: l
     message = f"選択した検証Run {count} 件のEmbedding / 機械補助レビューを順番に開始しました。"
     if wants_json_response(request):
         return JSONResponse({"ok": True, "message": message, "count": count})
-    return RedirectResponse(f"/jobs/{job_id}?generation_message={quote(message)}#validation-runs", status_code=303)
+    return RedirectResponse(f"/jobs/{job_id}?generation_notice=bulk_assist_started#validation-runs", status_code=303)
 
 
 @app.post("/validation-runs/{run_id}/generation/stop")
@@ -5621,7 +5668,7 @@ def validation_generation_import(run_id: int) -> RedirectResponse:
 
 
 @app.get("/validation-runs/{run_id}/matrix", response_class=HTMLResponse)
-def validation_generation_matrix(run_id: int, weight_message: str = Query("")) -> HTMLResponse:
+def validation_generation_matrix(run_id: int, weight_message: str = Query(""), weight_notice: str = Query("")) -> HTMLResponse:
     path = generation_validation_run_dir(run_id) / "validation_matrix.html"
     try:
         write_validation_matrix(run_id)
@@ -5629,8 +5676,10 @@ def validation_generation_matrix(run_id: int, weight_message: str = Query("")) -
         if not path.exists():
             raise HTTPException(status_code=404, detail="validation_matrix.html not found") from exc
     body = path.read_text(encoding="utf-8", errors="replace")
-    if weight_message:
-        notice = f"<div class=\"notice\">{html.escape(weight_message)}</div>"
+    notice_key = weight_notice or ("error" if weight_message else "")
+    if notice_key:
+        message = MATRIX_NOTICE_MESSAGES.get(notice_key, MATRIX_NOTICE_MESSAGES["error"])
+        notice = f"<div class=\"notice\" data-matrix-notice=\"{html.escape(notice_key)}\">{html.escape(message)}</div>"
         body = body.replace("<h1>", notice + "\n<h1>", 1)
     return HTMLResponse(body)
 
@@ -5643,12 +5692,12 @@ def validation_matrix_add_weights(run_id: int, selected_weights: list[str] = For
         if missing_count <= 0:
             write_validation_matrix(run_id)
             message = f"選択weightはすべて生成済みです。既存画像をスキップしました。追加条件: {summary['added_conditions']}件。"
-            return RedirectResponse(f"/validation-runs/{run_id}/matrix?weight_message={quote(message)}", status_code=303)
+            return RedirectResponse(f"/validation-runs/{run_id}/matrix?weight_notice=weights_skipped_review_started", status_code=303)
         start_validation_generation(run_id, run_missing_review_after=True)
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     message = f"選択weightの不足画像 {missing_count} 件を生成開始しました。生成完了後に不足Embedding / 不足Machine Reviewを自動で再計算します。既存画像はスキップします。"
-    return RedirectResponse(f"/validation-runs/{run_id}/matrix?weight_message={quote(message)}", status_code=303)
+    return RedirectResponse(f"/validation-runs/{run_id}/matrix?weight_notice=weights_started", status_code=303)
 
 
 @app.post("/validation-runs/{run_id}/matrix/missing-review")
@@ -5656,9 +5705,9 @@ def validation_matrix_missing_review(run_id: int) -> RedirectResponse:
     try:
         start_missing_validation_review_sequence(run_id)
     except RuntimeError as exc:
-        return RedirectResponse(f"/validation-runs/{run_id}/matrix?weight_message={quote(str(exc))}", status_code=303)
+        return RedirectResponse(f"/validation-runs/{run_id}/matrix?weight_notice=busy", status_code=303)
     message = "不足Embedding / 不足Machine Reviewの再計算を開始しました。完了後にMatrixへ反映されます。"
-    return RedirectResponse(f"/validation-runs/{run_id}/matrix?weight_message={quote(message)}", status_code=303)
+    return RedirectResponse(f"/validation-runs/{run_id}/matrix?weight_notice=missing_review_started", status_code=303)
 
 
 def _canonical_matrix_run_ids(request: Request | None, form_run_ids: list[int]) -> list[int]:
@@ -5682,6 +5731,15 @@ def _canonical_matrix_run_ids(request: Request | None, form_run_ids: list[int]) 
     return list(dict.fromkeys(values))
 
 
+MATRIX_NOTICE_MESSAGES = {
+    "weights_started": "表示中Runにweight条件を反映しました。不足画像の生成を開始しました。生成完了後に不足Embedding / 不足Machine Reviewを自動で再計算します。",
+    "weights_skipped_review_started": "選択weightはすべて生成済みです。既存画像をスキップし、不足Embedding / 不足Machine Reviewの再計算を開始しました。",
+    "missing_review_started": "表示中の検証Runについて、不足Embedding / 不足Machine Reviewの再計算を開始しました。",
+    "busy": "実行中の処理があります。完了後に再実行してください。",
+    "error": "処理を開始できませんでした。ログまたは各検証Runの状態を確認してください。",
+}
+
+
 @app.get("/jobs/{job_id}/validation-runs/epoch-matrix", response_class=HTMLResponse)
 def validation_epoch_cross_matrix(
     request: Request,
@@ -5690,13 +5748,15 @@ def validation_epoch_cross_matrix(
     run_id: list[int] = Query(default=[]),
     display_weights: list[str] = Query(default=[]),
     matrix_message: str = Query(""),
+    matrix_notice: str = Query(""),
 ) -> HTMLResponse:
     canonical_run_ids = list(dict.fromkeys(int(value) for value in [*run_ids, *run_id] if int(value) > 0))
     canonical_weights = normalize_matrix_weights(display_weights)
     canonical_params: list[tuple[str, Any]] = [("run_ids", value) for value in canonical_run_ids]
     canonical_params.extend(("display_weights", f"{weight:g}") for weight in canonical_weights)
-    if matrix_message:
-        canonical_params.append(("matrix_message", matrix_message))
+    notice_key = matrix_notice or ("error" if matrix_message else "")
+    if notice_key:
+        canonical_params.append(("matrix_notice", notice_key))
     canonical_query = urlencode(canonical_params)
     if request.url.query != canonical_query:
         suffix = f"?{canonical_query}" if canonical_query else ""
@@ -5705,8 +5765,9 @@ def validation_epoch_cross_matrix(
         html_text = build_epoch_cross_matrix_html(job_id, canonical_run_ids, display_weights=canonical_weights)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if matrix_message:
-        notice = f"<div class=\"notice\">{html.escape(matrix_message)}</div>"
+    if notice_key:
+        message = MATRIX_NOTICE_MESSAGES.get(notice_key, MATRIX_NOTICE_MESSAGES["error"])
+        notice = f"<div class=\"notice\" data-matrix-notice=\"{html.escape(notice_key)}\">{html.escape(message)}</div>"
         html_text = html_text.replace("<h1>", notice + "\n<h1>", 1)
     return HTMLResponse(html_text)
 
@@ -5723,10 +5784,9 @@ def validation_epoch_cross_matrix_missing_review(
     try:
         start_missing_validation_review_sequences(unique_run_ids)
     except (ValueError, RuntimeError) as exc:
-        query = urlencode([*base_params, ("matrix_message", str(exc))])
+        query = urlencode([*base_params, ("matrix_notice", "busy" if isinstance(exc, RuntimeError) else "error")])
         return RedirectResponse(f"{destination}?{query}" if query else f"/jobs/{job_id}", status_code=303)
-    message = f"表示中の検証Run {len(unique_run_ids)} 件について、不足Embedding / 不足Machine Reviewの再計算を開始しました。"
-    query = urlencode([*base_params, ("matrix_message", message)])
+    query = urlencode([*base_params, ("matrix_notice", "missing_review_started")])
     return RedirectResponse(f"{destination}?{query}" if query else f"/jobs/{job_id}", status_code=303)
 
 
@@ -5765,16 +5825,18 @@ def validation_epoch_cross_matrix_add_weights(
                 "生成完了後に不足Embedding / 不足Machine Reviewを自動で再計算します。"
                 f"追加条件: {added_conditions}件。"
             )
+            notice_key = "weights_started"
         else:
             start_missing_validation_review_sequences(unique_run_ids)
             message = (
                 f"選択weightはすべて生成済みです。既存画像をスキップし、不足Embedding / 不足Machine Reviewの再計算を開始しました。"
                 f"追加条件: {added_conditions}件。"
             )
+            notice_key = "weights_skipped_review_started"
     except (ValueError, RuntimeError) as exc:
-        query = urlencode([*base_params, ("matrix_message", str(exc))])
+        query = urlencode([*base_params, ("matrix_notice", "busy" if isinstance(exc, RuntimeError) else "error")])
         return RedirectResponse(f"{destination}?{query}" if query else f"/jobs/{job_id}", status_code=303)
-    query = urlencode([*base_params, ("matrix_message", message)])
+    query = urlencode([*base_params, ("matrix_notice", notice_key)])
     return RedirectResponse(f"{destination}?{query}", status_code=303)
 
 
@@ -6801,7 +6863,7 @@ COMPARE_PARAM_KEYS = [
     "max_train_epochs",
     "resolution",
     "save_every_n_epochs",
-    "sample_every_n_epochs",
+    "generate_training_samples",
     "save_every_n_steps",
     "sample_every_n_steps",
 ]
