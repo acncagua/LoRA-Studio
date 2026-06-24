@@ -143,8 +143,11 @@ def mini_pilot_params(recipe: Any, *, steps: int = 300, fast_mode: bool = False)
     params.update(
         {
             "max_train_steps": int(steps),
+            "max_train_epochs": 1,
             "save_every_n_steps": max(1, min(100, int(steps))),
             "sample_every_n_steps": max(1, min(100, int(steps))),
+            "save_every_n_epochs": 1,
+            "sample_every_n_epochs": 1,
             "sample_at_first": False,
             "generate_training_samples": True,
             "no_metadata": True,
