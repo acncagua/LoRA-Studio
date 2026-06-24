@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased - Phase 12.2
+## phase12.2 / v0.5.0-beta - 2026-06-23
 
 LoRA Studio Phase 12.2 improves the Recipe v2 Job creation experience with a wizard-style flow, Recipe cards, Parameter Editor v2, structured override diffs, and richer Recipe / Optimizer browsing.
 

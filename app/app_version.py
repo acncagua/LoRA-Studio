@@ -3,7 +3,7 @@ from __future__ import annotations
 import subprocess
 from dataclasses import dataclass
 
-APP_VERSION = "v0.4.9-beta"
+APP_VERSION = "v0.5.0-beta"
 DB_SCHEMA_VERSION = "2026.06.12-beta"
 
 
