@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -24,8 +25,33 @@ def default_runtime_root() -> Path:
 
 
 def active_storage_locations() -> dict[str, str]:
-    rows = fetch_all("SELECT key, path FROM storage_locations WHERE is_active = 1")
+    try:
+        rows = fetch_all("SELECT key, path FROM storage_locations WHERE is_active = 1")
+    except sqlite3.OperationalError as exc:
+        if "storage_locations" not in str(exc):
+            raise
+        return {}
     return {str(row["key"]): str(row["path"]) for row in rows}
+
+
+def ensure_storage_locations_table() -> None:
+    with connect() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS storage_locations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key TEXT NOT NULL UNIQUE,
+                path TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_checked_at TEXT,
+                check_status TEXT,
+                error_message TEXT
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_storage_locations_key ON storage_locations(key)")
 
 
 def runtime_root() -> Path:
@@ -118,6 +144,7 @@ def validate_storage_path(path_value: str) -> dict[str, Any]:
 def set_storage_location(key: str, path_value: str) -> dict[str, Any]:
     if key not in RUNTIME_KEYS:
         raise ValueError(f"Unsupported storage key: {key}")
+    ensure_storage_locations_table()
     result = validate_storage_path(path_value)
     now = utc_now()
     with connect() as conn:
@@ -140,6 +167,7 @@ def set_storage_location(key: str, path_value: str) -> dict[str, Any]:
 
 
 def reset_storage_location(key: str = "runtime_root") -> None:
+    ensure_storage_locations_table()
     with connect() as conn:
         conn.execute("DELETE FROM storage_locations WHERE key = ?", (key,))
 
@@ -181,4 +209,3 @@ def allowed_serving_roots() -> list[Path]:
         trash_root(),
         logs_root(),
     ]
-

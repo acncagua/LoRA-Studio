@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased - Phase 12.3.1
+## phase12.3.1 / v0.5.3-beta - 2026-06-25
 
 Phase 12.3.1 adds Practical Mini Pilot checks for Optimizer Profiles after Smoke OK.
 
