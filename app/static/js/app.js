@@ -793,7 +793,22 @@ function updateWizardSummary(form) {
   if (recipeNode) recipeNode.textContent = recipeLabel(currentRecipe(form));
 }
 
+function updateNetworkSpecificParamFields(form) {
+  const recipe = currentRecipe(form);
+  const selectedNetwork = recipe?.network_type_id || form.querySelector("[data-recipe-filter='network_type_id']")?.value || "";
+  form.querySelectorAll("[data-network-param]").forEach((field) => {
+    const requiredNetwork = field.getAttribute("data-network-param") || "";
+    const visible = requiredNetwork === selectedNetwork;
+    field.hidden = !visible;
+    if (!visible) {
+      const input = field.querySelector("[data-param-editor-key]");
+      if (input && !input.defaultValue) input.value = "";
+    }
+  });
+}
+
 function updateWizardState(form) {
+  updateNetworkSpecificParamFields(form);
   updateRecipeDetail(form);
   updateParamDiff(form);
   updateCompatibilityPanel(form);
