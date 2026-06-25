@@ -1,13 +1,14 @@
 {% extends "base.html" %}{% block content %}
-<header class="page-head"><h1>LoRAライブラリ</h1></header>
+<header class="page-head"><h1>{{ t('page.lora_library.title') }}</h1></header>
 <section>
   <p class="muted">採用済みLoRAをジョブ横断で管理します。推奨weight、トリガー、検証状態、リファレンスセットをここで確認できます。</p>
+  <div class="table-scroll">
   <table class="wide-table lora-library-table">
     <thead>
       <tr>
-        <th>ID</th><th>プロファイル</th><th>Project</th><th>ジョブ</th><th>トリガー</th><th>epoch</th>
-        <th>推奨weight</th><th>検証プリセット</th><th>最新の検証Run</th>
-        <th>予定 / 登録 / レビュー済み</th><th>カバー率</th><th>警告</th><th>ベースモデル</th><th>操作</th>
+        <th>ID</th><th>{{ t('label.profile') }}</th><th>Project</th><th>{{ t('label.job') }}</th><th>{{ t('label.trigger') }}</th><th>epoch</th>
+        <th>{{ t('label.recommended_weight') }}</th><th>{{ t('label.validation_preset') }}</th><th>{{ t('label.latest_validation_run') }}</th>
+        <th>{{ t('label.expected_registered_reviewed') }}</th><th>{{ t('label.coverage') }}</th><th>{{ t('common.warning') }}</th><th>{{ t('label.base_model') }}</th><th>{{ t('common.actions') }}</th>
       </tr>
     </thead>
     <tbody>
@@ -20,21 +21,22 @@
         <td>{{ profile.trigger_word or '-' }}</td>
         <td>{{ profile.selected_epoch or '-' }}</td>
         <td>{{ profile.recommended_weight_min if profile.recommended_weight_min is not none else '-' }} - {{ profile.recommended_weight_max if profile.recommended_weight_max is not none else '-' }}</td>
-        <td class="wrap-text">{{ display_validation_preset_name(profile.default_validation_preset_id) if profile.default_validation_preset_id else '未指定' }}</td>
+        <td class="wrap-text">{{ display_validation_preset_name(profile.default_validation_preset_id) if profile.default_validation_preset_id else t('common.not_selected') }}</td>
         <td class="wrap-text">{% if profile.last_validation_run_id %}<a href="/validation-runs/{{ profile.last_validation_run_id }}">#{{ profile.last_validation_run_id }}</a> / {{ display_validation_status(profile.last_validation_status) }}{% else %}-{% endif %}</td>
         <td>{{ profile.validation_expected_count if profile.validation_expected_count is not none else '-' }} / {{ profile.validation_registered_count if profile.validation_registered_count is not none else '-' }} / {{ profile.validation_reviewed_count if profile.validation_reviewed_count is not none else '-' }}</td>
         <td>{{ '%.1f%%'|format(profile.validation_coverage_rate * 100) if profile.validation_coverage_rate is not none else '-' }}</td>
         <td class="wrap-text">{{ profile.validation_warning }}</td>
         <td class="wrap-text">{{ profile.base_model or '-' }}</td>
         <td class="nowrap">
-          <a class="button small-button" href="/lora-library/{{ profile.id }}/edit">編集</a>
+          <a class="button small-button" href="/lora-library/{{ profile.id }}/edit">{{ t('common.edit') }}</a>
           {% if profile.last_validation_matrix_path %}<a class="button small-button" href="/validation-runs/{{ profile.last_validation_run_id }}/matrix" target="_blank" rel="noopener">Matrix</a>{% endif %}
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="14" class="muted">LoRAプロファイルはまだありません。ジョブ詳細で採用LoRAを選択すると作成されます。</td></tr>
+      <tr><td colspan="14" class="muted">{{ t('empty.lora_profiles') }}</td></tr>
       {% endfor %}
     </tbody>
   </table>
+  </div>
 </section>
 {% endblock %}

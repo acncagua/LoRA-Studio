@@ -3,7 +3,7 @@
 <header class="page-head">
   <h1>Optimizer Practical Mini Pilot</h1>
   <div class="actions compact-actions">
-    <a class="button secondary" href="/optimizers">Optimizer Masterへ戻る</a>
+    <a class="button secondary" href="/optimizers">{{ t('optimizer.back_to_master') }}</a>
     <a class="button secondary" href="/optimizer-master-checks">Smoke Matrix</a>
     <a class="button secondary" href="/training-recipes">Recipe Library</a>
   </div>
@@ -12,20 +12,20 @@
 {% if error %}<p class="notice warning">{{ error }}</p>{% endif %}
 
 <section class="notice">
-  <h2>この画面の目的</h2>
+  <h2>{{ t('label.screen_purpose') }}</h2>
   <p>Smoke OKのOptimizer Profileを短時間だけ実学習し、loss安定性、LoRA artifact、sample画像の最低限の破綻有無を確認します。</p>
   <p class="warning">Mini Pilot OKは品質保証ではありません。実用候補として次に進めるかを見る軽量確認です。本判断はCandidate Review / Weight Calibrationで行います。</p>
 </section>
 
 <section class="panel-grid">
   <div>
-    <h2>Mini Pilot Runを作成</h2>
+    <h2>{{ t('mini_pilot.create_run') }}</h2>
     <form method="post" action="/optimizer-mini-pilots" class="stack-form">
-      <label>対象
+      <label>{{ t('label.target') }}
         <select name="target_scope">
-          <option value="acceptance_minimum">Acceptance最低対象</option>
-          <option value="all_smoke_ok">Built-in対象profileすべて</option>
-          <option value="selected_profiles">選択したprofile</option>
+          <option value="acceptance_minimum">{{ t('mini_pilot.scope_acceptance') }}</option>
+          <option value="all_smoke_ok">{{ t('optimizer_check.scope_all_builtin') }}</option>
+          <option value="selected_profiles">{{ t('optimizer_check.scope_selected') }}</option>
         </select>
       </label>
       <div class="checkbox-grid">
@@ -33,9 +33,9 @@
         <label><input type="checkbox" name="profile_ids" value="{{ profile.id }}"> {{ profile.display_name }} <span class="muted">({{ profile.id }})</span></label>
         {% endfor %}
       </div>
-      <label>Source Job（任意。Dataset/base modelを引き継ぎ）
+      <label>{{ t('mini_pilot.source_job') }}
         <select name="source_job_id">
-          <option value="">指定しない</option>
+          <option value="">{{ t('common.not_selected') }}</option>
           {% for job in jobs %}
           <option value="{{ job.id }}">#{{ job.id }} {{ job.name }} / {{ job.status }}</option>
           {% endfor %}
@@ -43,7 +43,7 @@
       </label>
       <label>Dataset
         <select name="dataset_id">
-          <option value="">Source Jobから取得</option>
+          <option value="">{{ t('mini_pilot.from_source_job') }}</option>
           {% for dataset in datasets %}
           <option value="{{ dataset.id }}">#{{ dataset.id }} {{ dataset.name }} ({{ dataset.image_count or 0 }})</option>
           {% endfor %}
@@ -52,32 +52,32 @@
       <label>base model<input name="base_model_path" value="{{ default_base_model_path }}"></label>
       <label>steps<input name="steps" type="number" value="300" min="2"></label>
       <label><input type="checkbox" name="fast_mode" value="1"> fast mode（100step / dim16）</label>
-      <button type="submit">Mini Pilot Runを作成</button>
+      <button type="submit">{{ t('mini_pilot.create_run_button') }}</button>
     </form>
   </div>
   <div>
-    <h2>実行操作</h2>
+    <h2>{{ t('label.run_actions') }}</h2>
     {% if run %}
     <form method="post" action="/optimizer-mini-pilots/{{ run.id }}/run" class="stack-form">
       <p>Run #{{ run.id }} を順次実行します。同時実行は避け、GPUが空いている時に実行してください。</p>
       <label>steps<input name="steps" type="number" value="300" min="2"></label>
-      <label>実行件数制限<input name="profile_limit" placeholder="空なら未完了を全件"></label>
-      <label><input type="checkbox" name="fast_mode" value="1"> fast mode（100step / dim16）</label>
+      <label>{{ t('label.run_limit') }}<input name="profile_limit" placeholder="{{ t('placeholder.empty_all_unfinished') }}"></label>
+      <label><input type="checkbox" name="fast_mode" value="1"> fast mode (100step / dim16)</label>
       <button type="submit">Run Mini Pilot</button>
     </form>
     <form method="post" action="/optimizer-mini-pilots/{{ run.id }}/report">
-      <button type="submit" class="secondary">View / Export Report</button>
+      <button type="submit" class="secondary">{{ t('common.view_export_report') }}</button>
     </form>
     {% else %}
-    <p class="muted">まずMini Pilot Runを作成してください。</p>
+    <p class="muted">{{ t('mini_pilot.create_first') }}</p>
     {% endif %}
   </div>
 </section>
 
 <section>
-  <h2>Run履歴</h2>
+  <h2>{{ t('label.run_history') }}</h2>
   <table class="wide-table compact-table">
-    <thead><tr><th>ID</th><th>状態</th><th>対象</th><th>total</th><th>OK</th><th>warning</th><th>failed</th><th>report</th></tr></thead>
+    <thead><tr><th>ID</th><th>{{ t('common.status') }}</th><th>{{ t('label.target') }}</th><th>total</th><th>OK</th><th>warning</th><th>failed</th><th>report</th></tr></thead>
     <tbody>
       {% for item in runs %}
       <tr>
@@ -91,7 +91,7 @@
         <td>{{ item.report_path or '-' }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="8" class="muted">Run履歴はまだありません。</td></tr>
+      <tr><td colspan="8" class="muted">{{ t('empty.run_history') }}</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -112,7 +112,7 @@
   <table class="wide-table compact-table">
     <thead>
       <tr>
-        <th>Profile</th><th>Recipe</th><th>状態</th><th>Job</th><th>loss</th><th>artifact</th><th>images</th><th>Machine Review</th><th>Failure</th>
+        <th>Profile</th><th>Recipe</th><th>{{ t('common.status') }}</th><th>Job</th><th>loss</th><th>artifact</th><th>images</th><th>Machine Review</th><th>Failure</th>
       </tr>
     </thead>
     <tbody>
@@ -142,7 +142,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="9" class="muted">Itemはありません。</td></tr>
+      <tr><td colspan="9" class="muted">{{ t('empty.items') }}</td></tr>
       {% endfor %}
     </tbody>
   </table>

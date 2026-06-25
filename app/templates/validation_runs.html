@@ -5,7 +5,7 @@
 </header>
 
 <section class="notice">
-  <h2>採用後weight検証</h2>
+  <h2>{{ t('validation_runs.post_adoption_weight') }}</h2>
   <p>検証Runは、採用候補LoRAのweightや条件差を検証する履歴です。通常はLoRAプロファイル、Project、または学習ジョブ詳細から作成します。</p>
 </section>
 
@@ -14,7 +14,7 @@
     <table class="wide-table">
       <thead>
         <tr>
-          <th>ID</th><th>Project</th><th>学習ジョブ</th><th>プリセット</th><th>Epoch</th><th>状態</th><th>画像</th><th>レビュー</th><th>推奨weight</th><th>操作</th>
+          <th>ID</th><th>Project</th><th>{{ t('label.job') }}</th><th>{{ t('label.preset') }}</th><th>Epoch</th><th>{{ t('common.status') }}</th><th>{{ t('label.images') }}</th><th>{{ t('label.review') }}</th><th>{{ t('label.recommended_weight') }}</th><th>{{ t('common.actions') }}</th>
         </tr>
       </thead>
       <tbody>
@@ -35,7 +35,7 @@
           </td>
         </tr>
         {% else %}
-        <tr><td colspan="10" class="muted">検証Runはまだありません。</td></tr>
+        <tr><td colspan="10" class="muted">{{ t('empty.validation_runs') }}</td></tr>
         {% endfor %}
       </tbody>
     </table>

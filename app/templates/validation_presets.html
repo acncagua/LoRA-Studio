@@ -1,13 +1,13 @@
 {% extends "base.html" %}{% block content %}
 <header class="page-head">
-  <h1>検証プリセット</h1>
+  <h1>{{ t('page.validation_presets.title') }}</h1>
 </header>
 
 <section>
   <p class="muted">外部生成環境で人間が検証画像を作る時の標準条件です。WebUI / reForge APIによる自動生成は行わず、プロンプトパックと条件管理を担当します。sd-scriptsのgen_img.pyを使う検証画像生成には対応しています。</p>
   <table>
     <thead>
-      <tr><th>ID</th><th>名前</th><th>レベル</th><th>画像数</th><th>サイズ</th><th>Sampler</th><th>Steps</th><th>CFG</th><th>メモ</th></tr>
+      <tr><th>ID</th><th>{{ t('label.name') }}</th><th>{{ t('label.level') }}</th><th>{{ t('label.image_count') }}</th><th>{{ t('label.size') }}</th><th>Sampler</th><th>Steps</th><th>CFG</th><th>{{ t('label.memo') }}</th></tr>
     </thead>
     <tbody>
       {% for preset in presets %}
@@ -23,7 +23,7 @@
         <td>{{ preset.memo or preset.description or '-' }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="9" class="muted">検証プリセットはまだ登録されていません。</td></tr>
+      <tr><td colspan="9" class="muted">{{ t('empty.validation_presets') }}</td></tr>
       {% endfor %}
     </tbody>
   </table>

@@ -1,25 +1,25 @@
 {% extends "base.html" %}{% block content %}
 <header class="page-head">
-  <h1>サンプルプロンプトテンプレート</h1>
-  <a class="button" href="/sample-prompt-templates/new">新規作成</a>
+  <h1>{{ t('page.sample_prompts.title') }}</h1>
+  <a class="button" href="/sample-prompt-templates/new">{{ t('common.create_new') }}</a>
 </header>
 
 <section>
   <p class="muted">学習中に生成するsample画像用のpromptセットです。`{trigger_word}` はジョブのtrigger wordに置き換えられます。</p>
   <table>
-    <thead><tr><th>ID</th><th>名前</th><th>用途</th><th>種別</th><th>prompt数</th><th>操作</th></tr></thead>
+    <thead><tr><th>ID</th><th>{{ t('label.name') }}</th><th>{{ t('label.purpose') }}</th><th>{{ t('label.type') }}</th><th>{{ t('label.prompt_count') }}</th><th>{{ t('common.actions') }}</th></tr></thead>
     <tbody>
       {% for template in templates %}
       <tr>
         <td>{{ template.id }}</td>
         <td>{{ template.name }}</td>
         <td>{{ template.purpose or '-' }}</td>
-        <td>{{ '組み込み' if template.is_builtin else 'ユーザー作成' }}</td>
+        <td>{{ t('label.builtin') if template.is_builtin else t('label.user_created') }}</td>
         <td>{{ template.prompts_json.count('"prompt"') }}</td>
-        <td><a class="button small-button" href="/sample-prompt-templates/{{ template.id }}/edit">編集</a></td>
+        <td><a class="button small-button" href="/sample-prompt-templates/{{ template.id }}/edit">{{ t('common.edit') }}</a></td>
       </tr>
       {% else %}
-      <tr><td colspan="6" class="muted">テンプレートはまだありません。</td></tr>
+      <tr><td colspan="6" class="muted">{{ t('empty.templates') }}</td></tr>
       {% endfor %}
     </tbody>
   </table>

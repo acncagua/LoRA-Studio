@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% block content %}
 <header class="page-head">
-  <h1>Embedding設定</h1>
-  <div class="actions"><a class="button" href="/maintenance">メンテナンスへ</a></div>
+  <h1>{{ t('page.embedding_settings.title') }}</h1>
+  <div class="actions"><a class="button" href="/maintenance">{{ t('primary.open_maintenance') }}</a></div>
 </header>
 
 <section class="notice">
@@ -11,7 +11,7 @@
 </section>
 
 <section class="notice">
-  <h2>機械補助レビューの導線</h2>
+  <h2>{{ t('embedding.machine_review_flow') }}</h2>
   <p>この画面はEmbeddingモデルと機械補助レビューの設定画面です。画像そのものはここでは登録しません。画像はリファレンスセット、学習ジョブのサンプル、検証Runの登録画像から使います。</p>
   <ol class="workflow-list">
     <li>リファレンスセット詳細で基準画像を登録し、Embeddingを計算します。</li>
@@ -23,18 +23,18 @@
 </section>
 
 <section id="machine-review-settings" class="notice">
-  <h2>機械補助レビュー設定</h2>
+  <h2>{{ t('embedding.machine_review_settings') }}</h2>
   <p>機械補助判定は参考情報です。最終判断は人間評価を優先してください。mock providerのスコアは意味的な画像評価ではありません。</p>
   <p>Reference Setが1枚だけの場合、判定が偏る可能性があります。画風LoRAでは広めのReference Setを推奨します。</p>
   <form method="post" action="/settings/machine-review" class="form-grid">
-    <label>使用Embeddingモデル
+    <label>{{ t('embedding.active_model') }}
       <select name="active_embedding_model_id">
         {% for model in models %}
         <option value="{{ model.id }}" {{ 'selected' if machine_review_settings.active_embedding_model_id == model.id else '' }}>{{ model.name }} / {{ model.provider }}</option>
         {% endfor %}
       </select>
     </label>
-    <label>Reference類似度方式
+    <label>{{ t('embedding.reference_similarity_method') }}
       <select name="reference_similarity_method">
         {% for value in ['avg', 'max', 'avg_max_blend'] %}
         <option value="{{ value }}" {{ 'selected' if machine_review_settings.reference_similarity_method == value else '' }}>{{ value }}</option>
@@ -48,14 +48,14 @@
     <label>画風Reference最低枚数<input type="number" name="minimum_reference_images_style" value="{{ machine_review_settings.minimum_reference_images_style }}"></label>
     <label class="inline-check"><input type="checkbox" name="low_confidence_when_mock_provider" value="1" {{ 'checked' if machine_review_settings.low_confidence_when_mock_provider else '' }}> mock providerは低信頼として扱う</label>
     <label class="inline-check"><input type="checkbox" name="include_dataset_nearest_check" value="1" {{ 'checked' if machine_review_settings.include_dataset_nearest_check else '' }}> Dataset nearest similarityを計算する</label>
-    <button type="submit">機械補助レビュー設定を保存</button>
+    <button type="submit">{{ t('embedding.save_machine_review_settings') }}</button>
   </form>
 </section>
 
 <section class="panel-grid">
   <form method="post" action="/settings/embeddings" class="form-grid">
-    <h2>設定</h2>
-    <label>有効なEmbeddingモデル
+    <h2>{{ t('label.settings') }}</h2>
+    <label>{{ t('embedding.active_embedding_model') }}
       <select name="active_embedding_model_id">
         {% for model in models %}
         <option value="{{ model.id }}" {{ 'selected' if embedding_settings.active_embedding_model_id == model.id else '' }}>{{ model.name }} / {{ model.provider }}</option>
@@ -75,26 +75,26 @@
     <label>Max Image Size<input type="number" name="max_image_size" value="{{ embedding_settings.max_image_size or 1024 }}" min="256"></label>
     <label>Workers<input type="number" name="num_workers" value="{{ embedding_settings.num_workers or 1 }}" min="1"></label>
     <label class="inline-check"><input type="checkbox" name="allow_model_download" value="1" {{ 'checked' if embedding_settings.allow_model_download else '' }}> 明示的にモデルdownloadを許可</label>
-    <button type="submit">設定を保存</button>
+    <button type="submit">{{ t('common.save_settings') }}</button>
   </form>
 
   <div>
-    <h2>Provider確認</h2>
+    <h2>{{ t('embedding.provider_check') }}</h2>
     <dl>
-      <dt>現在のモデル</dt><dd>{{ active_model.name }} / {{ active_model.provider }}</dd>
+      <dt>{{ t('embedding.current_model') }}</dt><dd>{{ active_model.name }} / {{ active_model.provider }}</dd>
       <dt>Model</dt><dd>{{ active_model.model_name or '-' }}</dd>
       <dt>Vector dim</dt><dd>{{ active_model.vector_dim or '-' }}</dd>
       <dt>Normalize</dt><dd>{{ 'yes' if active_model.normalize else 'no' }}</dd>
-      <dt>最終Preflight</dt><dd>{{ embedding_settings.last_preflight_status or '-' }}</dd>
+      <dt>{{ t('embedding.last_preflight') }}</dt><dd>{{ embedding_settings.last_preflight_status or '-' }}</dd>
     </dl>
     <form method="post" action="/settings/embeddings/preflight">
       <input type="hidden" name="active_embedding_model_id" value="{{ embedding_settings.active_embedding_model_id or active_model.id }}">
-      <button type="submit">Providerを確認</button>
+      <button type="submit">{{ t('embedding.check_provider') }}</button>
     </form>
     {% if preflight %}
     <h3>Preflight結果: <span class="label {{ preflight.status|lower }}">{{ preflight.status }}</span></h3>
     <table>
-      <thead><tr><th>確認</th><th>状態</th><th>メッセージ</th></tr></thead>
+      <thead><tr><th>{{ t('label.check') }}</th><th>{{ t('common.status') }}</th><th>{{ t('label.message') }}</th></tr></thead>
       <tbody>
         {% for check in preflight.checks %}
         <tr><td>{{ check.name }}</td><td><span class="label {{ check.status|lower }}">{{ check.status }}</span></td><td>{{ check.message }}</td></tr>
@@ -107,16 +107,16 @@
 
 <section class="panel-grid">
   <div>
-    <h2>キャッシュ容量</h2>
+    <h2>{{ t('embedding.cache_size') }}</h2>
     <dl>
-      <dt>合計</dt><dd>{{ format_bytes(cache_size.total) }}</dd>
+      <dt>{{ t('label.total') }}</dt><dd>{{ format_bytes(cache_size.total) }}</dd>
       {% for key, size in cache_size.by_model.items() %}
       <dt>{{ key }}</dt><dd>{{ format_bytes(size) }}</dd>
       {% endfor %}
     </dl>
   </div>
   <div>
-    <h2>整理プレビュー</h2>
+    <h2>{{ t('embedding.cleanup_preview') }}</h2>
     <dl>
       <dt>失敗Embedding</dt><dd>{{ failed_cleanup.count }}件 / {{ failed_cleanup.label }}</dd>
       <dt>古いEmbedding</dt><dd>{{ stale_cleanup.count }}件 / {{ stale_cleanup.label }}</dd>
@@ -126,10 +126,10 @@
 </section>
 
 <section id="machine-review-jobs">
-  <h2>機械補助レビュージョブ</h2>
+  <h2>{{ t('embedding.machine_review_jobs') }}</h2>
   <p class="muted">機械補助レビューはbackground jobとして実行します。mock providerの結果は意味的な画像評価ではなく、機能経路確認用です。</p>
   <table>
-    <thead><tr><th>ID</th><th>対象種別</th><th>対象ID</th><th>状態</th><th>進捗</th><th>経過秒</th><th>ログ</th><th>操作</th></tr></thead>
+    <thead><tr><th>ID</th><th>{{ t('label.target_type') }}</th><th>{{ t('label.target_id') }}</th><th>{{ t('common.status') }}</th><th>{{ t('label.progress') }}</th><th>{{ t('label.elapsed_seconds') }}</th><th>{{ t('label.log') }}</th><th>{{ t('common.actions') }}</th></tr></thead>
     <tbody>
       {% for job in machine_review_jobs %}
       <tr>
@@ -144,22 +144,22 @@
           {% if job.status == 'running' %}
           <form method="post" action="/machine-review/jobs/{{ job.id }}/stop">
             <input type="hidden" name="return_to" value="/settings/embeddings#machine-review-jobs">
-            <button class="danger" type="submit">停止</button>
+            <button class="danger" type="submit">{{ t('primary.stop') }}</button>
           </form>
           {% else %}-{% endif %}
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="8" class="muted">機械補助レビュージョブはまだありません。</td></tr>
+      <tr><td colspan="8" class="muted">{{ t('empty.machine_review_jobs') }}</td></tr>
       {% endfor %}
     </tbody>
   </table>
 </section>
 
 <section>
-  <h2>Embeddingジョブ</h2>
+  <h2>{{ t('embedding.embedding_jobs') }}</h2>
   <table>
-    <thead><tr><th>ID</th><th>種別</th><th>対象</th><th>Provider</th><th>状態</th><th>進捗</th><th>開始</th><th>終了</th><th>操作</th></tr></thead>
+    <thead><tr><th>ID</th><th>{{ t('label.type') }}</th><th>{{ t('label.target') }}</th><th>Provider</th><th>{{ t('common.status') }}</th><th>{{ t('label.progress') }}</th><th>{{ t('label.started_at') }}</th><th>{{ t('label.ended_at') }}</th><th>{{ t('common.actions') }}</th></tr></thead>
     <tbody>
       {% for job in embedding_jobs %}
       <tr>
@@ -173,12 +173,12 @@
         <td>{{ job.ended_at or '-' }}</td>
         <td>
           {% if job.status == 'running' %}
-          <form method="post" action="/embeddings/jobs/{{ job.id }}/stop"><button class="danger" type="submit">停止</button></form>
+          <form method="post" action="/embeddings/jobs/{{ job.id }}/stop"><button class="danger" type="submit">{{ t('primary.stop') }}</button></form>
           {% else %}-{% endif %}
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="9" class="muted">Embeddingジョブはまだありません。</td></tr>
+      <tr><td colspan="9" class="muted">{{ t('empty.embedding_jobs') }}</td></tr>
       {% endfor %}
     </tbody>
   </table>

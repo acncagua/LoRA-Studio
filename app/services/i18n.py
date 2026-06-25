@@ -79,9 +79,11 @@ ACTION_TEXT_KEYS = {'Projectを開く': 'primary.open_project',
  '再準備が必要': 'primary.prepare_files_again',
  '事前確認 / 実行': 'primary.run',
  'ログ確認 / 停止': 'primary.check_logs',
+ 'ログ確認 / 編集': 'primary.check_logs',
  '評価 / Export / 比較': 'primary.compare',
  'ログ確認 / 修正': 'primary.check_logs',
  '再準備 / 実行': 'primary.prepare_files_again',
+ '編集 / ファイル準備': 'primary.prepare_files',
  '詳細確認': 'primary.open_details'}
 
 

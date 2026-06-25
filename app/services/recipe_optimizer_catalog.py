@@ -232,7 +232,7 @@ OPTIMIZER_PROFILES_V2 = [
 
 
 NETWORK_TYPES = [
-    ("standard_lora", "standard_lora", "Standard LoRA", "networks.lora", "standard_lora", "available", {"network_dim": "int", "network_alpha": "int"}, 32, 16, "標準LoRA。Phase 12.1の実行対象。", "安定した標準network type。"),
+    ("standard_lora", "standard_lora", "Standard LoRA", "networks.lora", "standard_lora", "available", {"network_dim": "int", "network_alpha": "int"}, 32, 16, "標準LoRA。安定した通常実行対象です。", "安定した標準network type。"),
     (
         "lora_c3lier",
         "lora_c3lier",
@@ -1579,7 +1579,7 @@ def compatibility_check(params: dict[str, Any], *, network_type: dict[str, Any] 
             warnings.append("LoRA-C3Lierの conv_alpha が conv_dim より大きいです。まず conv_alpha <= conv_dim を推奨します。")
     availability = network_type.get("availability")
     if availability and availability != "available":
-        errors.append(f"Network type {network_type.get('display_name') or network_type.get('id')} は Phase 12.1 では {availability} のため実行できません。")
+        errors.append(f"Network type {network_type.get('display_name') or network_type.get('id')} は {availability} のため通常実行できません。")
     return {"errors": errors, "warnings": warnings, "ok": not errors}
 
 

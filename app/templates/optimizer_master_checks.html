@@ -3,7 +3,7 @@
 <header class="page-head">
   <h1>Optimizer Master Validation / Smoke Matrix</h1>
   <div class="actions compact-actions">
-    <a class="button secondary" href="/optimizers">Optimizer Masterへ戻る</a>
+    <a class="button secondary" href="/optimizers">{{ t('optimizer.back_to_master') }}</a>
     <a class="button secondary" href="/training-recipes">Recipe Library</a>
   </div>
 </header>
@@ -11,7 +11,7 @@
 {% if error %}<p class="notice warning">{{ error }}</p>{% endif %}
 
 <section class="notice">
-  <h2>この画面の目的</h2>
+  <h2>{{ t('label.screen_purpose') }}</h2>
   <p>Built-in Optimizer Profileがsd-scriptsでPrepare、2-step Smoke、LoRA artifact確認、Image Smokeまで通るかを一覧で確認します。</p>
   <p class="warning">Smoke OKは品質保証ではありません。起動・生成・最低限の破綻なし確認です。実用品質はCandidate Review / Weight Calibrationで確認してください。</p>
 </section>
@@ -22,15 +22,15 @@
   <div class="actions compact-actions">
     <form method="post" action="/optimizer-master-checks/dependencies/check">
       {% if run %}<input type="hidden" name="run_id" value="{{ run.id }}">{% endif %}
-      <button type="submit" class="secondary">依存状態を確認</button>
+    <button type="submit" class="secondary">{{ t('optimizer_deps.check') }}</button>
     </form>
     <form method="post" action="/optimizer-master-checks/dependencies/install-all">
       {% if run %}<input type="hidden" name="run_id" value="{{ run.id }}">{% endif %}
-      <button type="submit">不足分をすべてinstall</button>
+      <button type="submit">{{ t('optimizer_deps.install_all') }}</button>
     </form>
   </div>
   <table class="compact-table wide-table">
-    <thead><tr><th>Package</th><th>Required optimizer</th><th>Status</th><th>Last checked</th><th>Error</th><th>操作</th></tr></thead>
+    <thead><tr><th>Package</th><th>Required optimizer</th><th>Status</th><th>Last checked</th><th>Error</th><th>{{ t('common.actions') }}</th></tr></thead>
     <tbody>
       {% for dep in optional_dependencies %}
       <tr>
@@ -47,7 +47,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="6" class="muted">Optional dependencyは未登録です。</td></tr>
+      <tr><td colspan="6" class="muted">{{ t('empty.optional_dependencies') }}</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -55,12 +55,12 @@
 
 <section class="panel-grid">
   <div>
-    <h2>新しいCheck Runを作成</h2>
+    <h2>{{ t('optimizer_check.create_run') }}</h2>
     <form method="post" action="/optimizer-master-checks" class="stack-form">
-      <label>対象
+      <label>{{ t('label.target') }}
         <select name="target_scope">
-          <option value="all_builtin">Built-in対象profileすべて</option>
-          <option value="selected_profiles">選択したprofile</option>
+          <option value="all_builtin">{{ t('optimizer_check.scope_all_builtin') }}</option>
+          <option value="selected_profiles">{{ t('optimizer_check.scope_selected') }}</option>
         </select>
       </label>
       <div class="checkbox-grid">
@@ -68,11 +68,11 @@
         <label><input type="checkbox" name="profile_ids" value="{{ profile.id }}"> {{ profile.display_name }} <span class="muted">({{ profile.id }})</span></label>
         {% endfor %}
       </div>
-      <button type="submit">Check Runを作成</button>
+      <button type="submit">{{ t('optimizer_check.create_run_button') }}</button>
     </form>
   </div>
   <div>
-    <h2>実行操作</h2>
+    <h2>{{ t('label.run_actions') }}</h2>
     {% if run %}
     <form method="post" action="/optimizer-master-checks/{{ run.id }}/prepare" class="stack-form">
       <label>Dataset
@@ -94,28 +94,28 @@
         </select>
       </label>
       <label>base model<input name="base_model_path" value="{{ default_base_model_path }}" required></label>
-      <label>実行件数制限<input name="profile_limit" placeholder="空なら全件"></label>
+      <label>{{ t('label.run_limit') }}<input name="profile_limit" placeholder="{{ t('placeholder.empty_all') }}"></label>
       <button type="submit">Run 2-step Smoke</button>
     </form>
     <form method="post" action="/optimizer-master-checks" class="stack-form">
       <input type="hidden" name="target_scope" value="selected_profiles">
       <input type="hidden" name="profile_ids" value="dadaptadam_sdxl_auto">
       <input type="hidden" name="profile_ids" value="dadaptlion_sdxl_auto">
-      <button type="submit" class="secondary">DAdapt系だけ再Check Runを作成</button>
+      <button type="submit" class="secondary">{{ t('optimizer_check.create_dadapt_run') }}</button>
     </form>
     <form method="post" action="/optimizer-master-checks/{{ run.id }}/report">
-      <button type="submit" class="secondary">View / Export Report</button>
+      <button type="submit" class="secondary">{{ t('common.view_export_report') }}</button>
     </form>
     {% else %}
-    <p class="muted">まずCheck Runを作成してください。</p>
+    <p class="muted">{{ t('optimizer_check.create_first') }}</p>
     {% endif %}
   </div>
 </section>
 
 <section>
-  <h2>Run履歴</h2>
+  <h2>{{ t('label.run_history') }}</h2>
   <table class="wide-table compact-table">
-    <thead><tr><th>ID</th><th>状態</th><th>対象</th><th>total</th><th>prepare</th><th>smoke</th><th>failed</th><th>report</th></tr></thead>
+    <thead><tr><th>ID</th><th>{{ t('common.status') }}</th><th>{{ t('label.target') }}</th><th>total</th><th>prepare</th><th>smoke</th><th>failed</th><th>report</th></tr></thead>
     <tbody>
       {% for item in runs %}
       <tr>
@@ -129,7 +129,7 @@
         <td>{{ item.report_path or '-' }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="8" class="muted">Run履歴はまだありません。</td></tr>
+      <tr><td colspan="8" class="muted">{{ t('empty.run_history') }}</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -150,7 +150,7 @@
   <table class="wide-table compact-table">
     <thead>
       <tr>
-        <th>Profile</th><th>Recipe</th><th>状態</th><th>Prepare Job</th><th>Smoke Job</th><th>Artifact</th><th>Image Smoke</th><th>Failure</th><th>操作</th>
+        <th>Profile</th><th>Recipe</th><th>{{ t('common.status') }}</th><th>Prepare Job</th><th>Smoke Job</th><th>Artifact</th><th>Image Smoke</th><th>Failure</th><th>{{ t('common.actions') }}</th>
       </tr>
     </thead>
     <tbody>
@@ -180,13 +180,13 @@
           <form method="post" action="/optimizer-master-check-items/{{ item.id }}/image-smoke" class="compact-form">
             <label>weight0<input name="weight0_path" value="{{ item.generated_weight0_image_path or '' }}"></label>
             <label>weight1<input name="weight1_path" value="{{ item.generated_weight1_image_path or '' }}"></label>
-            <button type="submit" class="small-button secondary">Image Smokeを記録</button>
+            <button type="submit" class="small-button secondary">{{ t('optimizer_check.record_image_smoke') }}</button>
           </form>
           {% if item.log_path %}<small>{{ item.log_path }}</small>{% endif %}
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="9" class="muted">Itemはありません。</td></tr>
+      <tr><td colspan="9" class="muted">{{ t('empty.items') }}</td></tr>
       {% endfor %}
     </tbody>
   </table>

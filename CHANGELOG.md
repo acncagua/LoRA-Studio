@@ -9,6 +9,8 @@
 - LoRA-C3Lier向けに、SDXL Character Face / Costume / StyleのAdamW8bit Recipe seedを追加しました。
 - Parameter Editor v2で `conv_dim` / `conv_alpha` を編集できるようにし、command生成では `--network_args conv_dim=<value> conv_alpha=<value>` としてsd-scriptsへ渡すようにしました。
 - Compatibility CheckでLoRA-C3Lierの `conv_dim` / `conv_alpha` 未設定や0以下をERROR、`conv_alpha > conv_dim` をWARNINGとして検出します。
+- Standard LoRA選択時は `conv_dim` / `conv_alpha` を通常パラメータとして表示しないようにし、LoRA-C3Lier専用項目として分離しました。
+- Optimizer Smoke / Network Smoke系の短時間確認で `max_train_steps=2` を真に優先し、epoch由来の学習量へ膨らまないようにしました。
 - Phase 12.4.4でREADME.mdを英語ランディングページとして再整理し、README_ja.mdを同じ見出し構成の日本語ランディングページへ揃えました。
 - README_ja.mdに蓄積していた詳細説明を `docs/ja/` へ分離し、分割前全文を `docs/ja/_archive_readme_ja_before_split.md` に保全しました。
 - 段階的i18n基盤として、locale cookie永続化、JSON辞書分離、Primary Action向け翻訳キー優先表示を整備しました。

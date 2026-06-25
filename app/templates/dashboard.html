@@ -1,39 +1,39 @@
 {% extends "base.html" %}{% block content %}
 <header class="page-head">
-  <h1>ダッシュボード</h1>
+  <h1>{{ t('page.dashboard.title') }}</h1>
   <div class="actions">
-    <a class="button" href="/jobs">学習ジョブ一覧</a>
-    <a class="button" href="/jobs/new">学習ジョブ作成</a>
+    <a class="button" href="/jobs">{{ t('label.job_list') }}</a>
+    <a class="button" href="/jobs/new">{{ t('common.create_job') }}</a>
   </div>
 </header>
 
 <section class="metric-grid">
-  <div><span>{{ stats.presets }}</span><small>学習プリセット</small></div>
-  <div><span>{{ stats.datasets }}</span><small>データセット</small></div>
-  <div><span>{{ stats.jobs }}</span><small>学習ジョブ</small></div>
-  <div><span>{{ stats.active_projects }}</span><small>有効Project</small></div>
-  <div><span>{{ stats.running }}</span><small>実行中</small></div>
-  <div><span>{{ stats.completed }}</span><small>完了</small></div>
-  <div><span>{{ stats.failed }}</span><small>失敗</small></div>
-  <div><span>{{ stats.stopped }}</span><small>停止</small></div>
-  <div><span>{{ stats.draft_jobs }}</span><small>下書きジョブ</small></div>
+  <div><span>{{ stats.presets }}</span><small>{{ t('label.training_presets') }}</small></div>
+  <div><span>{{ stats.datasets }}</span><small>{{ t('label.datasets') }}</small></div>
+  <div><span>{{ stats.jobs }}</span><small>{{ t('label.training_jobs') }}</small></div>
+  <div><span>{{ stats.active_projects }}</span><small>{{ t('label.active_projects') }}</small></div>
+  <div><span>{{ stats.running }}</span><small>{{ t('status.running') }}</small></div>
+  <div><span>{{ stats.completed }}</span><small>{{ t('status.completed') }}</small></div>
+  <div><span>{{ stats.failed }}</span><small>{{ t('status.failed') }}</small></div>
+  <div><span>{{ stats.stopped }}</span><small>{{ t('status.stopped') }}</small></div>
+  <div><span>{{ stats.draft_jobs }}</span><small>{{ t('label.draft_jobs') }}</small></div>
 </section>
 
 <section>
-  <h2>整理リンク</h2>
+  <h2>{{ t('dashboard.cleanup_links') }}</h2>
   <div class="actions">
-    <a class="button" href="/projects">有効Project</a>
-    <a class="button" href="/projects?view=archived">アーカイブProject ({{ stats.archived_projects }})</a>
-    <a class="button" href="/jobs?view=archived">アーカイブ学習ジョブ ({{ stats.archived_jobs }})</a>
-    <a class="button" href="/jobs?view=failed">失敗ジョブ</a>
-    <a class="button" href="/jobs?view=draft">下書きジョブ</a>
+    <a class="button" href="/projects">{{ t('dashboard.active_projects') }}</a>
+    <a class="button" href="/projects?view=archived">{{ t('dashboard.archived_projects') }} ({{ stats.archived_projects }})</a>
+    <a class="button" href="/jobs?view=archived">{{ t('dashboard.archived_jobs') }} ({{ stats.archived_jobs }})</a>
+    <a class="button" href="/jobs?view=failed">{{ t('dashboard.failed_jobs') }}</a>
+    <a class="button" href="/jobs?view=draft">{{ t('dashboard.draft_jobs') }}</a>
   </div>
 </section>
 
 <section>
-  <h2>最近のProject（LoRA作成単位）</h2>
+  <h2>{{ t('dashboard.recent_projects') }}</h2>
   <table>
-    <thead><tr><th>ID</th><th>Project名</th><th>状態</th><th>データセット</th><th>採用学習ジョブ</th><th>推奨weight</th><th>最新検証Run</th><th>操作</th></tr></thead>
+    <thead><tr><th>ID</th><th>{{ t('label.project_name') }}</th><th>{{ t('common.status') }}</th><th>{{ t('label.dataset') }}</th><th>{{ t('label.selected_job') }}</th><th>{{ t('label.recommended_weight') }}</th><th>{{ t('label.latest_validation_run') }}</th><th>{{ t('common.actions') }}</th></tr></thead>
     <tbody>
       {% for project in projects %}
       <tr>
@@ -44,47 +44,47 @@
         <td>{% if project.selected_job_id %}<a href="/jobs/{{ project.selected_job_id }}">#{{ project.selected_job_id }}</a>{% else %}-{% endif %}</td>
         <td>{{ project.recommended_weight_min if project.recommended_weight_min is not none else '-' }} - {{ project.recommended_weight_max if project.recommended_weight_max is not none else '-' }}</td>
         <td>{{ display_validation_status(project.latest_validation_status) }}</td>
-        <td><a class="button small-button" href="/projects/{{ project.id }}">開く</a></td>
+        <td><a class="button small-button" href="/projects/{{ project.id }}">{{ t('common.open') }}</a></td>
       </tr>
       {% else %}
-      <tr><td colspan="8" class="muted">Projectはまだありません。学習ジョブ作成からProjectを作成してください。</td></tr>
+      <tr><td colspan="8" class="muted">{{ t('empty.projects') }}</td></tr>
       {% endfor %}
     </tbody>
   </table>
-  <p><a class="button" href="/projects">Project一覧を開く</a></p>
+  <p><a class="button" href="/projects">{{ t('dashboard.open_project_list') }}</a></p>
 </section>
 
 <section>
-  <h2>操作が必要な学習ジョブ</h2>
+  <h2>{{ t('dashboard.jobs_need_action') }}</h2>
   <table>
-    <thead><tr><th>ID</th><th>学習ジョブ名</th><th>状態</th><th>次の操作</th><th>操作</th></tr></thead>
+    <thead><tr><th>ID</th><th>{{ t('label.job_name') }}</th><th>{{ t('common.status') }}</th><th>{{ t('label.next_action') }}</th><th>{{ t('common.actions') }}</th></tr></thead>
     <tbody>
       {% for job in attention_jobs %}
       <tr>
         <td><a href="/jobs/{{ job.id }}">#{{ job.id }}</a></td>
         <td>{{ job.name }}</td>
-        <td><span class="label {{ job.status }}">{{ status_labels.get(job.status, job.status) }}</span>{% if job.config_dirty %}<br><span class="label warning">再準備必要</span>{% endif %}</td>
-        <td>{% if job.config_dirty or job.status == 'prepared_dirty' %}ファイル準備{% elif job.status == 'running' %}ログ確認 / 停止{% elif job.status == 'failed' %}ログ確認 / 編集{% elif job.status == 'prepared' %}事前確認 / 実行{% elif job.status == 'draft' %}編集 / ファイル準備{% else %}詳細確認{% endif %}</td>
+        <td><span class="label {{ job.status }}">{{ status_labels.get(job.status, job.status) }}</span>{% if job.config_dirty %}<br><span class="label warning">{{ t('status.prepare_needed') }}</span>{% endif %}</td>
+        <td>{% if job.config_dirty or job.status == 'prepared_dirty' %}{{ action_text('ファイル準備') }}{% elif job.status == 'running' %}{{ action_text('ログ確認 / 停止') }}{% elif job.status == 'failed' %}{{ action_text('ログ確認 / 編集') }}{% elif job.status == 'prepared' %}{{ action_text('事前確認 / 実行') }}{% elif job.status == 'draft' %}{{ action_text('編集 / ファイル準備') }}{% else %}{{ action_text('詳細確認') }}{% endif %}</td>
         <td>
           <div class="actions compact-actions dashboard-job-actions">
-            <a class="button small-button" href="/jobs/{{ job.id }}">開く</a>
-            {% if job.status in ['draft','prepared','prepared_dirty','failed','stopped'] %}<a class="button small-button" href="/jobs/{{ job.id }}/edit">編集</a>{% endif %}
-            {% if job.status in ['prepared','failed','stopped'] and not job.config_dirty %}<form method="post" action="/jobs/{{ job.id }}/run"><button class="small-button" type="submit">実行</button></form>{% endif %}
+            <a class="button small-button" href="/jobs/{{ job.id }}">{{ t('common.open') }}</a>
+            {% if job.status in ['draft','prepared','prepared_dirty','failed','stopped'] %}<a class="button small-button" href="/jobs/{{ job.id }}/edit">{{ t('common.edit') }}</a>{% endif %}
+            {% if job.status in ['prepared','failed','stopped'] and not job.config_dirty %}<form method="post" action="/jobs/{{ job.id }}/run"><button class="small-button" type="submit">{{ t('common.run') }}</button></form>{% endif %}
           </div>
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="5" class="muted">いま操作が必要な学習ジョブはありません。</td></tr>
+      <tr><td colspan="5" class="muted">{{ t('empty.attention_jobs') }}</td></tr>
       {% endfor %}
     </tbody>
   </table>
 </section>
 
 <section>
-  <h2>採用LoRAの検証進捗</h2>
+  <h2>{{ t('dashboard.validation_progress') }}</h2>
   <table>
     <thead>
-      <tr><th>プロファイル</th><th>プリセット</th><th>最新の検証Run</th><th>予定 / 登録 / レビュー済み</th><th>推奨weight</th><th>状態</th></tr>
+      <tr><th>{{ t('label.profile') }}</th><th>{{ t('label.preset') }}</th><th>{{ t('label.latest_validation_run') }}</th><th>{{ t('label.expected_registered_reviewed') }}</th><th>{{ t('label.recommended_weight') }}</th><th>{{ t('common.status') }}</th></tr>
     </thead>
     <tbody>
       {% for profile in validation_profiles %}
@@ -97,34 +97,34 @@
         <td>{{ profile.validation_warning or '-' }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="6" class="muted">採用LoRAプロファイルはまだありません。</td></tr>
+      <tr><td colspan="6" class="muted">{{ t('empty.lora_profiles') }}</td></tr>
       {% endfor %}
     </tbody>
   </table>
-  <p><a class="button" href="/lora-library">LoRAライブラリを開く</a></p>
+  <p><a class="button" href="/lora-library">{{ t('dashboard.open_lora_library') }}</a></p>
 </section>
 
 <section>
-  <h2>最近の学習ジョブ</h2>
+  <h2>{{ t('dashboard.recent_jobs') }}</h2>
   <form method="get" action="/compare">
   <table>
-    <thead><tr><th>比較</th><th>ID</th><th>学習ジョブ名</th><th>派生元</th><th>状態</th><th>モデル種別</th><th>更新日時</th><th>操作</th></tr></thead>
+    <thead><tr><th>{{ t('primary.compare') }}</th><th>ID</th><th>{{ t('label.job_name') }}</th><th>{{ t('label.parent_job') }}</th><th>{{ t('common.status') }}</th><th>{{ t('label.model_family') }}</th><th>{{ t('label.updated_at') }}</th><th>{{ t('common.actions') }}</th></tr></thead>
     <tbody>
       {% for job in jobs %}
-      <tr><td><input type="checkbox" name="job_ids" value="{{ job.id }}"></td><td><a href="/jobs/{{ job.id }}">#{{ job.id }}</a></td><td>{{ job.name }}</td><td>{% if job.parent_job_id %}<a href="/jobs/{{ job.parent_job_id }}">#{{ job.parent_job_id }}</a>{% else %}-{% endif %}</td><td>{{ status_labels.get(job.status, job.status) }}</td><td>{{ job.model_family }}</td><td>{{ job.updated_at }}</td><td><a class="button small-button" href="/jobs/{{ job.id }}">開く</a></td></tr>
+      <tr><td><input type="checkbox" name="job_ids" value="{{ job.id }}"></td><td><a href="/jobs/{{ job.id }}">#{{ job.id }}</a></td><td>{{ job.name }}</td><td>{% if job.parent_job_id %}<a href="/jobs/{{ job.parent_job_id }}">#{{ job.parent_job_id }}</a>{% else %}-{% endif %}</td><td>{{ status_labels.get(job.status, job.status) }}</td><td>{{ job.model_family }}</td><td>{{ job.updated_at }}</td><td><a class="button small-button" href="/jobs/{{ job.id }}">{{ t('common.open') }}</a></td></tr>
       {% else %}
-      <tr><td colspan="8" class="muted">学習ジョブはまだありません。</td></tr>
+      <tr><td colspan="8" class="muted">{{ t('empty.jobs') }}</td></tr>
       {% endfor %}
     </tbody>
   </table>
-  <p><button type="submit">選択した学習ジョブを比較</button></p>
+  <p><button type="submit">{{ t('dashboard.compare_selected_jobs') }}</button></p>
   </form>
 </section>
 
 <section>
-  <h2>整理候補</h2>
+  <h2>{{ t('dashboard.cleanup_candidates') }}</h2>
   <table>
-    <thead><tr><th>ID</th><th>学習ジョブ名</th><th>状態</th><th>理由</th><th>操作</th></tr></thead>
+    <thead><tr><th>ID</th><th>{{ t('label.job_name') }}</th><th>{{ t('common.status') }}</th><th>{{ t('label.reason') }}</th><th>{{ t('common.actions') }}</th></tr></thead>
     <tbody>
       {% for job in cleanup_candidates %}
       <tr>
@@ -132,13 +132,13 @@
         <td>{{ job.name }}</td>
         <td>{{ status_labels.get(job.status, job.status) }}</td>
         <td>{{ job.cleanup_reason }}</td>
-        <td><a class="button small-button" href="/jobs/{{ job.id }}">確認</a></td>
+        <td><a class="button small-button" href="/jobs/{{ job.id }}">{{ t('common.confirm') }}</a></td>
       </tr>
       {% else %}
-      <tr><td colspan="5" class="muted">整理候補はありません。</td></tr>
+      <tr><td colspan="5" class="muted">{{ t('empty.cleanup_candidates') }}</td></tr>
       {% endfor %}
     </tbody>
   </table>
-  <p><a class="button" href="/jobs">学習ジョブ一覧で整理する</a></p>
+  <p><a class="button" href="/jobs">{{ t('dashboard.cleanup_in_job_list') }}</a></p>
 </section>
 {% endblock %}

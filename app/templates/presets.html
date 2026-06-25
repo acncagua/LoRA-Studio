@@ -1,8 +1,8 @@
 {% extends "base.html" %}{% block content %}
-<header class="page-head"><h1>学習プリセット</h1></header>
+<header class="page-head"><h1>{{ t('page.presets.title') }}</h1></header>
 <table>
   <thead>
-    <tr><th>名前</th><th>モデル種別</th><th>スクリプト</th><th>目的</th></tr>
+    <tr><th>{{ t('label.name') }}</th><th>{{ t('label.model_family') }}</th><th>{{ t('label.script') }}</th><th>{{ t('label.purpose') }}</th></tr>
   </thead>
   <tbody>
     {% for preset in presets %}
@@ -13,7 +13,7 @@
       <td>{{ preset.purpose }}</td>
     </tr>
     {% else %}
-    <tr><td colspan="4" class="muted">学習プリセットはまだありません。</td></tr>
+    <tr><td colspan="4" class="muted">{{ t('empty.presets') }}</td></tr>
     {% endfor %}
   </tbody>
 </table>

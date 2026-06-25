@@ -1,30 +1,30 @@
 {% extends "base.html" %}{% block content %}
-<header class="page-head"><h1>データセット</h1></header>
+<header class="page-head"><h1>{{ t('page.datasets.title') }}</h1></header>
 <section>
   <form method="post" action="/datasets" class="form-grid">
-    <label>名前<input name="name" required></label>
-    <label>パス
+    <label>{{ t('label.name') }}<input name="name" required></label>
+    <label>{{ t('label.path') }}
       <span class="path-picker">
         <input id="dataset-path" name="path" required placeholder="D:\datasets\character_a">
-        <button type="button" data-browse-target="#dataset-path" data-browse-kind="directory" data-browse-title="データセットフォルダを選択" data-browse-initial="{{ default_dataset_path }}">参照</button>
+        <button type="button" data-browse-target="#dataset-path" data-browse-kind="directory" data-browse-title="{{ t('dataset.select_folder') }}" data-browse-initial="{{ default_dataset_path }}">{{ t('common.browse') }}</button>
       </span>
     </label>
-    <label>モデル種別<select name="model_family"><option>SDXL</option><option>SD1.5</option></select></label>
-    <label>トリガーワード<input name="trigger_word" placeholder="char_name"></label>
-    <label>クラストークン<input name="class_token" value="person"></label>
-    <label>メモ<textarea name="memo"></textarea></label>
-    <button type="submit">データセット登録</button>
+    <label>{{ t('label.model_family') }}<select name="model_family"><option>SDXL</option><option>SD1.5</option></select></label>
+    <label>{{ t('label.trigger_word') }}<input name="trigger_word" placeholder="char_name"></label>
+    <label>{{ t('label.class_token') }}<input name="class_token" value="person"></label>
+    <label>{{ t('label.memo') }}<textarea name="memo"></textarea></label>
+    <button type="submit">{{ t('dataset.register') }}</button>
   </form>
 </section>
 <section>
-  <h2>登録済みデータセット</h2>
+  <h2>{{ t('dataset.registered') }}</h2>
   <table>
-    <thead><tr><th>ID</th><th>名前</th><th>画像</th><th>キャプション</th><th>不足</th><th>状態</th><th>パス</th></tr></thead>
+    <thead><tr><th>ID</th><th>{{ t('label.name') }}</th><th>{{ t('label.images') }}</th><th>{{ t('label.captions') }}</th><th>{{ t('label.missing') }}</th><th>{{ t('common.status') }}</th><th>{{ t('label.path') }}</th></tr></thead>
     <tbody>
       {% for dataset in datasets %}
       <tr><td><a href="/datasets/{{ dataset.id }}">#{{ dataset.id }}</a></td><td>{{ dataset.name }}</td><td>{{ dataset.image_count }}</td><td>{{ dataset.caption_count }}</td><td>{{ dataset.missing_caption_count }}</td><td>{{ dataset.scan_status }}</td><td>{{ dataset.path }}</td></tr>
       {% else %}
-      <tr><td colspan="7" class="muted">データセットはまだありません。</td></tr>
+      <tr><td colspan="7" class="muted">{{ t('empty.datasets') }}</td></tr>
       {% endfor %}
     </tbody>
   </table>

@@ -1,44 +1,44 @@
 {% extends "base.html" %}{% block content %}
 <header class="page-head">
-  <h1>リファレンスセット</h1>
+  <h1>{{ t('page.reference_sets.title') }}</h1>
 </header>
 
 <section class="panel-grid">
   <div>
-    <h2>新規作成</h2>
+    <h2>{{ t('common.create_new') }}</h2>
     <p class="muted">機械補助レビューの前段階として、人間が「比較の基準にしたい画像」を固定しておく場所です。現時点ではAI評価には使わず、参照画像と役割を管理します。</p>
     <form method="post" action="/reference-sets" class="form-grid">
-      <label>名前<input name="name" required placeholder="例: fantasy_knight 顔・全身基準"></label>
-      <label>種別<select name="reference_type">
+      <label>{{ t('label.name') }}<input name="name" required placeholder="例: fantasy_knight 顔・全身基準"></label>
+      <label>{{ t('label.type') }}<select name="reference_type">
         {% for value, label in reference_type_labels.items() %}
         <option value="{{ value }}">{{ label }}</option>
         {% endfor %}
       </select></label>
       <label>Project<select name="project_id">
-        <option value="">指定なし</option>
+        <option value="">{{ t('common.not_selected') }}</option>
         {% for project in projects %}
         <option value="{{ project.id }}">#{{ project.id }} {{ project.name }}</option>
         {% endfor %}
       </select></label>
-      <label>データセット<select name="dataset_id">
-        <option value="">指定なし</option>
+      <label>{{ t('label.dataset') }}<select name="dataset_id">
+        <option value="">{{ t('common.not_selected') }}</option>
         {% for dataset in datasets %}
         <option value="{{ dataset.id }}">#{{ dataset.id }} {{ dataset.name }}</option>
         {% endfor %}
       </select></label>
-      <label>選択モード<select name="selection_mode">
-        <option value="manual">手動選択</option>
-        <option value="dataset_candidates">データセット候補から選択</option>
-        <option value="external">外部画像</option>
+      <label>{{ t('label.selection_mode') }}<select name="selection_mode">
+        <option value="manual">{{ t('reference.selection.manual') }}</option>
+        <option value="dataset_candidates">{{ t('reference.selection.dataset_candidates') }}</option>
+        <option value="external">{{ t('reference.selection.external') }}</option>
       </select></label>
-      <label>トリガー<input name="trigger_word" placeholder="例: knight"></label>
-      <label class="wide-field">説明<textarea name="description"></textarea></label>
-      <label class="wide-field">メモ<textarea name="memo"></textarea></label>
-      <button type="submit">リファレンスセットを作成</button>
+      <label>{{ t('label.trigger') }}<input name="trigger_word" placeholder="例: knight"></label>
+      <label class="wide-field">{{ t('label.description') }}<textarea name="description"></textarea></label>
+      <label class="wide-field">{{ t('label.memo') }}<textarea name="memo"></textarea></label>
+      <button type="submit">{{ t('reference.create') }}</button>
     </form>
   </div>
   <div>
-    <h2>役割ガイド</h2>
+    <h2>{{ t('reference.role_guide') }}</h2>
     <dl>
       <dt>キャラクター</dt><dd>顔正面・上半身・全身を中心に、表情や角度違いを補足します。</dd>
       <dt>スタイル</dt><dd>寄り、上半身、全身、背景、色味、線、塗り、光の偏りを見ます。</dd>
@@ -48,12 +48,12 @@
 </section>
 
 <section>
-  <h2>一覧</h2>
+  <h2>{{ t('label.list') }}</h2>
   <table>
     <thead>
       <tr>
-        <th>ID</th><th>名前</th><th>Project</th><th>データセット</th><th>Version</th>
-        <th>種別</th><th>画像</th><th>構成チェック</th><th>デフォルト</th><th>更新</th><th>操作</th>
+        <th>ID</th><th>{{ t('label.name') }}</th><th>Project</th><th>{{ t('label.dataset') }}</th><th>Version</th>
+        <th>{{ t('label.type') }}</th><th>{{ t('label.images') }}</th><th>{{ t('reference.composition_check') }}</th><th>{{ t('label.default') }}</th><th>{{ t('label.updated_at') }}</th><th>{{ t('common.actions') }}</th>
       </tr>
     </thead>
     <tbody>
@@ -67,24 +67,24 @@
         <td>{{ reference_type_labels.get(row.reference_type, row.reference_type or '-') }}</td>
         <td>{{ row.version_image_count if row.version_image_count is not none else 0 }}</td>
         <td><span class="label {{ (row.completeness_label or 'unknown')|lower }}">{{ row.completeness_label or 'UNKNOWN' }}</span><br><span class="muted">{{ row.completeness_message or '' }}</span></td>
-        <td>{{ '標準' if row.is_default else '-' }}</td>
+        <td>{{ t('label.standard') if row.is_default else '-' }}</td>
         <td>{{ row.updated_at }}</td>
         <td>
           <div class="actions compact-actions">
-            <a class="button small-button" href="/reference-sets/{{ row.id }}">開く</a>
+            <a class="button small-button" href="/reference-sets/{{ row.id }}">{{ t('common.open') }}</a>
             {% if row.project_id and not row.is_default and not row.is_archived %}
-            <form method="post" action="/reference-sets/{{ row.id }}/set-default"><button class="small-button" type="submit">Project標準</button></form>
+            <form method="post" action="/reference-sets/{{ row.id }}/set-default"><button class="small-button" type="submit">{{ t('reference.project_default') }}</button></form>
             {% endif %}
             {% if row.is_archived %}
-            <form method="post" action="/reference-sets/{{ row.id }}/restore"><button class="small-button" type="submit">復元</button></form>
+            <form method="post" action="/reference-sets/{{ row.id }}/restore"><button class="small-button" type="submit">{{ t('primary.restore') }}</button></form>
             {% else %}
-            <form method="post" action="/reference-sets/{{ row.id }}/archive"><button class="small-button secondary" type="submit">アーカイブ</button></form>
+            <form method="post" action="/reference-sets/{{ row.id }}/archive"><button class="small-button secondary" type="submit">{{ t('primary.archive') }}</button></form>
             {% endif %}
           </div>
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="11" class="muted">リファレンスセットはまだありません。</td></tr>
+      <tr><td colspan="11" class="muted">{{ t('empty.reference_sets') }}</td></tr>
       {% endfor %}
     </tbody>
   </table>
