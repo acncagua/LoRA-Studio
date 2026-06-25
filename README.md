@@ -1,559 +1,79 @@
 # LoRA-Studio
 
-LoRA-Studio is a workflow-oriented training management platform
-for Stable Diffusion LoRA development.
+[日本語 README](README_ja.md)
 
-It helps creators manage datasets,
-training jobs, dataset versions,
-validation runs, experiment tracking,
-and final LoRA selection through a
-unified workflow.
+## Overview
 
-Built around real-world SDXL / SD1.5
-character LoRA iteration workflows,
-where reproducibility, comparison,
-and validation become more difficult
-than training itself.
+LoRA-Studio is a local workflow manager for Stable Diffusion LoRA development,
+with a focus on SDXL / SD1.5 character and illustration LoRA iteration.
 
-[日本語 READMEはこちら](README_ja.md)
-
----
-
-## Status
-
-Current release: v0.5.4-beta
-Development phase: Phase 12.4.2
-
-The core workflow is operational and
-actively used for local LoRA production,
-but APIs and workflows may still change.
-
-## Why LoRA-Studio?
-
-Training a LoRA is easy.
-
-Managing dozens of experiments,
-dataset revisions,
-validation runs,
-sample reviews,
-and final model selection is not.
-
-LoRA-Studio provides a unified workflow
-for the entire LoRA lifecycle.
-
-## Key Features
-
-- Dataset Management
-- Dataset Version Tracking
-- Training Job Management
-- Validation Runs
-- Weight Calibration Pipeline
-- Post-training Review Automation
-- Retry Signal Summary
-- Step Estimator / Target Step Assistant
-- Candidate Standard Comparison
-- Reference Sets
-- Experiment Comparison
-- LoRA Selection Workflow
-- Machine Review Assist
-- Storage Cleanup Support
-- Gradual i18n foundation for Japanese/English UI screenshots
-
-## Gradual i18n
-
-LoRA-Studio now has a staged i18n foundation. The default UI locale is
-Japanese, and English can be enabled from the language switch in the left
-navigation or by adding `?lang=en` to a page URL. This makes README and OSS
-screenshots reproducible in English without changing the internal workflow.
-
-The first translation scope covers the left navigation, page headings, main
-buttons, status badges, primary actions, and Recipe / Optimizer master labels.
-Internal identifiers remain English keys. sd-scripts logs, generated commands,
-raw args, and tracebacks are intentionally not translated.
-
-Built-in Recipe v2 and Optimizer master rows can store localized
-`labels_json`, `descriptions_json`, and `risk_notes_json`. Custom Recipes and
-user-entered names are shown as entered and are not translated automatically.
-
-UI translation dictionaries live in `app/i18n/ja.json` and `app/i18n/en.json`.
-When adding new UI text, add a translation key and use `t()` in templates or
-the app JS text table instead of hard-coding visible labels. sd-scripts logs,
-generated commands, raw args, and tracebacks remain untranslated by design.
-
-New action state should carry `label_key` and, when useful,
-`description_key`, then templates should render those keys before falling back
-to legacy text. `ACTION_TEXT_KEYS` remains only as a migration fallback for
-older Japanese action labels and should not be used as the primary mechanism
-for new actions.
-
-## Phase 12.3.1: Practical Mini Pilot
-
-Phase 12.3.1 adds a Practical Mini Pilot layer on top of the Phase 12.3
-Optimizer Smoke Matrix.
-
-This phase also adds mid-priority performance and I/O foundations for heavy
-candidate comparisons:
-
-- Candidate Standard Comparison can share weight 0 baseline images inside the
-  comparison group. The logical matrix can still contain 45 images per epoch,
-  while physical generation skips duplicate no-LoRA baseline images.
-- Candidate Comparison groups can run Embedding once for the whole group,
-  deduplicating shared baseline paths before Machine Review.
-- Runtime Storage Settings let new runs, exports, logs, and embedding cache use
-  a runtime root outside OneDrive. Existing artifact paths are not migrated.
-- Performance Summary now distinguishes logical images, physical generated
-  images, shared baseline count, and seconds per image for generation,
-  embedding, Machine Review, and matrix creation.
-
-Smoke Test remains a startup check. Mini Pilot is a short practical training
-run, usually 100-300 steps, used to catch obvious optimizer problems before a
-full 3000-5000 step training run.
-
-Mini Pilot records:
-
-- short training Job and log path
-- loss summary, including NaN / Inf detection
-- LoRA artifact status and safetensors readability
-- sample image count and image smoke status
-- optional Machine Review / mini validation placeholders
-- failure category and suggested next action
-
-Mini Pilot OK is still not a quality guarantee. It means the profile is a
-reasonable candidate for real project evaluation. Candidate Review and Weight
-Calibration remain the final evaluation paths.
-
-## Phase 12.3: Optimizer Profile Validation
-
-Phase 12.3 adds a validation layer for Optimizer Profiles and Recipe v2 entries.
-The goal is to check whether a registered optimizer profile can prepare and start
-through sd-scripts before users rely on it for real training.
-
-The built-in optimizer master now stores sd-scripts-facing profile parameters:
-
-- `sd_scripts_optimizer_type`
-- required / recommended params for each optimizer profile
-- command params used for normal Job preparation
-- smoke params used for 2-step startup checks
-- dependency notes such as `bitsandbytes`, `prodigyopt`, `transformers`, `lion-pytorch`, and `dadaptation`
-
-Seeded profiles include AdamW8bit Balanced, PagedAdamW8bit Balanced, Prodigy Soft,
-Adafactor Auto, Adafactor Fixed, Lion Soft, Lion Balanced Experimental,
-DAdaptAdam Auto, and DAdaptLion Auto.
-
-Optimizer detail pages now provide:
-
-- Prepare Test Job: generates `command_argv.json`, dataset config, and sample prompts without running training.
-- Run 2-step Smoke Test: creates a temporary low-dim Job and runs only two training steps.
-- Run Mini Pilot: creates a practical short-run validation plan and can run it explicitly.
-- View Last Test Result: shows the latest status, return code, command path, and log path.
-
-Smoke Test is a startup check, not a quality evaluation.
-`Smoke OK` means the command path can run in the current environment; it does not guarantee
-that the optimizer produces useful LoRA quality. AdamW8bit remains the stable baseline,
-while Prodigy, Adafactor, Lion, DAdaptAdam, and DAdaptLion should still be treated as
-Advanced or Experimental until validated in real projects.
-
-Optimizer LR meanings differ. AdamW8bit / PagedAdamW8bit / Lion use ordinary LR values.
-Prodigy / DAdaptAdam / DAdaptLion use `learning_rate=1.0` as an Auto-LR multiplier,
-not as AdamW-style `1e-4`. Adafactor Auto uses `relative_step=True` and omits
-`--learning_rate` / `--unet_lr`; Adafactor Fixed uses fixed LR with
-`max_grad_norm=0.0`.
-
-Recipe cards and the Job creation Wizard show validation badges such as `Untested`,
-`Prepare OK`, `Smoke OK`, and `Failed`. Selecting an untested or failed profile adds a
-Compatibility WARNING so the choice is visible before creating a draft Job.
-
-Phase 12.3.x also adds the Optimizer Master Check screen at `/optimizer-master-checks`.
-It creates a smoke matrix for the built-in optimizer profiles, records Prepare Check /
-2-step Smoke / LoRA artifact status / Image Smoke status, and writes Markdown/JSON
-reports under `reports/optimizer_master_checks/` and `logs/`. Failure categories separate
-LoRA-Studio command generation issues, master parameter problems, missing dependencies,
-sd-scripts unsupported options, and local environment issues.
-
-Optimizer optional dependencies are tracked separately from the LoRA-Studio app venv.
-`dadaptation` is required for DAdaptAdam / DAdaptLion, `prodigyopt` for Prodigy,
-and `lion-pytorch` for Lion. The Environment screen and Optimizer Master Check screen
-show whether those packages are importable from the sd-scripts venv, and provide install
-buttons that run `sd-scripts venv python -m pip install ...`. LoRA-Studio-managed
-sd-scripts setup installs these optional optimizer packages by default
-(`install_optional_optimizer_deps=true`); existing external sd-scripts environments are
-not modified unless the user presses an install button.
-
-The Phase 12.3 final Optimizer Master Check summary is saved in
-`docs/optimizer_master_check_final_summary_phase12.3.md`. After installing `dadaptation`
-into the sd-scripts venv, all 9 built-in optimizer profiles reached Prepare OK,
-2-step Smoke OK, LoRA artifact OK, and Image Smoke OK.
-
-## Phase 12.2: Recipe Wizard UX
-
-Phase 12.2 improves the Job creation flow on top of Recipe v2.
-The `/jobs/new` screen is now a wizard-style single page with clear steps:
-
-- Choose the entry point: purpose first, optimizer first, derived from an existing Job, or fully custom.
-- Select Project / Dataset.
-- Pick a Recipe card with purpose, optimizer, network type, risk, and target step context visible.
-- Edit only the necessary parameters in Parameter Editor v2.
-- Review Step Estimate, Target Step Assistant candidates, and Compatibility Check before creating the draft Job.
-
-Parameter Editor v2 separates Basic Params, Advanced Params, Raw Args, Resolved Params, and User Override Diff.
-Job creation stores `user_overrides_json` as structured `from` / `to` / `reason` records so Job detail can show why a draft differs from the selected Recipe.
-
-Compatibility Check now has a dedicated section with ERROR / WARNING / NOTE.
-ERROR blocks draft Job creation, while WARNING remains advisory.
-Legacy presets are still available under a collapsed legacy section, and existing Jobs continue to open unchanged.
-
-Recipe Library and Optimizer Master also gained card-style browsing and detail pages.
-Jobs can be saved back as a Custom Recipe for later reuse.
-
-Phase 12.2.1 also separates Recipe labels by purpose. After Model Family is selected,
-Recipe cards use short labels such as `顔キャラ・標準` instead of repeating `SDXL` / `SD1.5`
-in every title. The full Model Family label is still kept for direct select/search.
-
-- `short_label`: compact card title used as the main visual target.
-- `full_label`: complete label for detail/search contexts.
-- `direct_select_label`: label used in the collapsed direct Recipe selector.
-- Purpose-first mode groups Recipe cards by optimizer category.
-- Optimizer-first mode groups Recipe cards by purpose.
-
-## Phase 12.1: Training Recipe / Optimizer Master v2
-
-Phase 12.1 introduces the foundation for Recipe v2 and optimizer-aware training setup.
-The goal is to keep existing legacy presets working while moving new Job creation toward
-structured Training Recipes, Optimizer Profiles, Training Purposes, and Network Type metadata.
-
-Job creation now has four conceptual entry points:
-
-- Purpose first: choose a use case such as character face, style, costume, object, or concept.
-- Optimizer first: choose AdamW8bit, Lion, Adafactor, DAdapt, Prodigy, or another optimizer family before selecting a profile.
-- Derived from existing Job: preserve recipe and parameter snapshots from previous work.
-- Fully custom: manually adjust Basic / Advanced / Raw Args.
-
-Optimizer metadata records that learning rate does not mean the same thing for every optimizer.
-AdamW / Lion use normal LR semantics, while DAdapt and Prodigy treat `learning_rate=1.0`
-as an automatic LR multiplier, and Adafactor may use relative-step behavior.
-
-Target steps are resolved from Recipe first, then Optimizer Profile, then Optimizer Definition,
-then the global fallback. Expected steps are calculated as:
-
-```text
-effective_batch_size = train_batch_size * gradient_accumulation_steps * num_processes
-steps_per_epoch = ceil(total_training_images_with_repeats / effective_batch_size)
-total_steps = steps_per_epoch * max_train_epochs
-```
-
-Target Step Assistant normally adjusts `repeats`, `epochs`, and `batch`.
-Direct `max_train_steps` remains an Advanced option because it changes the meaning of
-epoch-based review and checkpoint comparison.
-
-Raw Args are intentionally treated as advanced and may bypass compatibility checks.
-Legacy presets remain available and existing Jobs continue to open unchanged.
-LoCon / LoHa / LoKr / LyCORIS network types are represented as planned metadata only;
-full network type support is planned for later Phase 12 work.
-
-## Phase 11.8: Post-training Review Automation
-
-Post-training Review Automation prepares the first candidate epoch review after a Training Job completes.
-It extracts loss candidate epochs, creates a Review Plan, and can optionally start a small Quick Candidate Review before the user creates a Review Session manually.
-
-Automation modes:
-
-- `manual`: keep the previous manual workflow.
-- `plan_only`: create a Review Plan after training completion, but do not generate images automatically. This is the default.
-- `quick_auto`: create and start a compact pre-selection review when safety limits allow it.
-- `standard_auto`: available with a warning because it uses 45 standard conditions per candidate epoch and can consume more runtime and GPU resources. It should normally stop for confirmation when `max_auto_images` is exceeded.
-
-Quick Candidate Review is intentionally lightweight:
-up to 3 candidate epochs, prompts `basic_face` / `full_body` / `expression_pose`,
-seed `111111`, weights `0.6` and `0.8`, no Hires, and at most 18 expected images.
-This is for choosing which epoch deserves adoption. It is not a replacement for the post-adoption
-Weight Calibration standard 45-image validation.
-
-When Machine Assist scores are close, LoRA-Studio shows a candidate group with
-`no_clear_winner` instead of forcing a single winner. This means human visual comparison should decide.
-Machine Assist remains advisory and does not replace human review or apply choices automatically.
-
-## Candidate Review Modes
-
-LoRA-Studio separates pre-adoption epoch review from post-adoption weight validation.
-
-- Quick Candidate Review: a lightweight pre-adoption review for choosing the candidate epoch.
-- Standard Candidate Comparison: creates Standard Validation v1 runs for the primary / secondary / check loss candidate epochs, 45 images per epoch, and runs them as one comparison group with an epoch cross matrix.
-- Manual: keeps the existing manual Validation Run workflow for custom epoch or preset choices.
-- Weight Calibration: runs after an epoch / LoRA has been adopted and determines the recommended weight range for the selected LoRA.
-
-Standard Candidate Comparison is useful when Quick Candidate Review is not enough and you want the same 45-image Standard Validation coverage across several candidate epochs.
-The UI shows the candidate epochs, expected image count, estimated runtime, and estimated storage before starting.
-
-## Phase 11.9: Retry Signal Summary
-
-Retry Signal Summary is a read-only checkpoint before retry automation.
-It classifies whether a completed workflow looks acceptable or may need another experiment,
-using training step coverage, loss trend, candidate epoch position, Review Session Machine Assist,
-human ratings, Weight Calibration results, recommended weight range, overfit risk, and failure tags.
-
-The output is shown on Project detail, Job detail, Review Session detail, and LoRA Profile detail:
-
-- `retry_signal_label`
-- `confidence`
-- reasons
-- recommended next actions
-
-Labels include `ACCEPTABLE`, `UNDERTRAINED_STEP_SHORTAGE`,
-`UNDERTRAINED_STILL_IMPROVING`, `OVERTRAINED`, `PARAMETER_TOO_WEAK`,
-`PARAMETER_TOO_STRONG`, `DATASET_OR_CAPTION_ISSUE`, and `NO_CLEAR_WINNER`.
-This feature does not create Draft Jobs and does not start runs automatically.
-
-Retry Signal Summary is intentionally separate from the Recommendation Engine:
-Retry Signal is a read-only diagnosis of the current result, while the Recommendation Engine creates experiment proposals and can create a Draft Job only when the user explicitly clicks that action.
-The retry signal follows a three-stage interpretation model:
-
-- Pre-Review checks training amount, target steps, loss trend, dataset/caption/trigger consistency, and candidate epoch position.
-- Machine Review checks reference similarity, dataset nearest-neighbor risk, no-clear-winner cases, and weight calibration signals.
-- Human Review takes priority whenever human ratings or notes exist; Machine Assist never overrides human visual judgment.
-
-Label meanings:
-
-- `ACCEPTABLE`: no strong retry signal; selected LoRA and validation evidence can be used as-is.
-- `UNDERTRAINED_STEP_SHORTAGE`: expected steps are below the target range; use Target Step Assistant or consider repeats/epochs changes.
-- `UNDERTRAINED_STILL_IMPROVING`: loss or best candidate suggests the run may still be improving near the end.
-- `OVERTRAINED`: later epochs or overfit signals look worse; prefer earlier epochs or lower training intensity.
-- `PARAMETER_TOO_WEAK`: LoRA effect is weak even at high weight; check dim/LR/trigger/captions.
-- `PARAMETER_TOO_STRONG`: LoRA is strong at low weight or overfit-prone; check lower LR, fewer repeats/epochs, or lower dim.
-- `DATASET_OR_CAPTION_ISSUE`: dataset, trigger, captions, reference set, or failure tags should be fixed before retrying.
-- `NO_CLEAR_WINNER`: Machine Assist does not separate candidates clearly; use human comparison or neighbor epoch review.
-
-## Performance Notes
-
-For faster generation and review pipelines, keep large model files, `runs`,
-`exports`, and embedding caches outside OneDrive or other synced folders when possible.
-Cloud sync can add file locking, metadata scans, and upload pressure while sd-scripts,
-Embedding, and Machine Review are reading and writing many large files.
-Performance Summary warns when `runs`, `exports`, `data/embeddings`, or model paths
-look like they are under OneDrive.
-
-## Phase 11.7: Weight Calibration Pipeline
-
-Candidate Review and Weight Calibration are separate workflows.
-Candidate Review decides which epoch should be adopted.
-Weight Calibration runs after a LoRA / selected output has been adopted,
-and decides which LoRA weight range should be used.
-
-Standard Validation uses 45 images:
-3 prompts x 3 seeds x 5 weights.
-Weight `0` is the baseline and is generated without LoRA network weights.
-Standard comparison is based on non-Hires images.
-Extended Validation can include Hires on/off comparisons,
-but Hires results are treated as final appearance checks rather than the main weight recommendation basis.
-
-The pipeline can be started from Project, Job, Review Session, LoRA Profile,
-or Validation Run context. It prepares expected conditions, runs sd-scripts image generation,
-imports images, computes Embeddings, runs Machine Review Assist, and writes a Weight Review Matrix.
-Machine Assist is supporting information; human review fields take priority.
-Suggested weights are never applied automatically. Use the explicit Apply to Profile action
-to update the selected LoRA profile.
-
-## Step Estimator / Target Step Assistant
-
-Epoch count alone is not enough to judge training volume.
-LoRA-Studio estimates expected training steps with:
-
-`effective_batch_size = train_batch_size x gradient_accumulation_steps x num_processes`
-
-`steps_per_epoch = ceil(sum(subset.image_count x subset.repeats) / effective_batch_size)`
-
-`total_steps = steps_per_epoch x max_train_epochs`
-
-Job creation, job editing, job detail, and preflight show the estimate against optimizer and recipe target steps.
-Target steps are resolved from `training_recipes`, then `optimizer_profiles`,
-then `optimizer_definitions`, with a global fallback if no catalog entry applies.
-The assistant uses the recipe recommended target as its initial value and auto-calculates repeats,
-and proposes save/sample intervals when epoch count would create too many checkpoints.
-Increasing repeats does not increase the number of output LoRA checkpoints, but it increases steps per epoch.
-Very high repeats can overfit or make the LoRA too fixed to the dataset.
-
-Direct `max_train_steps` is treated as Advanced. It overrides epoch-based total steps and can make
-epoch-based review less clear, so the normal workflow recommends adjusting repeats / epochs / batch first.
+It does not try to replace creative judgment. Instead, it keeps datasets,
+training jobs, validation runs, candidate reviews, optimizer recipes, and final
+LoRA selection in one reproducible workflow.
 
 ## Screenshots
+
+Screenshots are captured from sanitized English demo views for OSS submission.
+Labels and sample data may differ slightly from a local development workspace.
 
 ### Dashboard
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
-The dashboard gives you a high-level view of recent projects, training job status, failed or draft jobs, and cleanup entry points.
-
 ### Recommended Workflow
 
 ![Recommended Workflow](docs/screenshots/recommended-workflow.png)
-
-The workflow page shows the intended path from dataset preparation to training, review, validation, and the next experiment.
 
 ### Create Training Job
 
 ![Create Training Job](docs/screenshots/create-training-job.png)
 
-Create a training job by selecting a project, dataset, dataset version, preset, base model, and sample prompt template in one place.
-
 ### Training Job Management
 
 ![Training Job Management](docs/screenshots/training-job-management.png)
-
-Manage draft, prepared, running, completed, failed, archived, and deleted training jobs with clear actions for prepare, run, clone, compare, and archive.
 
 ### Training Result Management
 
 ![Training Result Management](docs/screenshots/training-result-management.png)
 
-Inspect loss, step consistency, output LoRA files, sample images, selected epochs, and review notes from the training job detail screen.
+## Features
 
-Screenshots are captured from sanitized English demo views for OSS submission.
-Labels and sample data may differ slightly from the local development UI.
+- Project-based LoRA experiment tracking
+- Dataset registration, rescanning, trigger checks, and version snapshots
+- Training Job creation, preparation, execution, stop, clone, and archive
+- Recipe v2 / Optimizer Master with Step Estimator and Compatibility Check
+- Post-training Review Automation and Candidate Standard Comparison
+- Review Matrix and human review fields for candidate epoch selection
+- Validation Run and Weight Calibration Pipeline for adopted LoRAs
+- OpenCLIP / Machine Review Assist and Reference Sets
+- Retry Signal Summary and Recommendation Engine separation
+- Runtime storage settings and cleanup support for large generated artifacts
+- Gradual Japanese / English i18n for screenshots and OSS-facing UI
 
----
+## Recommended Workflow
 
-## What It Does
-
-LoRA-Studio is designed for local LoRA experimentation, especially SDXL / SD1.5 character and illustration LoRA workflows.
-
-It does not try to fully automate creative judgment. Instead, it keeps the repetitive and error-prone parts organized:
-
-- dataset registration and rescanning
-- caption and trigger consistency checks
-- dataset version snapshots
-- project-based LoRA experiment tracking
-- training job creation, preparation, execution, stop, and result import
-- sd-scripts command generation with argv-based execution
-- loss / metric import and step consistency checks
-- epoch-by-epoch sample comparison
-- selected LoRA management
-- validation runs and validation image review
-- reference set management
-- embedding cache and Machine Review Assist
-- storage cleanup for large `runs/` outputs
-
-The goal is to make LoRA iteration easier to reproduce, compare, and clean up.
-
-## Core Concepts
-
-### Project
-
-A Project represents one LoRA creation effort.
-It groups datasets, training jobs, selected outputs, validation runs, reference sets, and review notes.
-In normal use, start from the Project detail page. It acts as the workspace for the whole LoRA creation flow.
-
-### Training Job
-
-A Training Job represents one actual training run.
-Jobs can be prepared, run, stopped, reviewed, cloned, archived, or used as the source for a new variant.
-The Training Job detail page is for inspecting one run: setup, command generation, logs, metrics, outputs, and cleanup.
-It is not intended to replace the Project page as the overall workspace.
-The detail page is organized into tabs so setup, results, review, validation, recommendations, files, and technical data stay separated.
-
-### Dataset Version
-
-Dataset Versions capture the state of a dataset after rescans or caption edits.
-This helps compare runs made before and after dataset cleanup.
-
-### Validation Run
-
-A Validation Run stores fixed validation conditions such as prompts, seeds, LoRA weights, and generated or imported validation images.
-Validation Runs are mainly for post-selection weight calibration after a candidate epoch has been chosen.
-
-### Reference Set
-
-A Reference Set contains human-selected reference images used for visual review and Machine Review Assist.
-
-### Review Session
-
-A Review Session is the pre-selection comparison workspace for candidate epochs.
-It stores candidate epoch conditions, generated review images, Machine Review Assist results, and the cross-epoch Review Matrix.
-Use Review Sessions before selecting a final epoch. Use Validation Runs after selecting an epoch.
-Open Review Sessions from the Project or Training Job page when you want to compare candidate epochs and select the final LoRA.
-
-### Machine Review Assist
-
-Machine Review Assist compares generated images with reference and dataset images using cached embeddings.
-It is advisory only. Human review always takes priority.
-
-Current real providers are:
-
-- `transformers_clip`
-- `open_clip`
-
-Default models:
-
-- transformers CLIP: `openai/clip-vit-base-patch32`
-- OpenCLIP: `ViT-B-32` / `laion2b_s34b_b79k`
-
-The mock provider remains available for tests and CI.
-Model downloads are allowed only when the embedding setting explicitly enables model download.
-
-### Candidate Review Preparation
-
-After a training job completes, LoRA-Studio can prepare a small pre-selection review matrix before you choose the final epoch.
-
-The Review Preparation pipeline uses loss candidate epochs and their neighboring epochs, generates a compact set of images with sd-scripts, registers the images, computes embeddings, runs Machine Review Assist, and writes a cross-epoch matrix HTML file.
-With Post-training Review Automation enabled, this preparation can run as soon as a Training Job reaches `completed`.
-The default `plan_only` mode creates the plan and waits for user action.
-`quick_auto` starts the compact review only when no GPU-related task is already running and the expected image count stays within `max_auto_images`.
-
-This is separate from Validation Runs:
-
-- Review Preparation is for choosing a candidate epoch before adoption.
-- Weight Calibration / Validation Runs are for checking LoRA weights after an epoch has been selected.
-- Standard Validation 45-image runs should usually happen after candidate selection, not before every epoch comparison.
-
-If Machine Assist scores are close, the Review Matrix shows a candidate group and `no_clear_winner`.
-Treat this as a prompt to compare images directly and enter human review notes instead of accepting the machine score.
-
-From a Review Session detail page, use Expanded Neighbor Review when the best candidate needs a local check.
-Choose the center epoch and `+/-1` or `+/-2`; LoRA-Studio creates another planned Review Session
-linked to the same Training Job and parent Review Session, using weights `0.6` / `0.8`, seed `111111`, and no Hires.
-
-## Current Scope
-
-LoRA-Studio currently focuses on:
-
-- local Windows workflow
-- SQLite-backed project data
-- FastAPI + Jinja2 web UI
-- sd-scripts integration
-- SDXL / SD1.5 LoRA training management
-- validation and review support
-- experiment traceability
-
-The project currently uses `kohya-ss/sd-scripts` `v0.10.5` as the verified sd-scripts version for the beta workflow.
-
-## Not In Scope Yet
-
-The following are not implemented as full automatic workflows yet:
-
-- WebUI / reForge API automatic generation
-- ChatGPT API image evaluation
-- full AI-based visual scoring
-- face identity verification
-- automatic parameter optimization
-- FLUX support
-- LyCORIS / LoCon support
+1. Create a Project for one LoRA creation effort.
+2. Register or rescan the dataset and check captions / trigger consistency.
+3. Create a Dataset Version before training.
+4. Create a Training Job using Recipe Wizard or a legacy preset.
+5. Prepare files, review preflight, then run training through sd-scripts.
+6. Use Review Session / Candidate Review to choose the candidate epoch.
+7. Adopt the LoRA output and run Weight Calibration / Validation.
+8. Apply the recommended weight range to the LoRA Profile.
+9. Export, archive, or clean up large unused outputs.
 
 ## Quick Start
 
-### 1. Install App Dependencies
+Install app dependencies:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\setup_app.ps1
 ```
 
-### 2. Start LoRA-Studio
+Start LoRA-Studio:
 
 ```bat
 start_lora_studio.bat
-```
-
-Or run it manually:
-
-```powershell
-.\.venv\Scripts\python.exe .\start_lora_studio.py
 ```
 
 Open:
@@ -562,83 +82,44 @@ Open:
 http://127.0.0.1:8768
 ```
 
-Normal startup does not kill existing processes.
-If you explicitly want LoRA-Studio to release its configured port first, use:
-
-```powershell
-.\.venv\Scripts\python.exe .\start_lora_studio.py --force-release-port
-```
-
-Only LoRA-Studio's configured port is targeted.
-
-### 3. Set Up sd-scripts
-
-LoRA-Studio can set up the verified sd-scripts version:
+Set up the verified sd-scripts environment when needed:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\setup_sd_scripts.ps1 -ReleaseTag v0.10.5 -CudaProfile cu128 -MixedPrecision bf16
 ```
 
-If `external/sd-scripts` or its venv is missing, startup can run the setup path automatically.
-
-## Typical Workflow
-
-1. Create or open a Project.
-2. Register a dataset folder.
-3. Rescan and check captions, trigger consistency, and dataset health.
-4. Create a Dataset Version after cleanup.
-5. Create a Training Job with a preset and base model.
-6. Prepare files and run preflight checks.
-7. Run training through sd-scripts.
-8. Review logs, loss, outputs, and sample images.
-9. Select a candidate LoRA epoch.
-10. Run validation images and review them.
-11. Export the selected LoRA.
-12. Archive or clean up large unselected outputs.
-
-Pilot training is optional.
-It is useful for first-time setup, a new dataset, a new base model, a new preset, or after sd-scripts changes.
-If preflight is OK and similar conditions already completed successfully, you can go directly to a standard training job.
-
-## Machine Review Notes
-
-Machine Review Assist is not an automatic judge.
-
-`transformers_clip` and `open_clip` can help compare overall image meaning, composition, and atmosphere, but they are not face identity models.
-For small facial details, costume details, and character-specific parts, human review remains the source of truth.
-
-Reference Sets should include varied roles such as:
-
-- `face_front`
-- `upper_body`
-- `full_body`
-- `expression`
-
-For character LoRA review, 3-5 reference images are a practical minimum.
-For style LoRA review, a broader set is recommended.
-
-## Storage Notes
-
-Training can create many `.safetensors` files and sample images under `runs/`.
-LoRA-Studio provides archive and cleanup tools, but cleanup is never automatic.
-
-If the project is inside OneDrive, deleting or moving large files may also affect cloud sync.
-
-## Tests
-
-```powershell
-python -m compileall app start_lora_studio.py
-python -m pytest -q
-git diff --check
-```
-
 ## Documentation
 
-The Japanese README currently contains the fuller operational manual:
+- [Japanese documentation index](docs/ja/index.md)
+- [Japanese README](README_ja.md)
+- English detailed documentation will be split under `docs/` over time.
 
-- [README_ja.md](README_ja.md)
+## Current Status
 
-More focused English documentation may be split into `docs/` over time.
+Current release: v0.5.4-beta
+Development phase: Phase 12.4.4
+
+The core workflow is operational and used for local LoRA production, but APIs,
+screen flows, and recipe catalogs may still change during the beta period.
+
+## Requirements
+
+- Windows local workflow
+- Python virtual environment created by `scripts/setup_app.ps1`
+- SQLite application database
+- kohya-ss/sd-scripts integration, verified against `v0.10.5` for the beta workflow
+- NVIDIA GPU environment appropriate for SDXL / SD1.5 LoRA training
+
+## Notes
+
+- Machine Review Assist is advisory. Human visual review remains the final
+  decision source for identity, costume details, style, and adoption.
+- Smoke Test and Mini Pilot statuses confirm startup or short practical runs;
+  they do not guarantee final LoRA quality.
+- Keep large model files, `runs`, `exports`, logs, and embedding caches outside
+  OneDrive or other synchronized folders when possible.
+- sd-scripts logs, generated commands, raw args, and tracebacks are intentionally
+  not translated by the i18n layer.
 
 ## License
 
