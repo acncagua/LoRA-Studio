@@ -15,6 +15,8 @@ SUPPORTED_LOCALES = {"ja", "en"}
 I18N_DIR = Path(__file__).resolve().parents[1] / "i18n"
 
 
+# ACTION_TEXT_KEYS is a migration fallback for existing Japanese UI labels.
+# New action models should provide label_key / description_key instead of relying on label text matching.
 ACTION_TEXT_KEYS = {'Projectを開く': 'primary.open_project',
  'Projectへ戻る': 'common.back',
  'Project内の学習ジョブ一覧': 'primary.open_project_jobs',
@@ -136,6 +138,26 @@ def translate_action_text(text: str | None, locale: str = DEFAULT_LOCALE) -> str
     if not key:
         return value
     return translate(key, locale, value)
+
+
+def action_label(action: Any, locale: str = DEFAULT_LOCALE) -> str:
+    if isinstance(action, dict):
+        key = action.get("label_key")
+        label = str(action.get("label") or "")
+        if key:
+            return translate(str(key), locale, label or None)
+        return translate_action_text(label, locale)
+    return translate_action_text(str(action or ""), locale)
+
+
+def action_description(action: Any, locale: str = DEFAULT_LOCALE) -> str:
+    if isinstance(action, dict):
+        key = action.get("description_key")
+        description = str(action.get("description") or "")
+        if key:
+            return translate(str(key), locale, description or None)
+        return translate_action_text(description, locale)
+    return translate_action_text(str(action or ""), locale)
 
 
 def language_url(request: Request | None, locale: str) -> str:

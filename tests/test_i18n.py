@@ -4,7 +4,16 @@ from pathlib import Path
 from starlette.requests import Request
 
 from app.main import job_new
-from app.services.i18n import I18N_DIR, language_url, load_translations, localized_json_value, reload_i18n, translate
+from app.services.i18n import (
+    I18N_DIR,
+    action_description,
+    action_label,
+    language_url,
+    load_translations,
+    localized_json_value,
+    reload_i18n,
+    translate,
+)
 
 
 def make_request(query_string: bytes = b"", cookie: str = "") -> Request:
@@ -54,6 +63,34 @@ def test_localized_json_value_uses_locale_then_english_fallback() -> None:
     assert localized_json_value(value, "ja") == "顔キャラ・標準"
     assert localized_json_value(value, "en") == "Character Face Balanced"
     assert localized_json_value({"en": "Fallback"}, "ja") == "Fallback"
+
+
+def test_action_label_prefers_label_key() -> None:
+    action = {"label": "このプランで候補レビューを生成", "label_key": "primary.start_review"}
+
+    assert action_label(action, "ja") == "候補レビューを開始"
+    assert action_label(action, "en") == "Start Candidate Review"
+
+
+def test_action_label_falls_back_to_action_text_mapping() -> None:
+    action = {"label": "候補レビューを開始"}
+
+    assert action_label(action, "ja") == "候補レビューを開始"
+    assert action_label(action, "en") == "Start Candidate Review"
+
+
+def test_action_label_returns_original_when_unmapped() -> None:
+    action = {"label": "独自アクション"}
+
+    assert action_label(action, "ja") == "独自アクション"
+    assert action_label(action, "en") == "独自アクション"
+
+
+def test_action_description_prefers_description_key() -> None:
+    action = {"description": "実行中Jobの進行状況とログを確認してください。", "description_key": "project.next.running_job.description"}
+
+    assert action_description(action, "ja") == "実行中ジョブの進捗とログを確認してください。"
+    assert action_description(action, "en") == "Check the running job progress and logs."
 
 
 def test_jobs_new_english_query_sets_locale_cookie() -> None:

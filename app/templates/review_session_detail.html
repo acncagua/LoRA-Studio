@@ -58,7 +58,7 @@
     <h2>{{ t('label.primary_action') }}</h2>
     <div class="actions compact-actions">
       {% if primary_action == 'start' and session.job_id %}
-      <form method="post" action="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/run"><button type="submit">{{ action_text(primary_label) }}</button></form>
+      <form method="post" action="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/run"><button type="submit">{{ action_label(primary_action_model) }}</button></form>
       {% elif primary_action == 'progress' %}
       <a class="button" href="#review-session-log">{{ t('primary.progress') }}</a>
       {% if session.job_id %}<form method="post" action="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/stop"><button type="submit" class="danger">{{ t('primary.stop') }}</button></form>{% endif %}
@@ -66,12 +66,12 @@
       <form method="post" action="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/run"><button type="submit" class="danger">{{ t('primary.retry_review_preparation') }}</button></form>
       <a class="button secondary" href="#review-session-log">{{ t('primary.check_logs') }}</a>
       {% elif primary_action == 'open_matrix' and session.job_id %}
-      <a class="button" href="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix">{{ action_text(primary_label) }}</a>
+      <a class="button" href="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix">{{ action_label(primary_action_model) }}</a>
       <p class="muted">画像比較とレビュー入力はReview Matrixで行います。同じprompt / seed / weightごとに候補epochを横並びで確認できます。</p>
       {% elif primary_action == 'build_matrix' and session.job_id %}
-      <form method="post" action="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix/build"><button type="submit">{{ action_text(primary_label) }}</button></form>
+      <form method="post" action="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix/build"><button type="submit">{{ action_label(primary_action_model) }}</button></form>
       {% elif primary_action == 'check_log' %}
-      <a class="button" href="#review-session-log">{{ action_text(primary_label) }}</a>
+      <a class="button" href="#review-session-log">{{ action_label(primary_action_model) }}</a>
       {% if session.job_id %}<form method="post" action="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/run"><button type="submit" class="danger">{{ t('primary.retry') }}</button></form>{% endif %}
       {% endif %}
     </div>

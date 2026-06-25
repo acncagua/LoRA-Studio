@@ -80,6 +80,12 @@ When adding new UI text, add a translation key and use `t()` in templates or
 the app JS text table instead of hard-coding visible labels. sd-scripts logs,
 generated commands, raw args, and tracebacks remain untranslated by design.
 
+New action state should carry `label_key` and, when useful,
+`description_key`, then templates should render those keys before falling back
+to legacy text. `ACTION_TEXT_KEYS` remains only as a migration fallback for
+older Japanese action labels and should not be used as the primary mechanism
+for new actions.
+
 ## Phase 12.3.1: Practical Mini Pilot
 
 Phase 12.3.1 adds a Practical Mini Pilot layer on top of the Phase 12.3

@@ -203,24 +203,31 @@ def summarize_review_session(session: dict[str, Any]) -> dict[str, Any]:
     if status in {"running", "generating_images", "embedding_images", "machine_reviewing", "building_matrix"}:
         primary_action = "progress"
         primary_label = "進捗を確認"
+        primary_label_key = "primary.progress"
     elif status == "completed" and can_open_matrix:
         primary_action = "open_matrix"
         primary_label = "レビューMatrixを開く"
+        primary_label_key = "primary.open_review_matrix"
     elif status == "completed":
         primary_action = "build_matrix"
         primary_label = "レビューMatrixを作成"
+        primary_label_key = "primary.create_review_matrix"
     elif status in {"planned", "prepared"}:
         primary_action = "start"
         primary_label = "候補レビューを開始"
+        primary_label_key = "primary.start_review"
     elif status in {"failed", "stopped"} and max(generated_count, counted_images) < expected:
         primary_action = "retry"
         primary_label = "レビュー準備をリトライ"
+        primary_label_key = "primary.retry_review_preparation"
     elif status in {"failed", "stopped"}:
         primary_action = "check_log"
         primary_label = "ログを確認"
+        primary_label_key = "primary.check_logs"
     else:
         primary_action = "start"
         primary_label = "候補レビューを開始"
+        primary_label_key = "primary.start_review"
 
     if embedding is None:
         embedding_display = "未確認"
@@ -246,6 +253,7 @@ def summarize_review_session(session: dict[str, Any]) -> dict[str, Any]:
         "can_open_matrix": can_open_matrix,
         "primary_action": primary_action,
         "primary_label": primary_label,
+        "primary_label_key": primary_label_key,
         "embedding_display": embedding_display,
         "embedding_coverage": embedding,
         "log_tail": review_session_log_tail(session, max_lines=20),
@@ -275,6 +283,7 @@ def review_session_summary(job_id: int, current_session_id: int | None = None) -
             "can_open_matrix": False,
             "primary_action": "create",
             "primary_label": "候補レビューを作成",
+            "primary_label_key": "primary.create_candidate_review",
             "embedding_coverage": None,
         }
     current = summarize_review_session(selected_session)
@@ -293,6 +302,7 @@ def review_session_summary(job_id: int, current_session_id: int | None = None) -
         "can_open_matrix": current["can_open_matrix"],
         "primary_action": current["primary_action"],
         "primary_label": current["primary_label"],
+        "primary_label_key": current["primary_label_key"],
         "embedding_coverage": current["embedding_coverage"],
         "log_tail": current["log_tail"],
         "log_size": current["log_size"],

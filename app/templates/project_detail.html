@@ -18,10 +18,10 @@
   </div>
   <div>
     <h2>{{ t('label.next_action') }}</h2>
-    <p><strong>{{ action_text(project_next_action.label) }}</strong></p>
-    <p class="muted">{{ project_next_action.description }}</p>
+    <p><strong>{{ action_label(project_next_action) }}</strong></p>
+    <p class="muted">{{ action_description(project_next_action) }}</p>
     <div class="actions primary-action">
-      <a class="button" href="{{ project_next_action.href }}">{{ action_text(project_next_action.button) }}</a>
+      <a class="button" href="{{ project_next_action.href }}">{{ t(project_next_action.button_key, action_text(project_next_action.button)) if project_next_action.button_key else action_text(project_next_action.button) }}</a>
     </div>
   </div>
 </section>
@@ -47,7 +47,7 @@
   </div>
   <div class="status-card">
     <span>次にやること</span>
-    <strong>{{ action_text(project_next_action.label) }}</strong>
+    <strong>{{ action_label(project_next_action) }}</strong>
   </div>
 </section>
 

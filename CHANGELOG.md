@@ -1,5 +1,18 @@
 # Changelog
 
+## phase12.4.3 / v0.5.4-beta - 2026-06-25
+
+### 主な変更
+
+- Primary Action / Next Actionなどのaction stateで、既存日本語文言ではなく `label_key` / `description_key` を優先して翻訳する基盤を追加しました。
+- Project詳細、Job詳細、Review Session詳細の主要Actionを段階的に `label_key` ベースへ移行しました。
+- `ACTION_TEXT_KEYS` は既存文言互換用fallbackとして残し、新規actionでは翻訳キーを持たせる方針を明記しました。
+
+### 注意点
+
+- 既存action stateや旧テンプレートの文言は引き続き `ACTION_TEXT_KEYS` fallbackで表示されます。
+- Validation / Review / Weight Calibrationの詳細導線は、重い画面から順に段階移行します。
+
 ## phase12.4.2 / v0.5.4-beta - 2026-06-25
 
 ### 主な変更

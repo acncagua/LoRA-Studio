@@ -52,7 +52,7 @@ from app.services.image_store import (
     validation_images_root,
     verify_image_file,
 )
-from app.services.i18n import language_url, localized_json_value, request_locale, translate, translate_action_text
+from app.services.i18n import action_description, action_label, language_url, localized_json_value, request_locale, translate, translate_action_text
 from app.services.maintenance import create_app_backup, export_diagnostics, maintenance_summary
 from app.services.machine_review import (
     create_machine_review_job,
@@ -335,6 +335,8 @@ def render(request: Request, template: str, **context: Any) -> HTMLResponse:
         context["project_status_labels"] = localized_project_status_labels(locale)
     context.setdefault("display_status_text", lambda text: translate_action_text(display_status_text(text), locale))
     context.setdefault("action_text", lambda text: translate_action_text(text, locale))
+    context.setdefault("action_label", lambda action: action_label(action, locale))
+    context.setdefault("action_description", lambda action: action_description(action, locale))
     context.setdefault("display_machine_label", display_machine_label)
     context.setdefault("static_asset_version", static_asset_version())
     context.setdefault("json_loads", safe_json_loads)
@@ -1065,6 +1067,30 @@ def recommended_next_action(job: Any, selected_output: Any | None = None) -> str
     return "次にやること: ジョブ詳細の操作パネルから次の操作を選んでください。"
 
 
+def recommended_next_action_model(job: Any, selected_output: Any | None = None) -> dict[str, str]:
+    status = job["status"]
+    dirty = bool(job["config_dirty"] if "config_dirty" in job.keys() else 0)
+    if dirty or status == "prepared_dirty":
+        key = "job.next.dirty"
+    elif status == "draft":
+        key = "job.next.draft"
+    elif status == "prepared":
+        key = "job.next.prepared"
+    elif status == "running":
+        key = "job.next.running"
+    elif status == "completed" and selected_output is not None:
+        key = "job.next.completed_selected"
+    elif status == "completed":
+        key = "job.next.completed"
+    elif status == "failed":
+        key = "job.next.failed"
+    elif status == "stopped":
+        key = "job.next.stopped"
+    else:
+        key = "job.next.default"
+    return {"label_key": key, "label": recommended_next_action(job, selected_output)}
+
+
 def preset_training_length_label(params: dict[str, Any]) -> str:
     steps = params.get("max_train_steps")
     if steps not in (None, ""):
@@ -1230,48 +1256,66 @@ def project_next_action(project: Any, jobs: list[Any], review_sessions: list[Any
     running_job = next((job for job in jobs if job["status"] == "running"), None)
     if running_job:
         return {
+            "label_key": "project.next.running_job.label",
             "label": "学習ジョブが実行中です",
+            "description_key": "project.next.running_job.description",
             "description": f"#{running_job['id']} {running_job['name']} の進捗とログを確認してください。",
             "href": f"/jobs/{running_job['id']}#technical-log",
+            "button_key": "primary.open_job",
             "button": "実行中ジョブを開く",
         }
     running_session = next((session for session in review_sessions if session["status"] == "running"), None)
     if running_session:
         return {
+            "label_key": "project.next.running_session.label",
             "label": "Review Sessionが実行中です",
+            "description_key": "project.next.running_session.description",
             "description": f"#{running_session['id']} の画像生成、Embedding、Machine Reviewの完了を待ってください。",
             "href": f"/review-sessions/{running_session['id']}",
+            "button_key": "primary.open_review_session",
             "button": "Review Sessionを開く",
         }
     ready_session = next((session for session in review_sessions if session["matrix_path"] and not project["selected_output_id"]), None)
     if ready_session:
         return {
+            "label_key": "project.next.choose_epoch.label",
             "label": "候補epochを選んでください",
+            "description_key": "project.next.choose_epoch.description",
             "description": f"Review Matrix #{ready_session['id']} は準備済みです。画像を比較して採用epochを選択してください。",
             "href": f"/review-sessions/{ready_session['id']}",
+            "button_key": "primary.open_review_session",
             "button": "Review Sessionを開く",
         }
     ready_validation = next((run for run in validation_runs if (run["pipeline_status"] if "pipeline_status" in run.keys() else run["status"]) == "ready_for_review"), None)
     if ready_validation:
         return {
+            "label_key": "project.next.weight_matrix.label",
             "label": "Weight Review Matrixを確認してください",
+            "description_key": "project.next.weight_matrix.description",
             "description": f"Weight Calibration Run #{ready_validation['id']} はレビュー準備済みです。Matrixで推奨weightを確認してください。",
             "href": f"/validation-runs/{ready_validation['id']}",
+            "button_key": "primary.open_validation",
             "button": "Weight検証Runを開く",
         }
     if project["selected_lora_profile_id"] and not validation_runs:
         return {
+            "label_key": "project.next.create_weight_calibration.label",
             "label": "Weight Calibrationを作成してください",
+            "description_key": "project.next.create_weight_calibration.description",
             "description": "採用LoRAは選択済みです。採用後weight検証としてStandard Validation 45枚を作成できます。",
             "href": f"/lora-library/{project['selected_lora_profile_id']}/edit",
+            "button_key": "primary.create_weight_validation",
             "button": "Weight検証へ進む",
         }
     unapplied_validation = next((run for run in validation_runs if run["suggested_weight_min"] is not None and not run["profile_applied_at"]), None)
     if unapplied_validation:
         return {
+            "label_key": "project.next.apply_profile.label",
             "label": "推奨weightをProfileへ反映できます",
+            "description_key": "project.next.apply_profile.description",
             "description": f"Weight Calibration Run #{unapplied_validation['id']} のsuggestionが未反映です。",
             "href": f"/validation-runs/{unapplied_validation['id']}",
+            "button_key": "primary.apply_profile",
             "button": "Profile反映を確認",
         }
     incomplete_run = next(
@@ -1285,52 +1329,73 @@ def project_next_action(project: Any, jobs: list[Any], review_sessions: list[Any
     )
     if incomplete_run:
         return {
+            "label_key": "project.next.incomplete_validation.label",
             "label": "検証Runが未完了です",
+            "description_key": "project.next.incomplete_validation.description",
             "description": f"検証Run #{incomplete_run['id']} の画像登録またはレビューが残っています。",
             "href": f"/validation-runs/{incomplete_run['id']}",
+            "button_key": "primary.open_validation",
             "button": "検証Runを開く",
         }
     draft_job = next((job for job in jobs if job["status"] in {"draft", "prepared", "prepared_dirty"}), None)
     if draft_job:
         return {
+            "label_key": "project.next.draft_job.label",
             "label": "未実行の学習ジョブがあります",
+            "description_key": "project.next.draft_job.description",
             "description": f"#{draft_job['id']} {draft_job['name']} を準備または実行してください。",
             "href": f"/jobs/{draft_job['id']}",
+            "button_key": "primary.open_job",
             "button": "学習ジョブを開く",
         }
     unresolved_rec = next((rec for rec in recommendations if rec["status"] not in {"accepted", "dismissed", "job_created"}), None)
     if unresolved_rec:
         return {
+            "label_key": "project.next.recommendation.label",
             "label": "次回実験提案を確認してください",
+            "description_key": "project.next.recommendation.description",
             "description": unresolved_rec["title"] or "未処理の提案があります。",
             "href": f"/jobs/{unresolved_rec['source_job_id']}#recommendations" if unresolved_rec["source_job_id"] else f"/projects/{project['id']}#recommendations",
+            "button_key": "primary.open_details",
             "button": "提案を見る",
         }
     if project["selected_lora_profile_id"]:
         return {
+            "label_key": "project.next.profile.label",
             "label": "採用LoRAプロファイルを確認できます",
+            "description_key": "project.next.profile.description",
             "description": "採用LoRA、推奨weight、外部検証結果を確認してください。",
             "href": f"/lora-library/{project['selected_lora_profile_id']}/edit",
+            "button_key": "primary.open_profile",
             "button": "LoRAプロファイルを開く",
         }
     if project["selected_job_id"]:
         return {
+            "label_key": "project.next.selected_job.label",
             "label": "採用学習ジョブを確認できます",
+            "description_key": "project.next.selected_job.description",
             "description": "採用済みの学習ジョブからExportや検証Run作成へ進めます。",
             "href": f"/jobs/{project['selected_job_id']}",
+            "button_key": "primary.open_selected_job",
             "button": "採用ジョブを開く",
         }
     if jobs:
         return {
+            "label_key": "project.next.latest_job.label",
             "label": "最新の学習ジョブを確認してください",
+            "description_key": "project.next.latest_job.description",
             "description": f"#{jobs[0]['id']} {jobs[0]['name']} の状態を確認してください。",
             "href": f"/jobs/{jobs[0]['id']}",
+            "button_key": "primary.open_job",
             "button": "最新ジョブを開く",
         }
     return {
+        "label_key": "project.next.create_job.label",
         "label": "学習ジョブを作成してください",
+        "description_key": "project.next.create_job.description",
         "description": "このProjectに最初の学習ジョブを追加します。",
         "href": f"/jobs/new?project_id={project['id']}",
+        "button_key": "primary.add_job_to_project",
         "button": "学習ジョブを追加",
     }
 
@@ -1951,24 +2016,32 @@ def review_session_detail(request: Request, session_id: int) -> HTMLResponse:
     if status in {"planned", "prepared"}:
         primary_action = "start"
         primary_label = "このプランで候補レビューを生成"
+        primary_label_key = "primary.start_review"
     elif status == "running":
         primary_action = "progress"
         primary_label = "進捗を確認"
+        primary_label_key = "primary.progress"
     elif status == "completed" and matrix_ready:
         primary_action = "open_matrix"
         primary_label = "レビューMatrixを開く"
+        primary_label_key = "primary.open_review_matrix"
     elif status == "completed":
         primary_action = "build_matrix"
         primary_label = "レビューMatrixを作成"
+        primary_label_key = "primary.create_review_matrix"
     elif status in {"failed", "stopped"} and expected_image_count > 0 and max(active_image_count, generated_image_count) < expected_image_count:
         primary_action = "retry"
         primary_label = "レビュー準備をリトライ"
+        primary_label_key = "primary.retry_review_preparation"
     elif status in {"failed", "stopped"}:
         primary_action = "check_log"
         primary_label = "ログ確認"
+        primary_label_key = "primary.check_logs"
     else:
         primary_action = "start"
         primary_label = "このプランで候補レビューを生成"
+        primary_label_key = "primary.start_review"
+    primary_action_model = {"label": primary_label, "label_key": primary_label_key}
     selected_epoch = session["selected_epoch"] if session["selected_epoch"] is not None else session["adopted_epoch"]
     selected_epoch_in_session = selected_epoch is not None and int(selected_epoch) in set(candidate_epochs)
     return render(
@@ -1989,6 +2062,7 @@ def review_session_detail(request: Request, session_id: int) -> HTMLResponse:
         validation_cross_matrix_url=validation_cross_matrix_url,
         primary_action=primary_action,
         primary_label=primary_label,
+        primary_action_model=primary_action_model,
         matrix_ready=matrix_ready,
         can_select_epoch=can_select_epoch,
         selected_epoch=selected_epoch,
@@ -4363,10 +4437,13 @@ def job_detail(
     project_selected_job = fetch_one("SELECT id, name FROM training_jobs WHERE id = ?", (project["selected_job_id"],)) if project and project["selected_job_id"] else None
     pilot_guidance = pilot_recommendation(project) if project else None
     next_action = recommended_next_action(job, selected_output)
+    next_action_model = recommended_next_action_model(job, selected_output)
     if job["status"] == "completed" and selected_output is None and candidate_standard_running_group:
         next_action = "次にやること: 標準候補比較を実行中です。完了後に横断Matrixで候補epochを確認してください。"
+        next_action_model = {"label": next_action}
     elif job["status"] == "completed" and selected_output is None and candidate_standard_ready_group:
         next_action = "次にやること: 標準候補比較は完了済みです。横断Matrixを確認し、採用LoRAを選択してください。"
+        next_action_model = {"label": next_action}
     generation_notice_messages = {
         "bulk_generation_started": "選択した検証Runの画像生成を順番に開始しました。生成完了後に不足Embedding / 不足Machine Reviewを自動で再計算します。",
         "bulk_assist_started": "選択した検証RunのEmbedding / 機械補助レビューを順番に開始しました。",
@@ -4430,6 +4507,7 @@ def job_detail(
         standard_preset_id=STANDARD_PRESET_ID,
         action_state=job_action_state(job, selected_output),
         next_action=next_action,
+        next_action_model=next_action_model,
         retry_signal=retry_signal_for_job(job_id),
         status_labels=STATUS_LABELS,
         created=created,
