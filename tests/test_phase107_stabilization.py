@@ -2935,6 +2935,7 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertNotIn('value="locon"', body)
         self.assertIn("networks.loraにconv_dim / conv_alpha", body)
         self.assertIn("LyCORIS LoConとは別実装", body)
+        self.assertIn('data-network-param="lora_c3lier" hidden', body)
 
     def test_phase125_lora_c3lier_recipe_seed_and_compatibility(self) -> None:
         import json
@@ -3014,6 +3015,23 @@ class Phase107StabilizationTests(IsolatedDbTest):
         network_args_index = argv.index("--network_args")
         self.assertIn("conv_dim=12", argv[network_args_index + 1 :])
         self.assertIn("conv_alpha=6", argv[network_args_index + 1 :])
+
+    def test_phase125_smoke_params_use_max_steps_without_epoch_limit(self) -> None:
+        from app.services.optimizer_profile_validation import smoke_params
+
+        recipe = fetch_one(
+            "SELECT * FROM training_recipes_v2 WHERE id = ?",
+            ("sdxl_character_face_lora_c3lier_adamw8bit_balanced",),
+        )
+
+        params = smoke_params(recipe)
+
+        self.assertEqual(params["max_train_steps"], 2)
+        self.assertIsNone(params["max_train_epochs"])
+        self.assertIsNone(params["save_every_n_epochs"])
+        self.assertIsNone(params["sample_every_n_epochs"])
+        self.assertEqual(params["conv_dim"], 8)
+        self.assertEqual(params["conv_alpha"], 4)
 
     def test_phase121_create_job_rejects_planned_network_type_recipe(self) -> None:
         from app.db import create_job

@@ -81,11 +81,13 @@ def smoke_params(recipe: Any) -> dict[str, Any]:
     params.update(
         {
             "max_train_steps": 2,
-            "max_train_epochs": 1,
+            "max_train_epochs": None,
             "repeats": 1,
             "train_batch_size": 1,
             "network_dim": 4,
             "network_alpha": 2,
+            "save_every_n_epochs": None,
+            "sample_every_n_epochs": None,
             "save_every_n_steps": 1,
             "sample_every_n_steps": 1,
             "sample_at_first": True,
