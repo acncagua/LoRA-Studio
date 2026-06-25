@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased - Phase 12.5.1 validation notes
+
+### 検証結果
+
+- LoRA-C3LierのPractical Mini Pilot検証として、Costume / Style Recipeのtrue 2-step Smokeを実施し、Prepare、実行、safetensors artifact、sample PNG確認まで通過しました。
+- Character Face LoRA-C3Lierで1000step Mini Pilotを実施し、return_code 0、1000 metric、5 LoRA artifact、12 sample imageを確認しました。
+- Character Face 1000step最終LoRAでweight 0 / weight 1のImage Smokeを実施し、PNG読込と単色・破損なしを確認しました。
+- 比較試験の次手として、Standard LoRA vs LoRA-C3Lierの同一条件比較計画を `docs/dev/phase12_5_1_c3lier_comparison_plan.md` に追加しました。
+- 実測結果を `docs/dev/phase12_5_1_c3lier_mini_pilot_report.md` に保存しました。
+
+### 注意点
+
+- Phase 12.5.1は検証メモであり、`APP_VERSION` は `v0.5.5-beta` のままです。
+- 実行時に生成されたLoRA、sample画像、Image Smoke画像、logはGit管理外です。
+
 ## phase12.5 / v0.5.5-beta - 2026-06-25
 
 ### 主な変更
