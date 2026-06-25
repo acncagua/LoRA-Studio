@@ -1,6 +1,6 @@
 # Changelog
 
-## phase12.4 / v0.5.4-beta - 2026-06-25
+## phase12.4.2 / v0.5.4-beta - 2026-06-25
 
 ### 主な変更
 
@@ -8,6 +8,8 @@
 - 初期翻訳対象として、左ナビ、ページ見出し、主要ボタン、状態バッジ、Primary Action、Job作成Wizardの主要表示を扱います。
 - Built-in Recipe v2 / Optimizer masterに `labels_json`、`descriptions_json`、`risk_notes_json` を追加し、多言語表示を保存できるようにしました。
 - RecipeカードとOptimizer/Recipe Libraryで、built-in masterの表示名・説明・risk noteをlocaleに応じて表示する基盤を追加しました。
+- 翻訳辞書を `app/i18n/ja.json` / `app/i18n/en.json` に分離し、`app/services/i18n.py` はJSONローダー化しました。
+- 開発用に `reload_i18n()` を追加し、翻訳辞書を明示的に再読み込みできるようにしました。
 
 ### 注意点
 

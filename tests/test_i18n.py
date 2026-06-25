@@ -1,7 +1,10 @@
+import json
+from pathlib import Path
+
 from starlette.requests import Request
 
 from app.main import job_new
-from app.services.i18n import language_url, localized_json_value, translate
+from app.services.i18n import I18N_DIR, language_url, load_translations, localized_json_value, reload_i18n, translate
 
 
 def make_request(query_string: bytes = b"", cookie: str = "") -> Request:
@@ -28,6 +31,18 @@ def test_translate_defaults_to_japanese_and_falls_back_to_english() -> None:
     assert translate("wizard.mode.purpose", "en") == "Choose by Purpose"
     assert translate("missing.key", "ja", "fallback") == "fallback"
     assert translate("missing.key", "en") == "missing.key"
+
+
+def test_translation_json_files_load_without_bom() -> None:
+    reload_i18n()
+    translations = load_translations()
+
+    assert translations["ja"]["wizard.mode.purpose"] == "用途から選ぶ"
+    assert translations["en"]["wizard.mode.purpose"] == "Choose by Purpose"
+    for locale in ("ja", "en"):
+        path = Path(I18N_DIR) / f"{locale}.json"
+        assert not path.read_bytes().startswith(b"\xef\xbb\xbf")
+        assert isinstance(json.loads(path.read_text(encoding="utf-8")), dict)
 
 
 def test_language_url_handles_template_render_without_request() -> None:

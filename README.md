@@ -22,7 +22,7 @@ than training itself.
 ## Status
 
 Current release: v0.5.4-beta
-Development phase: Phase 12.4
+Development phase: Phase 12.4.2
 
 The core workflow is operational and
 actively used for local LoRA production,
@@ -74,6 +74,11 @@ raw args, and tracebacks are intentionally not translated.
 Built-in Recipe v2 and Optimizer master rows can store localized
 `labels_json`, `descriptions_json`, and `risk_notes_json`. Custom Recipes and
 user-entered names are shown as entered and are not translated automatically.
+
+UI translation dictionaries live in `app/i18n/ja.json` and `app/i18n/en.json`.
+When adding new UI text, add a translation key and use `t()` in templates or
+the app JS text table instead of hard-coding visible labels. sd-scripts logs,
+generated commands, raw args, and tracebacks remain untranslated by design.
 
 ## Phase 12.3.1: Practical Mini Pilot
 
