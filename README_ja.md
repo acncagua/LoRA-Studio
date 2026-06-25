@@ -122,8 +122,8 @@ python scripts/capture_demo_screenshots.py --base-url http://127.0.0.1:8768 --db
 
 ## 現在の状態
 
-現在のリリース: v0.5.4-beta
-開発フェーズ: Phase 12.4.5
+現在のリリース: v0.5.5-beta
+開発フェーズ: Phase 12.5
 
 中核ワークフローはローカルLoRA制作で実運用できる状態ですが、ベータ期間中のためAPI、画面導線、Recipe catalogは変更される可能性があります。
 
