@@ -84,6 +84,32 @@ http://127.0.0.1:8768
 powershell -ExecutionPolicy Bypass -File .\scripts\setup_sd_scripts.ps1 -ReleaseTag v0.10.5 -CudaProfile cu128 -MixedPrecision bf16
 ```
 
+## Demo DB / Screenshot Workflow
+
+README、docs、OSS応募用スクリーンショット向けに、サニタイズ済みDemo DBを生成できます。
+
+```powershell
+python scripts/create_demo_db.py --output demo/demo.sqlite
+```
+
+Demo DBを読み取り専用Demo modeで起動します。
+
+```powershell
+python start_lora_studio.py --db demo/demo.sqlite --demo --no-browser
+```
+
+英語UIでスクリーンショットを撮る場合は以下を開きます。
+
+```text
+http://127.0.0.1:8768/?lang=en
+```
+
+Demo modeには架空のProject名、Dataset名、画像、レポート、パスだけが入ります。実学習、画像生成、削除などの書き込み操作はブロックされます。Demo runtimeや生成スクリーンショットはGit管理外です。Playwrightが使える環境では、以下で主要画面を撮影できます。
+
+```powershell
+python scripts/capture_demo_screenshots.py --base-url http://127.0.0.1:8768 --db demo/demo.sqlite
+```
+
 ## ドキュメント
 
 - [日本語ドキュメント目次](docs/ja/index.md)

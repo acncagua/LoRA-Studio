@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### 主な変更
+
+- README / README_ja / docs用スクリーンショット向けのDemo DB生成基盤を追加しました。
+- `scripts/create_demo_db.py` で、実運用DBをコピーせず、架空Project / Dataset / Job / Review Session / Validation Run / LoRA Profileを含むサニタイズ済みSQLite DBを生成できます。
+- `--db` / `--demo` 起動と `LORA_STUDIO_DB` / `LORA_STUDIO_DEMO_MODE` 環境変数に対応し、Demo DBを読み取り専用で起動できるようにしました。
+- Demo modeではヘッダーにDemo badgeを表示し、学習・画像生成・削除などの書き込み操作をブロックします。
+- `scripts/capture_demo_screenshots.py` を追加し、Playwrightがある環境で英語UIの主要画面を撮影できるようにしました。
+- Validation Run詳細の軽量表示で、Weight Review集計に必要な `prompt_key` / `seed` が欠落して500になる問題を修正しました。
+
+### 注意点
+
+- Demo DB、Demo runtime、生成スクリーンショットはGit管理外です。
+- Demo modeはスクリーンショットとOSS応募確認用であり、実学習や実画像生成には使いません。
+
 ## phase12.4.4 / v0.5.4-beta - 2026-06-25
 
 ### 主な変更

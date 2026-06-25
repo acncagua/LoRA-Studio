@@ -1,0 +1,44 @@
+{
+  "project": {
+    "name": "Demo Character LoRA",
+    "description": "Sanitized OSS screenshot demo project."
+  },
+  "dataset": {
+    "name": "Demo Character Dataset",
+    "trigger_word": "demochar",
+    "image_count": 42
+  },
+  "reference_set": {
+    "name": "Character Reference v1"
+  },
+  "job": {
+    "name": "Demo Training Job completed",
+    "candidate_epochs": [4, 6, 8],
+    "selected_epoch": 6
+  },
+  "review_session": {
+    "name": "Candidate Epoch Review completed",
+    "expected_image_count": 18
+  },
+  "candidate_comparison": {
+    "name": "Standard Candidate Comparison completed",
+    "expected_total_images": 135
+  },
+  "validation_run": {
+    "name": "Standard Weight Calibration completed",
+    "expected_image_count": 45,
+    "recommended_weight_min": 0.6,
+    "recommended_weight_max": 0.8
+  },
+  "lora_profile": {
+    "profile_name": "Demo Character LoRA",
+    "recommended_weight_min": 0.6,
+    "recommended_weight_max": 0.8
+  },
+  "optimizer_statuses": {
+    "adamw8bit_sdxl_balanced": "smoke_ok",
+    "prodigy_sdxl_soft": "smoke_ok",
+    "dadaptlion_sdxl_auto": "smoke_ok",
+    "dadaptadam_sdxl_auto": "smoke_failed"
+  }
+}

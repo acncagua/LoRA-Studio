@@ -1,5 +1,33 @@
 # Development Notes
 
+## Demo DB / Screenshot Workflow
+
+README、README_ja、docs用スクリーンショットには、実運用DBではなくDemo DBを使います。
+
+```powershell
+python scripts/create_demo_db.py --output demo/demo.sqlite
+python start_lora_studio.py --db demo/demo.sqlite --demo --no-browser
+```
+
+英語表示で撮影する場合は `http://127.0.0.1:8768/?lang=en` を開きます。`?lang=en` はlocale cookieへ保存されるため、左ナビで遷移しても英語表示を維持できます。
+
+Demo DBには以下だけを入れます。
+
+- 架空のProject / Dataset / Job / Review Session / Validation Run / LoRA Profile
+- `demo/fixtures/images` の合成PNG
+- `demo/fixtures/reports` のサニタイズ済みHTML
+- Optimizer / Recipeの公開向け状態例
+
+実モデル、実LoRA、実パス、個人メモ、実ログは入れません。Demo modeでは学習、画像生成、削除などの書き込み操作をブロックします。
+
+Playwrightが使える場合は、主要画面の英語スクリーンショットを以下で撮影できます。
+
+```powershell
+python scripts/capture_demo_screenshots.py --base-url http://127.0.0.1:8768 --db demo/demo.sqlite
+```
+
+生成される `demo/demo.sqlite`、`demo/runtime/`、`demo/screenshots/generated/` はGit管理外です。
+
 ## テスト
 
 基本チェック:

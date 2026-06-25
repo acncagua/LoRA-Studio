@@ -88,6 +88,36 @@ Set up the verified sd-scripts environment when needed:
 powershell -ExecutionPolicy Bypass -File .\scripts\setup_sd_scripts.ps1 -ReleaseTag v0.10.5 -CudaProfile cu128 -MixedPrecision bf16
 ```
 
+## Demo DB / Screenshot Workflow
+
+Create a sanitized demo database for README, documentation, and OSS submission
+screenshots:
+
+```powershell
+python scripts/create_demo_db.py --output demo/demo.sqlite
+```
+
+Start LoRA-Studio against the demo database in read-only demo mode:
+
+```powershell
+python start_lora_studio.py --db demo/demo.sqlite --demo --no-browser
+```
+
+Open the English UI for screenshots:
+
+```text
+http://127.0.0.1:8768/?lang=en
+```
+
+Demo mode uses only synthetic project names, datasets, images, reports, and
+paths. Training, generation, deletion, and other write actions are blocked.
+Generated demo runtime data and screenshots are ignored by Git. If Playwright is
+available, screenshots can be captured with:
+
+```powershell
+python scripts/capture_demo_screenshots.py --base-url http://127.0.0.1:8768 --db demo/demo.sqlite
+```
+
 ## Documentation
 
 - [Japanese documentation index](docs/ja/index.md)

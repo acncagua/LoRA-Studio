@@ -10,6 +10,7 @@ import time
 import urllib.error
 import urllib.request
 import webbrowser
+from pathlib import Path
 
 from app import settings
 from app.db import init_db
@@ -115,10 +116,20 @@ def main() -> None:
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--skip-sd-scripts-setup", action="store_true")
     parser.add_argument("--force-release-port", action="store_true", help="Kill an existing process listening on the LoRA-Studio port before startup.")
+    parser.add_argument("--db", help="Use an alternate SQLite database path, for example demo/demo.sqlite.")
+    parser.add_argument("--demo", action="store_true", help="Start in read-only demo mode for screenshots and OSS review.")
     args = parser.parse_args()
 
+    if args.db:
+        settings.DB_PATH = Path(args.db).resolve()
+        settings.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        os.environ["LORA_STUDIO_DB"] = str(settings.DB_PATH)
+    if args.demo:
+        settings.DEMO_MODE = True
+        os.environ["LORA_STUDIO_DEMO_MODE"] = "1"
+
     init_db()
-    if not args.skip_sd_scripts_setup:
+    if not args.skip_sd_scripts_setup and not settings.DEMO_MODE:
         ensure_sd_scripts_installed()
     url = f"http://{args.host}:{args.port}"
     if args.force_release_port:

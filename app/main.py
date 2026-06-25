@@ -209,6 +209,21 @@ from app.services.validation_runs import (
 app = FastAPI(title=settings.APP_NAME)
 app.mount("/static", StaticFiles(directory=settings.ROOT_DIR / "app" / "static"), name="static")
 
+
+@app.middleware("http")
+async def demo_mode_read_only_guard(request: Request, call_next: Any) -> Any:
+    if settings.DEMO_MODE and request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}:
+        locale = request_locale(request)
+        message = translate(
+            "demo.blocked_message",
+            locale,
+            "Demo mode is read-only. Training, generation, deletion, and other write actions are disabled.",
+        )
+        if request.headers.get("accept", "").lower().find("application/json") >= 0:
+            return JSONResponse({"detail": message, "demo_mode": True}, status_code=403)
+        return HTMLResponse(f"<h1>Demo Mode</h1><p>{html.escape(message)}</p><p><a href=\"/\">Back to dashboard</a></p>", status_code=403)
+    return await call_next(request)
+
 RUBRIC_VERSION = "1.0"
 DEFAULT_JOB_PRESET_ID = "sdxl_2d_face_adamw8bit_standard"
 INTEGRATION_SMOKE_PRESET_ID = "integration_smoke_sdxl"
@@ -319,6 +334,7 @@ def render(request: Request, template: str, **context: Any) -> HTMLResponse:
     context.setdefault("request", request)
     context.setdefault("locale", locale)
     context.setdefault("supported_locales", ["ja", "en"])
+    context.setdefault("demo_mode", settings.DEMO_MODE)
     context.setdefault("t", t)
     context.setdefault("lang_url", lambda lang: language_url(request, lang))
     context.setdefault("sd_scripts_release_tag", settings.SD_SCRIPTS_RELEASE_TAG)

@@ -23,6 +23,14 @@ runs/job_*/
 runs/comparisons/
 runs/optimizer_master_checks/
 reports/
+!demo/fixtures/reports/
+!demo/fixtures/reports/**
+demo/demo.sqlite
+demo/demo.sqlite-*
+demo/runtime/
+demo/screenshots/generated/
+demo/runs/
+demo/exports/
 external/sd-scripts/
 exports/*
 backups/

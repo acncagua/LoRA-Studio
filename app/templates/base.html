@@ -11,6 +11,10 @@
 <body>
   <aside class="sidebar">
     <a class="brand" href="/">LoRA-Studio</a>
+    {% if demo_mode %}
+    <div class="demo-mode-badge">{{ t('demo.badge') }}</div>
+    <p class="demo-mode-note">{{ t('demo.read_only_note') }}</p>
+    {% endif %}
     <nav>
       <div class="nav-group">
         <div class="nav-heading">{{ t('nav.work') }}</div>

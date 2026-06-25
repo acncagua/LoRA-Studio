@@ -658,7 +658,7 @@ def fetch_validation_review_rows(run_id: int) -> list[Any]:
     return fetch_all(
         """
         SELECT
-            id, image_role, expected_condition_id, lora_weight, hires_enabled, ignored,
+            id, image_role, expected_condition_id, prompt_key, seed, lora_weight, hires_enabled, ignored,
             rating_face, rating_costume, rating_style, rating_stability, rating_flexibility, rating_overall,
             strength_label, overfit_level, adoption_label, failure_tags_json
         FROM validation_images

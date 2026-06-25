@@ -32,6 +32,24 @@ a { color: var(--accent); text-decoration: none; }
   overflow-y: auto;
 }
 .brand { color: white; font-size: 22px; font-weight: 700; }
+.demo-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  padding: 5px 9px;
+  border-radius: 6px;
+  background: #f5e4c3;
+  color: #4d3511;
+  font-weight: 800;
+  font-size: 12px;
+}
+.demo-mode-note {
+  margin: -14px 0 0;
+  color: #dbe7e1;
+  font-size: 12px;
+  line-height: 1.45;
+}
 nav { display: grid; gap: 6px; }
 nav a { color: #dbe7e1; padding: 9px 10px; border-radius: 6px; line-height: 1.35; overflow-wrap: normal; white-space: nowrap; }
 nav a:hover { background: #30403b; }

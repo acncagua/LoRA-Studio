@@ -25,3 +25,5 @@
 Recipe v2やOptimizer MasterからJobを作る場合は、[Recipe / Optimizer / Step Estimator](recipes-optimizers.md) を先に確認してください。
 
 候補epochの見比べや採用後のweight確認は、[Review Session / Candidate Review](review-sessions.md) と [Validation / Weight Calibration](validation-weight-calibration.md) に分けています。
+
+スクリーンショットやOSS応募用の公開データを作る場合は、[Development Notes](development-notes.md) のDemo DB / Screenshot Workflowを参照してください。
