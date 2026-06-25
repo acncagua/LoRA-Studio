@@ -4008,6 +4008,8 @@ def job_create(
     text_encoder_lr2: str = Form(""),
     network_dim: str = Form(""),
     network_alpha: str = Form(""),
+    conv_dim: str = Form(""),
+    conv_alpha: str = Form(""),
     optimizer_type: str = Form(""),
     lr_scheduler: str = Form(""),
     cache_latents: str = Form(""),
@@ -4112,6 +4114,8 @@ def job_create(
                 "text_encoder_lr2": text_encoder_lr2,
                 "network_dim": network_dim,
                 "network_alpha": network_alpha,
+                "conv_dim": conv_dim,
+                "conv_alpha": conv_alpha,
                 "optimizer_type": optimizer_type,
                 "lr_scheduler": lr_scheduler,
                 "save_every_n_epochs": save_every_n_epochs,
@@ -5163,6 +5167,8 @@ def job_save_custom_recipe(
         "text_encoder_lr2",
         "network_dim",
         "network_alpha",
+        "conv_dim",
+        "conv_alpha",
         "save_every_n_epochs",
     }
     basic_params = {key: params[key] for key in basic_keys if key in params}
@@ -7412,6 +7418,8 @@ def update_params_from_form(params: dict[str, Any], values: dict[str, str]) -> N
         "gradient_accumulation_steps",
         "network_dim",
         "network_alpha",
+        "conv_dim",
+        "conv_alpha",
         "save_every_n_epochs",
         "sample_every_n_epochs",
     }

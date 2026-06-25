@@ -233,10 +233,31 @@ OPTIMIZER_PROFILES_V2 = [
 
 NETWORK_TYPES = [
     ("standard_lora", "standard_lora", "Standard LoRA", "networks.lora", "standard_lora", "available", {"network_dim": "int", "network_alpha": "int"}, 32, 16, "標準LoRA。Phase 12.1の実行対象。", "安定した標準network type。"),
-    ("locon", "locon", "LoCon", "locon", "locon", "planned", {}, 32, 16, "Phase 12.4以降で対応予定。", "Phase 12.1では実行不可。"),
-    ("loha", "loha", "LoHa", "loha", "loha", "planned", {}, 32, 16, "Phase 12.4以降で対応予定。", "Phase 12.1では実行不可。"),
-    ("lokr", "lokr", "LoKr", "lokr", "lokr", "planned", {}, 32, 16, "Phase 12.4以降で対応予定。", "Phase 12.1では実行不可。"),
-    ("lycoris", "lycoris", "LyCORIS", "lycoris.kohya", "lycoris", "planned", {}, 32, 16, "Phase 12.4以降で対応予定。", "Phase 12.1では実行不可。"),
+    (
+        "lora_c3lier",
+        "lora_c3lier",
+        "LoRA-C3Lier",
+        "networks.lora",
+        "lora_c3lier",
+        "available",
+        {
+            "network_dim": "int",
+            "network_alpha": "int",
+            "conv_dim": "int",
+            "conv_alpha": "int",
+            "alias": ["LoCon-like", "LoCon相当"],
+            "display_name_ja": "LoRA-C3Lier（セリア）",
+            "future_network_types": ["lycoris_locon"],
+        },
+        32,
+        16,
+        "sd-scripts標準LoRAを3x3 Conv2dにも拡張する方式。networks.loraにconv_dim / conv_alphaを指定します。LyCORIS LoConとは別実装として扱います。",
+        "Phase 12.5の最初のNetwork Type対応対象。LoCon-likeですが、LyCORIS LoConではありません。Recipe整備は段階追加します。",
+    ),
+    ("loha", "loha", "LoHa", "loha", "loha", "planned", {}, 32, 16, "後続Phaseで対応予定。Phase 12.5では対象外です。", "Phase 12.5では実行不可。"),
+    ("lokr", "lokr", "LoKr", "lokr", "lokr", "planned", {}, 32, 16, "後続Phaseで対応予定。Phase 12.5では対象外です。", "Phase 12.5では実行不可。"),
+    ("lycoris_locon", "lycoris_locon", "LyCORIS LoCon", "lycoris.kohya", "lycoris_locon", "planned", {"algo": "locon"}, 32, 16, "後続Phaseで対応予定。lycoris.kohya + algo=locon の別実装として扱います。", "Phase 12.5では対象外です。"),
+    ("lycoris", "lycoris", "LyCORIS", "lycoris.kohya", "lycoris", "planned", {}, 32, 16, "後続Phaseで対応予定。LoHa / LoKr / IA3 / DyLoRAなどはPhase 12.5対象外です。", "Phase 12.5では実行不可。"),
     ("custom", "custom", "Custom", "", "custom", "unsupported", {}, None, None, "手動定義用。", "互換性チェック対象外です。"),
 ]
 
@@ -698,6 +719,63 @@ TRAINING_RECIPES_V2 = [
 
 TRAINING_RECIPES_V2.extend(
     [
+        {
+            "id": "sdxl_character_face_lora_c3lier_adamw8bit_balanced",
+            "name": "sdxl_character_face_lora_c3lier_adamw8bit_balanced",
+            "display_name": "SDXL Character Face / LoRA-C3Lier / AdamW8bit Balanced",
+            "model_family": "SDXL",
+            "training_purpose_id": "character_face",
+            "optimizer_definition_id": "AdamW8bit",
+            "optimizer_profile_id": "adamw8bit_sdxl_balanced",
+            "network_type_id": "lora_c3lier",
+            "recipe_type": "balanced",
+            "params": sdxl_params(optimizer_type="AdamW8bit", lr_scheduler="constant", learning_rate=0.0001, unet_lr=0.0001, text_encoder_lr1=0, text_encoder_lr2=0, network_train_unet_only=True, cache_text_encoder_outputs=True, network_dim=32, network_alpha=16, conv_dim=8, conv_alpha=4, network_args={"conv_dim": 8, "conv_alpha": 4}, train_batch_size=1, repeats=10, max_train_epochs=10),
+            "basic_params": {"network_dim": 32, "network_alpha": 16, "conv_dim": 8, "conv_alpha": 4, "train_batch_size": 1, "repeats": 10, "max_train_epochs": 10},
+            "advanced_params": {"network_args": {"conv_dim": 8, "conv_alpha": 4}},
+            "raw_args": {},
+            "target": (2500, 5000, 8000, 6),
+            "expected_behavior": "LoRA-C3Lierで3x3 Conv層も学習するCharacter Face向け標準候補。",
+            "risk_note": "LyCORIS LoConとは別実装です。conv_dim / conv_alphaを小さめにして比較してください。",
+            "sort_order": 60,
+        },
+        {
+            "id": "sdxl_style_lora_c3lier_adamw8bit_soft",
+            "name": "sdxl_style_lora_c3lier_adamw8bit_soft",
+            "display_name": "SDXL Style / LoRA-C3Lier / AdamW8bit Soft",
+            "model_family": "SDXL",
+            "training_purpose_id": "style",
+            "optimizer_definition_id": "AdamW8bit",
+            "optimizer_profile_id": "adamw8bit_sdxl_balanced",
+            "network_type_id": "lora_c3lier",
+            "recipe_type": "soft",
+            "params": sdxl_params(optimizer_type="AdamW8bit", lr_scheduler="constant", learning_rate=0.0001, unet_lr=0.0001, text_encoder_lr1=0, text_encoder_lr2=0, network_train_unet_only=True, cache_text_encoder_outputs=True, network_dim=32, network_alpha=16, conv_dim=8, conv_alpha=4, network_args={"conv_dim": 8, "conv_alpha": 4}, train_batch_size=1, repeats=10, max_train_epochs=10),
+            "basic_params": {"network_dim": 32, "network_alpha": 16, "conv_dim": 8, "conv_alpha": 4, "train_batch_size": 1, "repeats": 10, "max_train_epochs": 10},
+            "advanced_params": {"network_args": {"conv_dim": 8, "conv_alpha": 4}},
+            "raw_args": {},
+            "target": (2500, 5000, 8000, 6),
+            "expected_behavior": "LoRA-C3LierをStyle向けに弱めに比較する候補。",
+            "risk_note": "3x3 Conv拡張で画風が強く出る場合があります。Standard LoRAと比較してください。",
+            "sort_order": 205,
+        },
+        {
+            "id": "sdxl_costume_lora_c3lier_adamw8bit_balanced",
+            "name": "sdxl_costume_lora_c3lier_adamw8bit_balanced",
+            "display_name": "SDXL Costume / LoRA-C3Lier / AdamW8bit Balanced",
+            "model_family": "SDXL",
+            "training_purpose_id": "costume",
+            "optimizer_definition_id": "AdamW8bit",
+            "optimizer_profile_id": "adamw8bit_sdxl_balanced",
+            "network_type_id": "lora_c3lier",
+            "recipe_type": "balanced",
+            "params": sdxl_params(optimizer_type="AdamW8bit", lr_scheduler="constant", learning_rate=0.0001, unet_lr=0.0001, text_encoder_lr1=0, text_encoder_lr2=0, network_train_unet_only=True, cache_text_encoder_outputs=True, network_dim=32, network_alpha=16, conv_dim=8, conv_alpha=4, network_args={"conv_dim": 8, "conv_alpha": 4}, train_batch_size=1, repeats=10, max_train_epochs=10),
+            "basic_params": {"network_dim": 32, "network_alpha": 16, "conv_dim": 8, "conv_alpha": 4, "train_batch_size": 1, "repeats": 10, "max_train_epochs": 10},
+            "advanced_params": {"network_args": {"conv_dim": 8, "conv_alpha": 4}},
+            "raw_args": {},
+            "target": (2500, 5000, 8000, 6),
+            "expected_behavior": "LoRA-C3Lierで衣装や細部形状の入りを比較する候補。",
+            "risk_note": "LyCORIS LoConではありません。衣装固定化が強い場合はStandard LoRAへ戻してください。",
+            "sort_order": 305,
+        },
         {
             "id": "sdxl_character_face_adamw8bit_soft",
             "name": "sdxl_character_face_adamw8bit_soft",
@@ -1198,9 +1276,13 @@ def recipe_display_labels(recipe: dict[str, Any]) -> dict[str, str]:
     )
     recipe_type = str(recipe.get("recipe_type") or "")
     optimizer = recipe.get("optimizer_definition_id") or "Optimizer"
+    network_type_id = str(recipe.get("network_type_id") or "standard_lora")
+    network_label = "LoRA-C3Lier" if network_type_id == "lora_c3lier" else "Standard LoRA"
     params = recipe.get("params") or {}
     epochs = params.get("max_train_epochs") or recipe.get("max_train_epochs") or "-"
     dim = params.get("network_dim") or "-"
+    network_args = params.get("network_args") if isinstance(params.get("network_args"), dict) else {}
+    conv_dim = params.get("conv_dim") or network_args.get("conv_dim")
     lr = params.get("learning_rate") or params.get("unet_lr")
     target_min, target_recommended, target_max, _checkpoint_count = recipe["target"]
     type_label = RECIPE_TYPE_SHORT_LABELS.get(recipe_type, recipe_type or "Recipe")
@@ -1219,6 +1301,9 @@ def recipe_display_labels(recipe: dict[str, Any]) -> dict[str, str]:
     elif optimizer.startswith("DAdapt"):
         short_label = f"{purpose}・DAdaptLion実験" if optimizer == "DAdaptLion" else f"{purpose}・DAdapt自動LR"
         short_label_en = f"{purpose_en} - DAdaptLion Experimental" if optimizer == "DAdaptLion" else f"{purpose_en} - DAdapt Auto LR"
+    elif network_type_id == "lora_c3lier":
+        short_label = f"{purpose}・C3Lier{type_label}"
+        short_label_en = f"{purpose_en} - LoRA-C3Lier {type_label_en}"
     elif optimizer in {"Lion8bit", "PagedLion8bit"}:
         short_label = f"{purpose}・Lion実験"
         short_label_en = f"{purpose_en} - Lion Experimental"
@@ -1229,8 +1314,11 @@ def recipe_display_labels(recipe: dict[str, Any]) -> dict[str, str]:
         short_label = f"{purpose}・{type_label}"
         short_label_en = f"{purpose_en} - {type_label_en}"
 
-    subtitle_parts = [optimizer, "Standard LoRA", f"{epochs}epoch", f"dim{dim}", f"{target_recommended}step目安"]
-    subtitle_parts_en = [optimizer, "Standard LoRA", f"{epochs} epochs", f"dim {dim}", f"target {target_recommended} steps"]
+    subtitle_parts = [optimizer, network_label, f"{epochs}epoch", f"dim{dim}", f"{target_recommended}step目安"]
+    subtitle_parts_en = [optimizer, network_label, f"{epochs} epochs", f"dim {dim}", f"target {target_recommended} steps"]
+    if network_type_id == "lora_c3lier":
+        subtitle_parts.extend([f"conv_dim {conv_dim or '-'}", "3x3 Conv拡張"])
+        subtitle_parts_en.extend([f"conv_dim {conv_dim or '-'}", "3x3 Conv extension"])
     if recipe_type == "soft":
         subtitle_parts.append("LR低め")
         subtitle_parts_en.append("lower LR")
@@ -1413,8 +1501,8 @@ def merge_params(*parts: dict[str, Any] | None) -> dict[str, Any]:
 def compatibility_check(params: dict[str, Any], *, network_type: dict[str, Any] | None = None, optimizer_definition: dict[str, Any] | None = None) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
-    network_type = network_type or {}
-    optimizer_definition = optimizer_definition or {}
+    network_type = dict(network_type) if network_type else {}
+    optimizer_definition = dict(optimizer_definition) if optimizer_definition else {}
     text_lr_values = [
         float(params.get(key) or 0)
         for key in ("text_encoder_lr", "text_encoder_lr1", "text_encoder_lr2")
@@ -1469,6 +1557,26 @@ def compatibility_check(params: dict[str, Any], *, network_type: dict[str, Any] 
                 warnings.append(f"{optimizer_type} の learning_rate が高めです。")
         except (TypeError, ValueError):
             pass
+    if network_type.get("id") == "lora_c3lier":
+        network_args = params.get("network_args") if isinstance(params.get("network_args"), dict) else {}
+        conv_dim = params.get("conv_dim", network_args.get("conv_dim"))
+        conv_alpha = params.get("conv_alpha", network_args.get("conv_alpha"))
+        conv_dim_value: int | None = None
+        conv_alpha_value: int | None = None
+        try:
+            conv_dim_value = int(conv_dim)
+            if conv_dim_value <= 0:
+                errors.append("LoRA-C3Lierでは conv_dim > 0 が必要です。")
+        except (TypeError, ValueError):
+            errors.append("LoRA-C3Lierでは conv_dim > 0 が必要です。")
+        try:
+            conv_alpha_value = int(conv_alpha)
+            if conv_alpha_value <= 0:
+                errors.append("LoRA-C3Lierでは conv_alpha > 0 が必要です。")
+        except (TypeError, ValueError):
+            errors.append("LoRA-C3Lierでは conv_alpha > 0 が必要です。")
+        if conv_dim_value is not None and conv_alpha_value is not None and conv_alpha_value > conv_dim_value:
+            warnings.append("LoRA-C3Lierの conv_alpha が conv_dim より大きいです。まず conv_alpha <= conv_dim を推奨します。")
     availability = network_type.get("availability")
     if availability and availability != "available":
         errors.append(f"Network type {network_type.get('display_name') or network_type.get('id')} は Phase 12.1 では {availability} のため実行できません。")

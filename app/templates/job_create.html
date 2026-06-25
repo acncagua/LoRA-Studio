@@ -168,7 +168,12 @@
         <select data-recipe-filter="network_type_id">
           <option value="">{{ t('common.all') }}</option>
           {% for network in network_types %}
-          <option value="{{ network.id }}">{{ network.display_name }} / {{ network.availability }}</option>
+          <option value="{{ network.id }}"
+            data-availability="{{ network.availability }}"
+            title="{{ network.description or network.risk_note or '' }}"
+            {{ 'disabled' if network.availability != 'available' else '' }}>
+            {{ network.display_name }} / {{ network.availability }}
+          </option>
           {% endfor %}
         </select>
       </label>
@@ -286,6 +291,8 @@
         <label>text_encoder_lr2<input name="text_encoder_lr2" data-param-editor-key="text_encoder_lr2"></label>
         <label>network_dim<input name="network_dim" data-param-editor-key="network_dim"></label>
         <label>network_alpha<input name="network_alpha" data-param-editor-key="network_alpha"></label>
+        <label>conv_dim<input name="conv_dim" data-param-editor-key="conv_dim"></label>
+        <label>conv_alpha<input name="conv_alpha" data-param-editor-key="conv_alpha"></label>
         <label>optimizer_type<input name="optimizer_type" data-param-editor-key="optimizer_type"></label>
         <label>lr_scheduler<input name="lr_scheduler" data-param-editor-key="lr_scheduler"></label>
       </div>

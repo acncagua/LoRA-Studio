@@ -297,6 +297,8 @@ function stepEstimatorParams(form) {
     "text_encoder_lr2",
     "network_dim",
     "network_alpha",
+    "conv_dim",
+    "conv_alpha",
     "optimizer_type",
     "lr_scheduler",
   ].forEach((name) => {
@@ -480,7 +482,7 @@ function initStepEstimators() {
       return;
     }
     form.addEventListener("input", (event) => {
-      if (event.target.matches("[name='repeats'], [name='max_train_epochs'], [name='train_batch_size'], [name='gradient_accumulation_steps'], [name='save_every_n_epochs'], [name='learning_rate'], [name='unet_lr'], [name='text_encoder_lr1'], [name='text_encoder_lr2'], [name='network_dim'], [name='network_alpha'], [name='optimizer_type'], [name='lr_scheduler'], [data-param-editor-raw]")) {
+      if (event.target.matches("[name='repeats'], [name='max_train_epochs'], [name='train_batch_size'], [name='gradient_accumulation_steps'], [name='save_every_n_epochs'], [name='learning_rate'], [name='unet_lr'], [name='text_encoder_lr1'], [name='text_encoder_lr2'], [name='network_dim'], [name='network_alpha'], [name='conv_dim'], [name='conv_alpha'], [name='optimizer_type'], [name='lr_scheduler'], [data-param-editor-raw]")) {
         if (event.target.matches("[name='repeats']")) {
           const autoFlag = form.querySelector("[data-repeats-auto-calculated]");
           if (autoFlag) {
@@ -545,6 +547,7 @@ function recipeKeyParams(recipe) {
   if (params.max_train_epochs !== undefined) parts.push(`epoch ${params.max_train_epochs}`);
   if (params.train_batch_size !== undefined) parts.push(`batch ${params.train_batch_size}`);
   if (params.network_dim !== undefined) parts.push(`dim ${params.network_dim}`);
+  if (params.conv_dim !== undefined) parts.push(`conv ${params.conv_dim}`);
   return parts.join(" / ") || "-";
 }
 
@@ -942,6 +945,13 @@ function updateFilterOptionCounts(form, currentFilters) {
       if (!option.value) {
         option.textContent = base;
         option.disabled = false;
+        option.hidden = false;
+        return;
+      }
+      if (key === "network_type_id") {
+        const availability = option.getAttribute("data-availability") || "available";
+        option.textContent = `${base}`;
+        option.disabled = availability !== "available";
         option.hidden = false;
         return;
       }

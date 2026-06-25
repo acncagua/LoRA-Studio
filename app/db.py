@@ -1171,6 +1171,19 @@ def seed_recipe_optimizer_catalog_v2(conn: sqlite3.Connection, now: str | None =
         """,
         list(network_type_rows(now)),
     )
+    conn.execute(
+        """
+        UPDATE network_type_definitions
+        SET display_name = 'LoCon (legacy alias)',
+            availability = 'unsupported',
+            description = 'Legacy placeholder. Phase 12.5 targets LoRA-C3Lier via networks.lora + conv_dim / conv_alpha; LyCORIS LoCon will be a separate future network type.',
+            risk_note = 'Use lora_c3lier for LoCon-like sd-scripts standard LoRA-C3Lier. lycoris_locon is future work.',
+            is_active = 0,
+            updated_at = ?
+        WHERE id = 'locon'
+        """,
+        (now,),
+    )
     conn.executemany(
         """
         INSERT INTO training_purposes(

@@ -145,7 +145,24 @@ def build_command_argv(job: dict[str, Any], dataset_config: Path, sample_prompts
     if job.get("vae_path"):
         args.extend(["--vae", job["vae_path"]])
 
-    skip_keys = {"resolution", "repeats", "optimizer_args", "train_batch_size", "text_encoder_lr1", "text_encoder_lr2", "generate_training_samples"}
+    skip_keys = {
+        "resolution",
+        "repeats",
+        "optimizer_args",
+        "network_args",
+        "train_batch_size",
+        "text_encoder_lr1",
+        "text_encoder_lr2",
+        "generate_training_samples",
+    }
+    network_args = params.get("network_args") if isinstance(params.get("network_args"), dict) else {}
+    if "conv_dim" in params or "conv_alpha" in params or network_args:
+        network_args = dict(network_args)
+        if params.get("conv_dim") not in (None, ""):
+            network_args["conv_dim"] = params.get("conv_dim")
+        if params.get("conv_alpha") not in (None, ""):
+            network_args["conv_alpha"] = params.get("conv_alpha")
+        skip_keys.update({"conv_dim", "conv_alpha"})
     if not generate_training_samples:
         skip_keys.update({"sample_every_n_epochs", "sample_every_n_steps", "sample_at_first", "sample_sampler"})
     text_encoder_lr_values = [params.get("text_encoder_lr1"), params.get("text_encoder_lr2")]
@@ -183,5 +200,12 @@ def build_command_argv(job: dict[str, Any], dataset_config: Path, sample_prompts
         rendered_optimizer_args = [str(value) for value in optimizer_args if value not in (None, "")]
     if rendered_optimizer_args:
         args.extend(["--optimizer_args", *rendered_optimizer_args])
+    rendered_network_args = [
+        f"{key}={value}"
+        for key, value in network_args.items()
+        if value not in (None, "")
+    ]
+    if rendered_network_args:
+        args.extend(["--network_args", *rendered_network_args])
 
     return [str(part) for part in args]

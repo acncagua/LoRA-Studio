@@ -4,6 +4,11 @@
 
 ### 主な変更
 
+- Phase 12.5のNetwork Type方針として、最初の対応対象をLoConではなくsd-scripts標準のLoRA-C3Lier（`networks.lora` + `conv_dim` / `conv_alpha`）へ整理しました。
+- `lora_c3lier` をNetwork Type metadataへ追加し、旧 `locon` IDはlegacy aliasとして非アクティブ化します。LyCORIS LoCon（`lycoris.kohya` + `algo=locon`）は後続Phaseの別Network Typeとして扱います。
+- LoRA-C3Lier向けに、SDXL Character Face / Costume / StyleのAdamW8bit Recipe seedを追加しました。
+- Parameter Editor v2で `conv_dim` / `conv_alpha` を編集できるようにし、command生成では `--network_args conv_dim=<value> conv_alpha=<value>` としてsd-scriptsへ渡すようにしました。
+- Compatibility CheckでLoRA-C3Lierの `conv_dim` / `conv_alpha` 未設定や0以下をERROR、`conv_alpha > conv_dim` をWARNINGとして検出します。
 - Phase 12.4.4でREADME.mdを英語ランディングページとして再整理し、README_ja.mdを同じ見出し構成の日本語ランディングページへ揃えました。
 - README_ja.mdに蓄積していた詳細説明を `docs/ja/` へ分離し、分割前全文を `docs/ja/_archive_readme_ja_before_split.md` に保全しました。
 - 段階的i18n基盤として、locale cookie永続化、JSON辞書分離、Primary Action向け翻訳キー優先表示を整備しました。
@@ -180,7 +185,7 @@ LoRA Studio Phase 12.1 adds the Training Recipe / Optimizer Master v2 foundation
 
 ### 注意点
 
-- Phase 12.1ではLoCon / LoHa / LoKr / LyCORISの本格実行には対応していません。Network Type metadata上はplanned / unsupportedとして表示します。
+- Phase 12.1ではStandard LoRA以外のNetwork Type本格実行には対応していません。Phase 12.5の最初の対象はLoRA-C3Lierで、LyCORIS LoCon / LoHa / LoKrなどは後続Phaseで扱います。
 - Lion / Adafactor / DAdapt / Prodigyの実学習評価は今回の対象外です。Recipeは比較用・Advanced用の土台です。
 - Raw ArgsはAdvanced扱いで、互換性チェックをすり抜ける可能性があります。
 
@@ -410,7 +415,7 @@ LoRA Studio v0.2.0-beta は、Phase 10.11.1 時点の運用ベータリリース
 
 - WebUI / reForge APIによる自動生成は未実装です。
 - sd-scripts `gen_img.py` による標準Validation画像生成には対応しています。
-- ChatGPT API連携、AI画像評価、FLUX、LyCORIS/LoConは未実装です。
+- ChatGPT API連携、AI画像評価、FLUX、LyCORIS LoConは未実装です。LoRA-C3LierはPhase 12.5の対象として分離しました。
 
 ## v0.1-beta - 2026-06-12
 
@@ -441,7 +446,8 @@ LoRA-Studioを運用ベータ前の安定化状態として記録します。目
 - 自動リトライ
 - 複数Job自動探索、複数Job同時実行
 - FLUX対応
-- LyCORIS/LoCon対応
+- LoRA-C3Lier対応
+- LyCORIS LoCon対応
 
 ### Known Issues
 

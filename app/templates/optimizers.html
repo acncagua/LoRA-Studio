@@ -73,7 +73,7 @@
   <h2>Network Types</h2>
   <div class="table-scroll">
     <table class="wide-table compact-table">
-      <thead><tr><th>ID</th><th>表示名</th><th>module</th><th>availability</th><th>default dim/alpha</th><th>risk</th></tr></thead>
+      <thead><tr><th>ID</th><th>表示名</th><th>module</th><th>availability</th><th>default dim/alpha</th><th>説明</th><th>risk</th></tr></thead>
       <tbody>
         {% for item in network_types %}
         <tr>
@@ -82,6 +82,7 @@
           <td>{{ item.network_module or '-' }}</td>
           <td><span class="label {{ item.availability }}">{{ item.availability }}</span></td>
           <td>{{ item.default_network_dim or '-' }} / {{ item.default_network_alpha or '-' }}</td>
+          <td>{{ item.description or '-' }}</td>
           <td>{{ item.risk_note or '-' }}</td>
         </tr>
         {% endfor %}

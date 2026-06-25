@@ -42,6 +42,7 @@ Labels and sample data may differ slightly from a local development workspace.
 - Dataset registration, rescanning, trigger checks, and version snapshots
 - Training Job creation, preparation, execution, stop, clone, and archive
 - Recipe v2 / Optimizer Master with Step Estimator and Compatibility Check
+- LoRA-C3Lier recipes for sd-scripts `networks.lora` with `conv_dim` / `conv_alpha`
 - Post-training Review Automation and Candidate Standard Comparison
 - Review Matrix and human review fields for candidate epoch selection
 - Validation Run and Weight Calibration Pipeline for adopted LoRAs
@@ -146,6 +147,9 @@ screen flows, and recipe catalogs may still change during the beta period.
   decision source for identity, costume details, style, and adoption.
 - Smoke Test and Mini Pilot statuses confirm startup or short practical runs;
   they do not guarantee final LoRA quality.
+- LoRA-C3Lier is treated as the sd-scripts standard LoRA extension for 3x3
+  Conv2d layers via `networks.lora` and `conv_dim` / `conv_alpha`. LyCORIS
+  LoCon is a separate future network type.
 - Keep large model files, `runs`, `exports`, logs, and embedding caches outside
   OneDrive or other synchronized folders when possible.
 - sd-scripts logs, generated commands, raw args, and tracebacks are intentionally

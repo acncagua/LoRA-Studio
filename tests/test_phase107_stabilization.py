@@ -2900,6 +2900,121 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertTrue(any("cache_text_encoder_outputs" in message for message in result["errors"]))
         self.assertTrue(any("network_train_unet_only" in message for message in result["errors"]))
 
+    def test_phase125_lora_c3lier_network_type_seed(self) -> None:
+        import json
+
+        from app.db import fetch_one
+
+        network_type = fetch_one("SELECT * FROM network_type_definitions WHERE id = ?", ("lora_c3lier",))
+        self.assertIsNotNone(network_type)
+        self.assertEqual(network_type["display_name"], "LoRA-C3Lier")
+        self.assertEqual(network_type["network_module"], "networks.lora")
+        self.assertEqual(network_type["availability"], "available")
+        schema = json.loads(network_type["params_schema_json"])
+        self.assertEqual(schema["conv_dim"], "int")
+        self.assertEqual(schema["conv_alpha"], "int")
+        self.assertIn("LoCon-like", schema["alias"])
+        self.assertIn("LyCORIS LoConとは別実装", network_type["description"])
+
+        legacy = fetch_one("SELECT * FROM network_type_definitions WHERE id = ?", ("locon",))
+        if legacy is not None:
+            self.assertEqual(legacy["is_active"], 0)
+            self.assertEqual(legacy["availability"], "unsupported")
+
+    def test_phase125_job_wizard_network_type_choices(self) -> None:
+        from app.main import job_new
+
+        body = job_new(request=None, project_id="", mode="custom").body.decode("utf-8")
+
+        self.assertIn('value="standard_lora"', body)
+        self.assertIn('value="lora_c3lier"', body)
+        self.assertIn("LoRA-C3Lier / available", body)
+        self.assertIn('value="lycoris_locon"', body)
+        self.assertIn("LyCORIS LoCon / planned", body)
+        self.assertRegex(body, r'<option value="lycoris_locon"[^>]*disabled')
+        self.assertNotIn('value="locon"', body)
+        self.assertIn("networks.loraにconv_dim / conv_alpha", body)
+        self.assertIn("LyCORIS LoConとは別実装", body)
+
+    def test_phase125_lora_c3lier_recipe_seed_and_compatibility(self) -> None:
+        import json
+
+        from app.services.recipe_optimizer_catalog import compatibility_check
+
+        recipes = fetch_all("SELECT * FROM training_recipes_v2 WHERE network_type_id = ? ORDER BY id", ("lora_c3lier",))
+        recipe_ids = {row["id"] for row in recipes}
+        self.assertIn("sdxl_character_face_lora_c3lier_adamw8bit_balanced", recipe_ids)
+        self.assertIn("sdxl_costume_lora_c3lier_adamw8bit_balanced", recipe_ids)
+        self.assertIn("sdxl_style_lora_c3lier_adamw8bit_soft", recipe_ids)
+        for row in recipes:
+            params = json.loads(row["params_json"])
+            self.assertEqual(params["network_dim"], 32)
+            self.assertEqual(params["network_alpha"], 16)
+            self.assertEqual(params["conv_dim"], 8)
+            self.assertEqual(params["conv_alpha"], 4)
+            self.assertEqual(params["optimizer_type"], "AdamW8bit")
+            self.assertEqual(params["learning_rate"], 0.0001)
+            self.assertEqual(row["target_steps_recommended"], 5000)
+
+        network_type = fetch_one("SELECT * FROM network_type_definitions WHERE id = ?", ("lora_c3lier",))
+        ok = compatibility_check({"conv_dim": 8, "conv_alpha": 4}, network_type=network_type)
+        self.assertTrue(ok["ok"])
+        missing = compatibility_check({"conv_alpha": 4}, network_type=network_type)
+        self.assertFalse(missing["ok"])
+        self.assertTrue(any("conv_dim" in message for message in missing["errors"]))
+        high_alpha = compatibility_check({"conv_dim": 4, "conv_alpha": 8}, network_type=network_type)
+        self.assertTrue(high_alpha["ok"])
+        self.assertTrue(any("conv_alpha" in message for message in high_alpha["warnings"]))
+
+    def test_phase125_lora_c3lier_command_uses_network_args(self) -> None:
+        import json
+        from pathlib import Path
+
+        import app.services.command_builder as command_builder
+
+        original_latest_environment = command_builder.latest_environment
+        command_builder.latest_environment = lambda: {
+            "sd_scripts_path": "D:/sd-scripts",
+            "venv_python_path": "D:/sd-scripts/venv/Scripts/python.exe",
+        }
+        job = {
+            "training_script": "sdxl_train_network.py",
+            "base_model_path": "D:/models/base.safetensors",
+            "output_dir": "D:/out",
+            "output_name": "c3lier_test",
+            "run_dir": "D:/runs/job_1",
+            "vae_path": "",
+            "params_json": json.dumps(
+                {
+                    "network_module": "networks.lora",
+                    "network_dim": 32,
+                    "network_alpha": 16,
+                    "conv_dim": 12,
+                    "conv_alpha": 6,
+                    "network_args": {"conv_dim": 8, "conv_alpha": 4},
+                    "optimizer_type": "AdamW8bit",
+                    "generate_training_samples": False,
+                }
+            ),
+        }
+
+        try:
+            argv = command_builder.build_command_argv(job, Path("D:/dataset.toml"), Path("D:/sample.txt"))
+        finally:
+            command_builder.latest_environment = original_latest_environment
+
+        self.assertIn("--network_module", argv)
+        self.assertIn("networks.lora", argv)
+        self.assertIn("--network_dim", argv)
+        self.assertIn("32", argv)
+        self.assertIn("--network_alpha", argv)
+        self.assertIn("16", argv)
+        self.assertNotIn("--conv_dim", argv)
+        self.assertNotIn("--conv_alpha", argv)
+        network_args_index = argv.index("--network_args")
+        self.assertIn("conv_dim=12", argv[network_args_index + 1 :])
+        self.assertIn("conv_alpha=6", argv[network_args_index + 1 :])
+
     def test_phase121_create_job_rejects_planned_network_type_recipe(self) -> None:
         from app.db import create_job
 
@@ -2918,9 +3033,9 @@ class Phase107StabilizationTests(IsolatedDbTest):
                     created_at, updated_at
                 )
                 SELECT
-                    'test_locon_planned_recipe', 'test_locon_planned_recipe', 'Test LoCon Planned',
+                    'test_lycoris_locon_planned_recipe', 'test_lycoris_locon_planned_recipe', 'Test LyCORIS LoCon Planned',
                     model_family, training_purpose_id, optimizer_definition_id, optimizer_profile_id,
-                    'locon', recipe_type, params_json, basic_params_json, advanced_params_json,
+                    'lycoris_locon', recipe_type, params_json, basic_params_json, advanced_params_json,
                     raw_args_json, compatibility_rules_json, target_steps_min,
                     target_steps_recommended, target_steps_max, target_checkpoint_count,
                     expected_behavior, 'planned network type test', 9999, 0, 1, ?, ?
@@ -2938,7 +3053,7 @@ class Phase107StabilizationTests(IsolatedDbTest):
                     "dataset_id": dataset_id,
                     "dataset_version_id": version_id,
                     "preset_id": "sdxl_2d_face_adamw8bit_standard",
-                    "recipe_v2_id": "test_locon_planned_recipe",
+                    "recipe_v2_id": "test_lycoris_locon_planned_recipe",
                     "base_model_path": "D:/models/base.safetensors",
                     "output_name": "planned_network_recipe",
                     "params": {"repeats": 10, "max_train_epochs": 10, "train_batch_size": 1},
