@@ -115,6 +115,7 @@ def prepare_validation_generation(run_id: int) -> dict[str, Any]:
         raise RuntimeError(f"ベースモデルが存在しません: {base_model_path}")
 
     all_conditions = [dict(row) for row in ensure_expected_conditions(run_id)]
+    shared_registered = sync_shared_baseline_images(run_id, all_conditions)
     conditions = missing_validation_generation_conditions(run_id, all_conditions)
     skipped_existing_count = len(all_conditions) - len(conditions)
 
@@ -194,6 +195,7 @@ def prepare_validation_generation(run_id: int) -> dict[str, Any]:
         "skipped_hires_count": 0,
         "skipped_hires_message": "",
         "skipped_existing_count": skipped_existing_count,
+        "shared_baseline_registered_count": shared_registered,
         "skipped_existing_message": f"既存画像登録済みの条件 {skipped_existing_count} 件をスキップしました。" if skipped_existing_count else "",
         "all_prompt_file": str(all_prompt_path),
         "output_dir": str(out_dir),
@@ -220,7 +222,15 @@ def prepare_validation_generation(run_id: int) -> dict[str, Any]:
                 str(all_prompt_path),
                 str(out_dir),
                 str(log_path),
-                "\n".join(part for part in [command_payload["skipped_hires_message"], command_payload["skipped_existing_message"]] if part),
+        "\n".join(
+            part
+            for part in [
+                command_payload["skipped_hires_message"],
+                command_payload["skipped_existing_message"],
+                f"共有baseline {shared_registered} 件を登録しました。" if shared_registered else "",
+            ]
+            if part
+        ),
                 now,
                 now,
             ),
@@ -259,6 +269,154 @@ def missing_validation_generation_conditions(run_id: int, conditions: list[dict[
         for row in rows
         if int(row["id"]) not in registered_ids and row["condition_hash"] not in registered_hashes
     ]
+
+
+def sync_shared_baseline_images(run_id: int, conditions: list[dict[str, Any]] | None = None) -> int:
+    group = candidate_comparison_group_for_run(run_id)
+    if group is None or not int(group.get("share_weight0_baseline") or 1):
+        return 0
+    rows = conditions if conditions is not None else [dict(row) for row in ensure_expected_conditions(run_id)]
+    run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (run_id,))
+    if run is None:
+        return 0
+    inserted = 0
+    for condition in rows:
+        if not is_shareable_baseline_condition(condition):
+            continue
+        key = shared_baseline_condition_key(condition)
+        shared = fetch_one(
+            """
+            SELECT *
+            FROM candidate_comparison_shared_images
+            WHERE comparison_group_id = ? AND shared_condition_key = ?
+            LIMIT 1
+            """,
+            (group["id"], key),
+        )
+        if shared is None or int(shared["validation_image_id"] or 0) <= 0:
+            continue
+        existing = fetch_one(
+            """
+            SELECT id
+            FROM validation_images
+            WHERE validation_run_id = ?
+              AND image_role = 'individual'
+              AND (expected_condition_id = ? OR condition_hash = ?)
+            LIMIT 1
+            """,
+            (run_id, condition["id"], condition["condition_hash"]),
+        )
+        if existing:
+            continue
+        now = utc_now()
+        with connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO validation_images(
+                    job_id, selected_output_id, expected_condition_id,
+                    validation_run_id, validation_preset_id, prompt_key, seed,
+                    lora_weight, image_path, validation_type, prompt, negative_prompt,
+                    base_model, sampler, steps, cfg_scale, width, height,
+                    hires_enabled, hires_scale, lora_weights, seeds,
+                    grid_image_flag, image_role, condition_hash, memo,
+                    is_shared_baseline, shared_baseline_source_image_id,
+                    shared_condition_key, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'shared_baseline',
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'individual', ?, ?,
+                        1, ?, ?, ?, ?)
+                """,
+                (
+                    run["job_id"],
+                    run["selected_output_id"],
+                    condition["id"],
+                    run_id,
+                    condition["validation_preset_id"],
+                    condition["prompt_key"],
+                    condition["seed"],
+                    condition["lora_weight"],
+                    shared["image_path"],
+                    condition.get("prompt") or condition.get("webui_prompt") or "",
+                    condition.get("negative_prompt") or "",
+                    condition.get("base_model") or run["base_model"] or "",
+                    condition["sampler"],
+                    condition["steps"],
+                    condition["cfg_scale"],
+                    condition["width"],
+                    condition["height"],
+                    condition["hires_enabled"],
+                    None,
+                    str(condition["lora_weight"]),
+                    str(condition["seed"]),
+                    condition["condition_hash"],
+                    f"Shared baseline from validation_image #{shared['validation_image_id']} / group #{group['id']}",
+                    shared["validation_image_id"],
+                    key,
+                    now,
+                    now,
+                ),
+            )
+            conn.execute(
+                """
+                UPDATE validation_expected_conditions
+                SET is_shared_baseline = 1,
+                    shared_baseline_image_id = ?,
+                    shared_condition_key = ?
+                WHERE id = ?
+                """,
+                (shared["validation_image_id"], key, condition["id"]),
+            )
+        inserted += 1
+    if inserted:
+        update_validation_run_counts(run_id)
+    return inserted
+
+
+def candidate_comparison_group_for_run(run_id: int) -> dict[str, Any] | None:
+    rows = fetch_all(
+        """
+        SELECT *
+        FROM candidate_comparison_groups
+        WHERE instr(validation_run_ids_json, ?) > 0
+        ORDER BY id DESC
+        """,
+        (str(run_id),),
+    )
+    for row in rows:
+        try:
+            run_ids = [int(value) for value in json.loads(row["validation_run_ids_json"] or "[]")]
+        except (TypeError, ValueError):
+            continue
+        if run_id in run_ids:
+            return dict(row)
+    return None
+
+
+def is_shareable_baseline_condition(condition: dict[str, Any]) -> bool:
+    try:
+        return float(condition.get("lora_weight") or 0) == 0 and not bool(condition.get("hires_enabled"))
+    except (TypeError, ValueError):
+        return False
+
+
+def shared_baseline_condition_key(condition: dict[str, Any]) -> str:
+    payload = {
+        "validation_preset_id": condition.get("validation_preset_id"),
+        "prompt_key": condition.get("prompt_key"),
+        "prompt": condition.get("prompt") or condition.get("webui_prompt") or "",
+        "negative_prompt": condition.get("negative_prompt") or "",
+        "seed": int(condition.get("seed") or 0),
+        "width": int(condition.get("width") or 0),
+        "height": int(condition.get("height") or 0),
+        "steps": int(condition.get("steps") or 0),
+        "cfg_scale": float(condition.get("cfg_scale") or 0),
+        "sampler": str(condition.get("sampler") or ""),
+        "hires_enabled": bool(condition.get("hires_enabled")),
+        "lora_weight": 0,
+    }
+    import hashlib
+
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 def missing_validation_generation_count(run_id: int) -> int:
@@ -1242,7 +1400,7 @@ def import_generated_images(run_id: int, generation_id: int | None = None) -> in
         detail["image_open_dimension_seconds"] += time.perf_counter() - dim_started
         db_started = time.perf_counter()
         with connect() as conn:
-            conn.execute(
+            cur = conn.execute(
                 """
                 INSERT INTO validation_images(
                     job_id, selected_output_id, expected_condition_id,
@@ -1284,6 +1442,50 @@ def import_generated_images(run_id: int, generation_id: int | None = None) -> in
                     now,
                 ),
             )
+            image_id = int(cur.lastrowid)
+            if is_shareable_baseline_condition(condition):
+                group = candidate_comparison_group_for_run(run_id)
+                if group is not None and int(group.get("share_weight0_baseline") or 1):
+                    key = shared_baseline_condition_key(condition)
+                    conn.execute(
+                        """
+                        INSERT INTO candidate_comparison_shared_images(
+                            comparison_group_id, shared_condition_key, prompt_key,
+                            seed, width, height, steps, cfg_scale, sampler,
+                            hires_enabled, image_path, validation_image_id,
+                            sha256, created_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?)
+                        ON CONFLICT(comparison_group_id, shared_condition_key) DO UPDATE SET
+                            image_path = COALESCE(NULLIF(candidate_comparison_shared_images.image_path, ''), excluded.image_path),
+                            validation_image_id = COALESCE(candidate_comparison_shared_images.validation_image_id, excluded.validation_image_id)
+                        """,
+                        (
+                            group["id"],
+                            key,
+                            condition["prompt_key"],
+                            condition["seed"],
+                            condition["width"],
+                            condition["height"],
+                            condition["steps"],
+                            condition["cfg_scale"],
+                            condition["sampler"],
+                            condition["hires_enabled"],
+                            str(path),
+                            image_id,
+                            now,
+                        ),
+                    )
+                    conn.execute(
+                        """
+                        UPDATE validation_expected_conditions
+                        SET is_shared_baseline = 1,
+                            shared_baseline_image_id = ?,
+                            shared_condition_key = ?
+                        WHERE id = ?
+                        """,
+                        (image_id, key, condition["id"]),
+                    )
         detail["db_write_seconds"] += time.perf_counter() - db_started
         imported += 1
         detail["inserted"] += 1
@@ -1641,6 +1843,8 @@ def build_epoch_cross_matrix_html(job_id: int, run_ids: list[int], display_weigh
                         image = images_by_condition.get(int(condition["id"]))
                         if image:
                             lines.append(f"<img class=\"matrix-image\" src=\"/validation-images/{int(image['id'])}\" alt=\"validation image\">")
+                            if image.get("is_shared_baseline"):
+                                lines.append("<div class=\"badge shared-baseline\">Shared baseline</div>")
                             lines.append(matrix_machine_score(score_by_image_id.get(int(image['id']))))
                             lines.append(matrix_review_form(int(run["id"]), image))
                         else:
@@ -1773,6 +1977,7 @@ def cross_matrix_style() -> str:
         ".matrix-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 18px}.button{display:inline-flex;align-items:center;min-height:34px;padding:7px 12px;border-radius:6px;background:#2f7668;color:white;text-decoration:none;font-weight:700;border:0;cursor:pointer;font:inherit}.button.secondary{background:#dce4df;color:#20231f}"
         ".summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:10px 0 20px}.summary-card{background:white;border:1px solid #d8ddd4;border-radius:6px;padding:10px}"
         ".machine-score{display:grid;gap:4px;margin:8px 0;padding:8px;border:1px solid #d8ddd4;border-radius:6px;background:#f8faf7;font-size:13px}.machine-score .badges{display:flex;flex-wrap:wrap;gap:6px}.badge{display:inline-flex;align-items:center;justify-content:center;min-width:56px;padding:3px 8px;border-radius:6px;background:#dce4df;font-weight:700}.badge.low,.badge.low_confidence,.badge.unavailable,.badge.unknown{background:#dce4df}.badge.primary_candidate,.badge.secondary_candidate{background:#c6e7d8}.badge.possible_overfit,.badge.high{background:#f0c2c2}"
+        ".badge.shared-baseline{background:#d7e9ff;color:#173a5e;margin:4px 0 6px;width:max-content}"
         ".matrix-review{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr)) auto auto;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid #d8ddd4;align-items:end}.matrix-review label{display:grid;gap:3px;font-size:12px;color:#4a554f}.matrix-review input,.matrix-review select,.matrix-review textarea{box-sizing:border-box;width:100%;border:1px solid #cfd8d1;border-radius:5px;padding:5px;font:inherit}.matrix-review textarea{min-height:34px;resize:vertical}.matrix-review button{border:0;border-radius:6px;background:#2f7668;color:white;font-weight:700;padding:7px 9px;cursor:pointer}.matrix-review button:disabled{background:#cfd8d1;cursor:wait}.matrix-review .save-status{font-size:12px;color:#2f7668;font-weight:700;min-height:16px}.matrix-review.saved{outline:2px solid #b8ded0;border-radius:6px}"
         + matrix_display_style()
         + "</style>"

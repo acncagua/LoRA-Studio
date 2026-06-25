@@ -162,6 +162,7 @@ from app.services.storage_cleanup import (
     storage_usage,
     unselected_model_preview,
 )
+from app.services.storage_paths import reset_storage_location, set_storage_location, storage_status
 from app.services.training_runner import read_log_tail, reconcile_stale_running_jobs, start_job, stop_job, validate_job_ready
 from app.services.validation_generation import (
     build_epoch_cross_matrix_html,
@@ -547,8 +548,14 @@ def candidate_comparison_operation_monitor(group: dict[str, Any]) -> dict[str, A
     registered = int(group.get("registered_image_count") or 0)
     embedding_ready = int(group.get("embedding_ready_count") or 0)
     scored = int(group.get("machine_review_score_count") or 0)
-    current = max(generated_live, registered, embedding_ready, scored)
-    total = int(group.get("expected_total_images") or 0)
+    logical_total = int(group.get("logical_image_count") or group.get("expected_total_images") or 0)
+    physical_total = int(group.get("physical_generation_count") or group.get("expected_total_images") or 0)
+    if status == "generating_images":
+        current = max(generated_live, min(registered, physical_total))
+        total = physical_total
+    else:
+        current = max(registered, embedding_ready, scored)
+        total = logical_total
     pid = generation.get("process_id") if generation else None
     log_path = generation.get("log_path") if generation else ""
     started_at = group.get("started_at") or (generation.get("started_at") if generation else None)
@@ -2273,7 +2280,19 @@ def maintenance_diagnostics() -> RedirectResponse:
 def storage_page(request: Request) -> HTMLResponse:
     storage = storage_usage()
     storage["embedding_cache"] = embedding_cache_size()
-    return render(request, "storage_usage.html", storage=storage, status_labels=STATUS_LABELS, format_bytes=embedding_format_bytes)
+    return render(request, "storage_usage.html", storage=storage, runtime_storage=storage_status(), status_labels=STATUS_LABELS, format_bytes=embedding_format_bytes)
+
+
+@app.post("/storage/runtime-root")
+def storage_set_runtime_root(runtime_root: str = Form(...)) -> RedirectResponse:
+    result = set_storage_location("runtime_root", runtime_root)
+    return RedirectResponse(f"/storage?runtime_status={quote(result['status'])}&runtime_message={quote(result['message'])}", status_code=303)
+
+
+@app.post("/storage/runtime-root/reset")
+def storage_reset_runtime_root() -> RedirectResponse:
+    reset_storage_location("runtime_root")
+    return RedirectResponse("/storage?runtime_message=Runtime rootを初期値に戻しました。", status_code=303)
 
 
 @app.post("/storage/trash/purge")

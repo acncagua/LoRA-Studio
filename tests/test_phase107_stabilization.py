@@ -345,13 +345,18 @@ class ReviewPreparationPhase116Tests(IsolatedDbTest):
         self.assertEqual(sorted({float(row["lora_weight"]) for row in conditions}), [0.6, 0.8])
 
     def test_standard_candidate_comparison_group_creates_standard_runs(self) -> None:
-        from app.services.candidate_comparisons import ensure_candidate_standard_comparison_group
+        from app.services.candidate_comparisons import candidate_standard_estimate, ensure_candidate_standard_comparison_group
 
         job_id = self.create_completed_job_with_outputs()
+        estimate = candidate_standard_estimate(job_id)
         group = ensure_candidate_standard_comparison_group(job_id)
 
         self.assertEqual(group["status"], "planned")
         self.assertEqual(group["expected_total_images"], 135)
+        self.assertEqual(estimate["logical_image_count"], 135)
+        self.assertEqual(estimate["physical_generation_count"], 117)
+        self.assertEqual(estimate["shared_baseline_count"], 9)
+        self.assertEqual(estimate["saved_image_count"], 18)
         self.assertEqual(len(group["candidate_epochs"]), 3)
         self.assertEqual(len(group["validation_run_ids"]), 3)
         runs = fetch_all("SELECT * FROM validation_runs WHERE id IN ({}) ORDER BY selected_epoch".format(",".join("?" for _ in group["validation_run_ids"])), tuple(group["validation_run_ids"]))

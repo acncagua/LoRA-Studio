@@ -183,6 +183,13 @@
         <dl>
           <dt>候補epoch</dt><dd>{{ candidate_standard_estimate.candidate_epochs|join(', ') if candidate_standard_estimate.candidate_epochs else '-' }}</dd>
           <dt>画像数</dt><dd>{{ candidate_standard_estimate.images_per_epoch }} × {{ candidate_standard_estimate.epoch_count }} = {{ candidate_standard_estimate.expected_total_images }}</dd>
+          <dt>生成最適化</dt>
+          <dd>
+            論理 {{ candidate_standard_estimate.logical_image_count or candidate_standard_estimate.expected_total_images }} /
+            物理生成 {{ candidate_standard_estimate.physical_generation_count or candidate_standard_estimate.expected_total_images }} /
+            共有baseline {{ candidate_standard_estimate.shared_baseline_count or 0 }} /
+            削減 {{ candidate_standard_estimate.saved_image_count or 0 }}
+          </dd>
           <dt>推定時間</dt>
           <dd>
             約 {{ candidate_standard_estimate.estimated_runtime_minutes }} 分
@@ -222,6 +229,7 @@
             <th>候補epoch</th>
             <th>検証Run</th>
             <th>画像</th>
+            <th>生成最適化</th>
             <th>Embedding</th>
             <th>機械補助レビュー</th>
             <th>Matrix</th>
@@ -235,9 +243,13 @@
             <td><span class="label {{ group.status }}">{{ group.status }}</span>{% if group.error_message %}<br><span class="muted">{{ group.error_message }}</span>{% endif %}</td>
             <td>{{ group.candidate_epochs|join(', ') }}</td>
             <td>{% for run_id in group.validation_run_ids %}<a href="/validation-runs/{{ run_id }}">#{{ run_id }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</td>
-            <td>{{ group.registered_image_count }} / {{ group.expected_total_images }}</td>
-            <td>{{ group.embedding_ready_count }} / {{ group.expected_total_images }}</td>
-            <td>{{ group.machine_review_score_count }} / {{ group.expected_total_images }}</td>
+            <td>{{ group.registered_image_count }} / {{ group.logical_image_count or group.expected_total_images }}</td>
+            <td>物理 {{ group.physical_generation_count or group.expected_total_images }} / 共有 {{ group.shared_baseline_count or 0 }} / 削減 {{ group.saved_image_count or 0 }}</td>
+            <td>
+              {{ group.embedding_ready_count }} / {{ group.logical_image_count or group.expected_total_images }}
+              {% if group.embedding_job %}<br><span class="muted">Job #{{ group.embedding_job.id }} cache {{ group.embedding_job.skipped_count or 0 }} / {{ group.embedding_job.elapsed_seconds or '-' }}s</span>{% endif %}
+            </td>
+            <td>{{ group.machine_review_score_count }} / {{ group.logical_image_count or group.expected_total_images }}</td>
             <td><span class="label {% if group.matrix_ready %}completed{% elif group.matrix_path %}warning{% else %}unknown{% endif %}">{% if group.matrix_ready %}作成済み{% elif group.matrix_path %}パスあり / ファイルなし{% else %}未作成{% endif %}</span></td>
             <td class="inline-actions">
               {% if group.matrix_ready %}
@@ -251,6 +263,21 @@
               {% endif %}
             </td>
           </tr>
+          {% if group.performance.total_seconds %}
+          <tr>
+            <td colspan="10" class="muted">
+              Performance:
+              total {{ group.performance.total_seconds }}s /
+              generation {{ group.performance.generation_seconds or '-' }}s
+              {% if group.performance.generation_seconds_per_image %}({{ group.performance.generation_seconds_per_image }} 秒/枚){% endif %} /
+              embedding {{ group.performance.embedding_seconds or '-' }}s
+              {% if group.performance.embedding_seconds_per_image %}({{ group.performance.embedding_seconds_per_image }} 秒/枚){% endif %} /
+              machine review {{ group.performance.machine_review_seconds or '-' }}s
+              {% if group.performance.machine_review_seconds_per_image %}({{ group.performance.machine_review_seconds_per_image }} 秒/枚){% endif %} /
+              matrix {{ group.performance.matrix_seconds or '-' }}s
+            </td>
+          </tr>
+          {% endif %}
           {% endfor %}
         </tbody>
       </table>

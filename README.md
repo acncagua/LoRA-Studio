@@ -63,6 +63,20 @@ for the entire LoRA lifecycle.
 Phase 12.3.1 adds a Practical Mini Pilot layer on top of the Phase 12.3
 Optimizer Smoke Matrix.
 
+This phase also adds mid-priority performance and I/O foundations for heavy
+candidate comparisons:
+
+- Candidate Standard Comparison can share weight 0 baseline images inside the
+  comparison group. The logical matrix can still contain 45 images per epoch,
+  while physical generation skips duplicate no-LoRA baseline images.
+- Candidate Comparison groups can run Embedding once for the whole group,
+  deduplicating shared baseline paths before Machine Review.
+- Runtime Storage Settings let new runs, exports, logs, and embedding cache use
+  a runtime root outside OneDrive. Existing artifact paths are not migrated.
+- Performance Summary now distinguishes logical images, physical generated
+  images, shared baseline count, and seconds per image for generation,
+  embedding, Machine Review, and matrix creation.
+
 Smoke Test remains a startup check. Mini Pilot is a short practical training
 run, usually 100-300 steps, used to catch obvious optimizer problems before a
 full 3000-5000 step training run.

@@ -16,6 +16,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 from app import settings
 from app.db import connect, fetch_all, fetch_one, utc_now
+from app.services.storage_paths import embedding_cache_root, logs_root
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 JOB_TYPE_LABELS = {
@@ -504,6 +505,46 @@ def validation_image_sources(validation_run_id: int) -> list[EmbeddingSource]:
     ]
 
 
+def candidate_comparison_group_sources(group_id: int) -> list[EmbeddingSource]:
+    group = fetch_one("SELECT * FROM candidate_comparison_groups WHERE id = ?", (group_id,))
+    if group is None:
+        return []
+    try:
+        run_ids = [int(value) for value in json.loads(group["validation_run_ids_json"] or "[]")]
+    except (TypeError, ValueError):
+        run_ids = []
+    if not run_ids:
+        return []
+    placeholders = ",".join("?" for _ in run_ids)
+    rows = fetch_all(
+        f"""
+        SELECT *
+        FROM validation_images
+        WHERE validation_run_id IN ({placeholders})
+          AND ignored = 0
+        ORDER BY image_path, id
+        """,
+        tuple(run_ids),
+    )
+    unique: dict[str, Any] = {}
+    for row in rows:
+        path = str(row["image_path"] or "")
+        if not path or path in unique:
+            continue
+        unique[path] = row
+    return [
+        EmbeddingSource(
+            source_type="validation_image",
+            source_id=row["id"],
+            source_path=row["image_path"],
+            project_id=group["project_id"] if "project_id" in group.keys() else None,
+            job_id=row["job_id"],
+            validation_run_id=row["validation_run_id"],
+        )
+        for row in unique.values()
+    ]
+
+
 def review_session_image_sources(review_session_id: int) -> list[EmbeddingSource]:
     session = fetch_one("SELECT * FROM review_sessions WHERE id = ?", (review_session_id,))
     rows = fetch_all("SELECT * FROM review_session_images WHERE review_session_id = ? AND deleted_at IS NULL ORDER BY id", (review_session_id,))
@@ -532,6 +573,8 @@ def sources_for_job_type(job_type: str, target_id: int) -> list[EmbeddingSource]
         return sample_image_sources(target_id)
     if job_type == "validation_run":
         return validation_image_sources(target_id)
+    if job_type == "candidate_comparison_group":
+        return candidate_comparison_group_sources(target_id)
     if job_type == "review_session":
         return review_session_image_sources(target_id)
     return []
@@ -548,6 +591,20 @@ def latest_embedding_for(source: EmbeddingSource, model_id: str) -> dict[str, An
             ORDER BY updated_at DESC, id DESC LIMIT 1
         """
         params = (source.source_type, source.source_id, model_id, source.dataset_version_id, source.source_path)
+        row = fetch_one(query, params)
+        if row is None and source.source_path:
+            # Shared-baseline validation images intentionally reuse the same
+            # physical image across multiple Validation Runs. In that case the
+            # embedding may belong to the canonical validation_image id while
+            # sibling rows should still be considered ready by path.
+            query = """
+                SELECT * FROM image_embeddings
+                WHERE source_type = ? AND source_path = ? AND embedding_model_id = ?
+                  AND COALESCE(dataset_version_id, 0) = COALESCE(?, 0)
+                ORDER BY updated_at DESC, id DESC LIMIT 1
+            """
+            row = fetch_one(query, (source.source_type, source.source_path, model_id, source.dataset_version_id))
+        return dict(row) if row else None
     else:
         query = """
             SELECT * FROM image_embeddings
@@ -556,8 +613,8 @@ def latest_embedding_for(source: EmbeddingSource, model_id: str) -> dict[str, An
             ORDER BY updated_at DESC, id DESC LIMIT 1
         """
         params = (source.source_type, source.source_path, model_id, source.dataset_version_id)
-    row = fetch_one(query, params)
-    return dict(row) if row else None
+        row = fetch_one(query, params)
+        return dict(row) if row else None
 
 
 def embedding_status_for_source(source: EmbeddingSource, model_id: str) -> str:
@@ -613,7 +670,7 @@ def create_embedding_job(job_type: str, target_id: int, recompute: str = "missin
         sources = [s for s in sources if embedding_status_for_source(s, model_id) in {"not_computed", "stale", "failed", "missing_source"}]
 
     now = utc_now()
-    log_dir = settings.LOGS_DIR / "embeddings"
+    log_dir = logs_root() / "embeddings"
     log_dir.mkdir(parents=True, exist_ok=True)
     with connect() as conn:
         cur = conn.execute(
@@ -657,7 +714,7 @@ def start_embedding_job(job_id: int) -> None:
     assert_embedding_can_start(dict(model) if model else {"provider": row["provider"]})
     python_path = load_embedding_settings().get("python_path") or sys.executable
     argv = [python_path, "-m", "app.services.embedding_worker", "--embedding-job-id", str(job_id)]
-    log_path = Path(row["log_path"] or settings.LOGS_DIR / "embeddings" / f"embedding_job_{job_id:06d}.log")
+    log_path = Path(row["log_path"] or logs_root() / "embeddings" / f"embedding_job_{job_id:06d}.log")
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_handle = log_path.open("a", encoding="utf-8", errors="replace")
     env = os.environ.copy()
@@ -849,11 +906,11 @@ def embedding_cache_path(model_id: str, source_type: str, source_id: int | None,
         safe_id = f"{source_id:06d}_{path_hash}"
     else:
         safe_id = hashlib.sha256(source_path.encode("utf-8")).hexdigest()[:16]
-    return settings.EMBEDDINGS_DIR / f"model_{model_id}" / source_type / f"{source_type}_{safe_id}_{model_id}.npy"
+    return embedding_cache_root() / f"model_{model_id}" / source_type / f"{source_type}_{safe_id}_{model_id}.npy"
 
 
 def embedding_cache_size() -> dict[str, Any]:
-    root = settings.EMBEDDINGS_DIR
+    root = embedding_cache_root()
     totals: dict[str, int] = {"total": 0}
     by_model: dict[str, int] = {}
     by_source_type: dict[str, int] = {}

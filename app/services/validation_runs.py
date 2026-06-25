@@ -8,6 +8,7 @@ from statistics import mean
 from typing import Any
 
 from app import settings
+from app.services.storage_paths import exports_root
 from app.db import connect, fetch_all, fetch_one, utc_now
 from app.services.image_store import unique_copy
 
@@ -343,7 +344,7 @@ def create_validation_run(
 
 
 def validation_run_dir(run_id: int) -> Path:
-    return settings.EXPORTS_DIR / "validation_runs" / f"validation_run_{run_id:06d}"
+    return exports_root() / "validation_runs" / f"validation_run_{run_id:06d}"
 
 
 def validation_image_dir(run_id: int) -> Path:

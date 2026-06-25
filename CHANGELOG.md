@@ -6,6 +6,11 @@ Phase 12.3.1 adds Practical Mini Pilot checks for Optimizer Profiles after Smoke
 
 ### 主な変更
 
+- Candidate Standard Comparisonでweight 0 baseline共有の基盤を追加しました。論理条件数、物理生成数、共有baseline数、削減枚数を比較グループに保存し、Matrixでは共有baselineにbadgeを表示します。
+- Candidate Standard ComparisonのEmbeddingをValidation Run単位ではなくgroup単位で実行できるようにしました。共有baselineや同一パス画像はユニーク化され、Embedding Jobのcache hit / elapsedを比較グループ側で確認できます。
+- Runtime Storage Settingsを追加しました。`runtime_root` を設定すると、新規Job runs、Validation exports、Embedding cache、logsをOneDrive外へ配置できます。既存DBに保存済みのパスは移行せずそのまま使います。
+- Storage画面にruntime root、runs root、exports root、embedding cache root、logs root、OneDrive warning、書き込みテスト導線を追加しました。
+- Candidate Standard ComparisonのPerformance Summaryとして、generation / embedding / machine review / matrixの秒数と秒/枚を比較グループ一覧に表示します。
 - `optimizer_mini_pilot_runs` / `optimizer_mini_pilot_items` を追加し、Optimizer Profileごとの短時間Mini Pilot結果を保存できるようにしました。
 - `optimizer_profiles_v2` に `mini_pilot_status` / `last_mini_pilot_at` / `last_mini_pilot_result_id` を追加しました。
 - `/optimizer-mini-pilots` を追加し、対象Profile選択、実行前見積もり、順次実行、Run履歴、Item結果、Report出力を確認できるようにしました。
@@ -18,6 +23,8 @@ Phase 12.3.1 adds Practical Mini Pilot checks for Optimizer Profiles after Smoke
 - Mini Pilot OKは品質保証ではありません。Smoke OKより一段進んだ軽量実用確認です。
 - Machine Review / Mini Validationは初期版では結果枠を用意し、重い自動評価は明示実行の対象として扱います。
 - DAdaptLionなどExperimental ProfileはMini Pilot OKでも実験扱いを維持します。
+- Runtime root設定は新規生成物から適用します。既存Job / 既存Validation Run / 既存Matrixの移行は今回行いません。
+- weight 0 baseline共有はCandidate Standard Comparison専用です。Weight Calibrationや単独Validation Runには適用しません。
 
 ## phase12.3 / v0.5.2-beta - 2026-06-24
 

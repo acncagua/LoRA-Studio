@@ -10,10 +10,12 @@ from typing import Any, Callable
 
 from app import settings
 from app.db import connect, fetch_all, fetch_one, utc_now
+from app.services.embedding_service import create_embedding_job, start_embedding_job
+from app.services.machine_review import run_machine_review
 from app.services.review_candidates import ensure_epoch_candidates
+from app.services.storage_paths import exports_root
 from app.services.validation_generation import (
     build_epoch_cross_matrix_html,
-    start_validation_assist_sequence,
     start_validation_generation_sequence,
 )
 from app.services.validation_runs import create_validation_run
@@ -69,14 +71,24 @@ def candidate_standard_estimate(job_id: int) -> dict[str, Any]:
     preset = fetch_one("SELECT * FROM validation_presets WHERE id = ?", (STANDARD_PRESET_ID,))
     per_epoch = int((preset["expected_image_count"] if preset else 45) or 45)
     image_count = per_epoch * len(epochs)
-    # Conservative, intentionally visible as an estimate: recent SDXL 45-image standard runs are often around 10 minutes.
-    estimated_minutes = int(round((image_count / 45) * 10))
-    estimated_gb = round((image_count * 2.0) / 1024, 2)
+    baseline_per_group = shared_baseline_condition_count(STANDARD_PRESET_ID) if len(epochs) > 1 else 0
+    saved_images = baseline_per_group * max(0, len(epochs) - 1)
+    physical_count = max(0, image_count - saved_images)
+    # Conservative, intentionally visible as an estimate: recent SDXL 45-image
+    # standard runs are often around 10 minutes. Use physical generation count
+    # because shared weight-0 baselines are registered, not regenerated.
+    estimated_minutes = int(round((physical_count / 45) * 10))
+    estimated_gb = round((physical_count * 2.0) / 1024, 2)
     return {
         "candidate_epochs": epochs,
         "epoch_count": len(epochs),
         "images_per_epoch": per_epoch,
         "expected_total_images": image_count,
+        "logical_image_count": image_count,
+        "physical_generation_count": physical_count,
+        "shared_baseline_count": baseline_per_group if len(epochs) > 1 else 0,
+        "saved_image_count": saved_images,
+        "share_weight0_baseline": True,
         "estimated_runtime_minutes": estimated_minutes,
         "estimated_storage_gb": estimated_gb,
         "preset_id": STANDARD_PRESET_ID,
@@ -124,8 +136,46 @@ def decorate_group(group: dict[str, Any]) -> dict[str, Any]:
     group["candidate_epochs"] = epochs
     group["validation_run_ids"] = run_ids
     group["runs"] = runs
+    group.setdefault("logical_image_count", group.get("expected_total_images") or 0)
+    if not group.get("physical_generation_count"):
+        group["physical_generation_count"] = group.get("expected_total_images") or 0
+    timing = json.loads(group.get("stage_timing_json") or "{}")
+    group["performance"] = group_performance_summary(group, timing)
+    if group.get("embedding_job_id"):
+        group["embedding_job"] = dict(fetch_one("SELECT * FROM embedding_jobs WHERE id = ?", (group["embedding_job_id"],)) or {})
+    else:
+        group["embedding_job"] = {}
     group["matrix_ready"] = bool(group.get("matrix_path") and Path(str(group["matrix_path"])).exists())
     return group
+
+
+def group_performance_summary(group: dict[str, Any], timing: dict[str, Any]) -> dict[str, Any]:
+    logical = int(group.get("logical_image_count") or group.get("expected_total_images") or 0)
+    physical = int(group.get("physical_generation_count") or group.get("expected_total_images") or 0)
+    generation = seconds_between(timing.get("generation_start"), timing.get("generation_end"))
+    embedding = seconds_between(timing.get("embedding_start"), timing.get("embedding_end"))
+    machine = seconds_between(timing.get("machine_review_start"), timing.get("machine_review_end"))
+    matrix = seconds_between(timing.get("matrix_start"), timing.get("matrix_end"))
+    total = seconds_between(timing.get("pipeline_start"), timing.get("pipeline_end")) or group.get("elapsed_seconds")
+    return {
+        "generation_seconds": generation,
+        "generation_seconds_per_image": round(generation / physical, 2) if generation and physical else None,
+        "embedding_seconds": embedding,
+        "embedding_seconds_per_image": round(embedding / logical, 2) if embedding and logical else None,
+        "machine_review_seconds": machine,
+        "machine_review_seconds_per_image": round(machine / logical, 2) if machine and logical else None,
+        "matrix_seconds": matrix,
+        "total_seconds": total,
+    }
+
+
+def seconds_between(start: Any, end: Any) -> int | None:
+    if not start or not end:
+        return None
+    try:
+        return int((datetime.fromisoformat(str(end)) - datetime.fromisoformat(str(start))).total_seconds())
+    except ValueError:
+        return None
 
 
 def ensure_candidate_standard_comparison_group(job_id: int, *, force: bool = False) -> dict[str, Any]:
@@ -168,12 +218,19 @@ def ensure_candidate_standard_comparison_group(job_id: int, *, force: bool = Fal
                 INSERT INTO candidate_comparison_groups(
                     job_id, project_id, preset_id, name, candidate_epochs_json,
                     validation_run_ids_json, expected_total_images, status,
-                    estimate_json, created_at, updated_at, memo
+                    estimate_json, logical_image_count, physical_generation_count,
+                    shared_baseline_count, saved_image_count, share_weight0_baseline,
+                    created_at, updated_at, memo
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'planned', ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'planned', ?, ?, ?, ?, ?, 1, ?, ?, ?)
                 ON CONFLICT(job_id, preset_id, candidate_epochs_json) DO UPDATE SET
                     validation_run_ids_json = excluded.validation_run_ids_json,
                     expected_total_images = excluded.expected_total_images,
+                    logical_image_count = excluded.logical_image_count,
+                    physical_generation_count = excluded.physical_generation_count,
+                    shared_baseline_count = excluded.shared_baseline_count,
+                    saved_image_count = excluded.saved_image_count,
+                    share_weight0_baseline = excluded.share_weight0_baseline,
                     estimate_json = excluded.estimate_json,
                     updated_at = excluded.updated_at
                 """,
@@ -186,6 +243,10 @@ def ensure_candidate_standard_comparison_group(job_id: int, *, force: bool = Fal
                     json.dumps(run_ids, ensure_ascii=False),
                     estimate["expected_total_images"],
                     json.dumps(estimate, ensure_ascii=False),
+                    estimate["logical_image_count"],
+                    estimate["physical_generation_count"],
+                    estimate["shared_baseline_count"],
+                    estimate["saved_image_count"],
                     now,
                     now,
                     "loss候補epochのStandard Validation v1一括比較",
@@ -293,10 +354,21 @@ def _comparison_worker(group_id: int) -> None:
         _refresh_group_counts(group_id)
 
         _set_group_status(group_id, "embedding_images")
-        timings["assist_start"] = utc_now()
-        start_validation_assist_sequence(run_ids)
+        timings["embedding_start"] = utc_now()
+        embedding_job_id = create_embedding_job("candidate_comparison_group", group_id, recompute="missing")
+        _set_group_status(group_id, "embedding_images", embedding_job_id=embedding_job_id)
+        if fetch_one("SELECT total_count FROM embedding_jobs WHERE id = ?", (embedding_job_id,))["total_count"]:
+            start_embedding_job(embedding_job_id)
+            _wait_for_embedding_job(embedding_job_id)
+        timings["embedding_end"] = utc_now()
+        _refresh_group_counts(group_id)
+
+        _set_group_status(group_id, "machine_reviewing")
+        timings["machine_review_start"] = utc_now()
+        for run_id in run_ids:
+            run_machine_review("validation_run_images", run_id)
         _wait_for_assist(run_ids)
-        timings["assist_end"] = utc_now()
+        timings["machine_review_end"] = utc_now()
         _refresh_group_counts(group_id)
 
         _set_group_status(group_id, "building_matrix")
@@ -366,6 +438,20 @@ def _wait_for_assist(run_ids: list[int], timeout_seconds: int = 60 * 60 * 8) -> 
     raise RuntimeError("Embedding / Machine Reviewがタイムアウトしました。")
 
 
+def _wait_for_embedding_job(job_id: int, timeout_seconds: int = 60 * 60 * 8) -> None:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        row = fetch_one("SELECT status, error_message FROM embedding_jobs WHERE id = ?", (job_id,))
+        if row is None:
+            raise RuntimeError(f"Embedding Job #{job_id} が見つかりません。")
+        if row["status"] == "completed":
+            return
+        if row["status"] in {"failed", "stopped"}:
+            raise RuntimeError(f"Embedding Job #{job_id} が失敗または停止しました: {row['error_message'] or ''}")
+        time.sleep(5)
+    raise RuntimeError(f"Embedding Job #{job_id} がタイムアウトしました。")
+
+
 def _expected_total(run_ids: list[int]) -> int:
     if not run_ids:
         return 0
@@ -421,10 +507,28 @@ def write_group_cross_matrix(group_id: int) -> str:
     if group is None:
         raise ValueError(f"Candidate comparison group not found: {group_id}")
     run_ids = [int(value) for value in json.loads(group["validation_run_ids_json"] or "[]")]
-    path = settings.EXPORTS_DIR / "validation_runs" / f"candidate_comparison_group_{group_id:06d}_matrix.html"
+    path = exports_root() / "validation_runs" / f"candidate_comparison_group_{group_id:06d}_matrix.html"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(build_epoch_cross_matrix_html(int(group["job_id"]), run_ids), encoding="utf-8")
     return str(path)
+
+
+def shared_baseline_condition_count(preset_id: str) -> int:
+    preset = fetch_one("SELECT * FROM validation_presets WHERE id = ?", (preset_id,))
+    if preset is None:
+        return 9
+    try:
+        data = json.loads(preset["conditions_json"] or "[]")
+    except (TypeError, ValueError, KeyError, IndexError):
+        return 9
+    count = 0
+    for row in data if isinstance(data, list) else []:
+        try:
+            if float(row.get("lora_weight") or row.get("weight") or 0) == 0 and not bool(row.get("hires_enabled")):
+                count += 1
+        except (TypeError, ValueError):
+            continue
+    return count or 9
 
 
 def elapsed_seconds(start: str, end: str) -> int:

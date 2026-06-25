@@ -6,6 +6,7 @@ from pathlib import Path
 from PIL import Image, UnidentifiedImageError
 
 from app import settings
+from app.services.storage_paths import allowed_serving_roots, exports_root
 
 ALLOWED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
@@ -52,16 +53,17 @@ def is_relative_to(path: Path, root: Path) -> bool:
 
 
 def validation_images_root() -> Path:
-    return settings.EXPORTS_DIR / "validation_runs"
+    return exports_root() / "validation_runs"
 
 
 def reference_images_root() -> Path:
-    return settings.EXPORTS_DIR / "reference_sets"
+    return exports_root() / "reference_sets"
 
 
 def ensure_allowed_file(path_text: str, root: Path, label: str) -> Path:
     path = Path(normalize_user_path(path_text)).resolve()
-    if not is_relative_to(path, root):
+    allowed_roots = [root, *allowed_serving_roots()]
+    if not any(is_relative_to(path, candidate) for candidate in allowed_roots):
         raise PermissionError(f"{label} path is outside the allowed managed directory")
     if not path.exists() or not path.is_file():
         raise FileNotFoundError(f"{label} file not found")

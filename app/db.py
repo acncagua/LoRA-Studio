@@ -587,8 +587,67 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "rubric_version": "TEXT",
         },
     )
+    ensure_columns(
+        conn,
+        "candidate_comparison_groups",
+        {
+            "logical_image_count": "INTEGER NOT NULL DEFAULT 0",
+            "physical_generation_count": "INTEGER NOT NULL DEFAULT 0",
+            "shared_baseline_count": "INTEGER NOT NULL DEFAULT 0",
+            "saved_image_count": "INTEGER NOT NULL DEFAULT 0",
+            "share_weight0_baseline": "INTEGER NOT NULL DEFAULT 1",
+            "embedding_job_id": "INTEGER",
+        },
+    )
+    ensure_columns(
+        conn,
+        "validation_expected_conditions",
+        {
+            "is_shared_baseline": "INTEGER NOT NULL DEFAULT 0",
+            "shared_condition_key": "TEXT",
+            "shared_baseline_image_id": "INTEGER",
+        },
+    )
+    ensure_columns(
+        conn,
+        "validation_images",
+        {
+            "is_shared_baseline": "INTEGER NOT NULL DEFAULT 0",
+            "shared_baseline_source_image_id": "INTEGER",
+            "shared_condition_key": "TEXT",
+        },
+    )
     conn.executescript(
         """
+        CREATE TABLE IF NOT EXISTS candidate_comparison_shared_images (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            comparison_group_id INTEGER NOT NULL,
+            shared_condition_key TEXT NOT NULL,
+            prompt_key TEXT,
+            seed INTEGER,
+            width INTEGER,
+            height INTEGER,
+            steps INTEGER,
+            cfg_scale REAL,
+            sampler TEXT,
+            hires_enabled INTEGER NOT NULL DEFAULT 0,
+            image_path TEXT NOT NULL,
+            validation_image_id INTEGER,
+            sha256 TEXT,
+            created_at TEXT NOT NULL,
+            UNIQUE(comparison_group_id, shared_condition_key)
+        );
+        CREATE TABLE IF NOT EXISTS storage_locations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            key TEXT NOT NULL UNIQUE,
+            path TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            last_checked_at TEXT,
+            check_status TEXT,
+            error_message TEXT
+        );
         CREATE UNIQUE INDEX IF NOT EXISTS idx_training_outputs_job_path
             ON training_outputs(job_id, file_path);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_sample_images_job_path
@@ -629,6 +688,12 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             ON candidate_comparison_groups(job_id);
         CREATE INDEX IF NOT EXISTS idx_candidate_comparison_groups_status
             ON candidate_comparison_groups(status);
+        CREATE INDEX IF NOT EXISTS idx_candidate_comparison_shared_images_group
+            ON candidate_comparison_shared_images(comparison_group_id);
+        CREATE INDEX IF NOT EXISTS idx_validation_images_shared_key
+            ON validation_images(shared_condition_key);
+        CREATE INDEX IF NOT EXISTS idx_storage_locations_key
+            ON storage_locations(key);
         CREATE INDEX IF NOT EXISTS idx_validation_generation_runs_run
             ON validation_generation_runs(validation_run_id);
         CREATE INDEX IF NOT EXISTS idx_validation_generation_runs_status
@@ -1843,7 +1908,9 @@ def create_job(data: dict[str, Any]) -> int:
             ),
         )
         job_id = int(cur.lastrowid)
-        run_dir = settings.RUNS_DIR / f"job_{job_id:06d}"
+        configured_runtime = conn.execute("SELECT path FROM storage_locations WHERE key = 'runtime_root' AND is_active = 1").fetchone()
+        run_root = (Path(configured_runtime["path"]) / "runs") if configured_runtime and configured_runtime["path"] else settings.RUNS_DIR
+        run_dir = run_root / f"job_{job_id:06d}"
         output_dir = run_dir / "models"
         for subdir in ("config", "logs", "models", "samples", "metrics", "exports"):
             (run_dir / subdir).mkdir(parents=True, exist_ok=True)

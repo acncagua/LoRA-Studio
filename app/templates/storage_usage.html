@@ -11,6 +11,36 @@
 {% if storage.onedrive_warning %}
 <p class="notice warning">{{ storage.onedrive_warning }}</p>
 {% endif %}
+{% if query_params.get('runtime_message') %}
+<p class="notice {{ 'warning' if query_params.get('runtime_status') == 'warning' else '' }}">{{ query_params.get('runtime_message') }}</p>
+{% endif %}
+
+<section class="notice">
+  <h2>Runtime Storage Settings</h2>
+  <p class="muted">新規生成物の保存先をOneDrive外へ逃がせます。既存Jobや既存Matrixのパスは移行せず、そのまま参照します。</p>
+  {% if runtime_storage.onedrive_warning %}
+  <p class="notice warning">{{ runtime_storage.onedrive_warning }} OneDrive配下に大量の画像・embedding・matrixを保存すると、同期負荷で遅くなる場合があります。</p>
+  {% endif %}
+  <dl>
+    <dt>app root</dt><dd>{{ runtime_storage.roots.app_root }}</dd>
+    <dt>runtime root</dt><dd>{{ runtime_storage.roots.runtime_root }}</dd>
+    <dt>runs root</dt><dd>{{ runtime_storage.roots.runs_root }}</dd>
+    <dt>exports root</dt><dd>{{ runtime_storage.roots.exports_root }}</dd>
+    <dt>embedding cache root</dt><dd>{{ runtime_storage.roots.embedding_cache_root }}</dd>
+    <dt>reports root</dt><dd>{{ runtime_storage.roots.reports_root }}</dd>
+    <dt>trash root</dt><dd>{{ runtime_storage.roots.trash_root }}</dd>
+    <dt>logs root</dt><dd>{{ runtime_storage.roots.logs_root }}</dd>
+  </dl>
+  <form method="post" action="/storage/runtime-root" class="form-grid">
+    <label>Runtime root
+      <input type="text" name="runtime_root" value="{{ runtime_storage.locations.runtime_root or '' }}" placeholder="例: D:\LoRAStudioRuntime">
+    </label>
+    <button type="submit">設定して書き込みテスト</button>
+  </form>
+  <form method="post" action="/storage/runtime-root/reset" class="actions compact-actions">
+    <button type="submit" class="secondary">初期値へ戻す</button>
+  </form>
+</section>
 
 <section class="notice">
   <h2>Embeddingキャッシュ</h2>

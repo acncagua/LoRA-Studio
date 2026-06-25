@@ -9,6 +9,7 @@ from typing import Any
 from app import settings
 from app.db import connect, fetch_all, fetch_one, utc_now
 from app.services.output_collector import safe_sha256_file
+from app.services.storage_paths import exports_root as runtime_exports_root, runs_root as runtime_runs_root, storage_status
 
 MODEL_SUFFIXES = {".safetensors", ".ckpt", ".pt", ".pth"}
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
@@ -27,7 +28,7 @@ class CleanupFile:
 
 
 def storage_root_warning() -> str:
-    paths = [str(settings.ROOT_DIR), str(settings.RUNS_DIR)]
+    paths = [str(settings.ROOT_DIR), str(settings.RUNS_DIR), str(runtime_runs_root()), str(runtime_exports_root())]
     if any("onedrive" in path.lower() for path in paths):
         return "このフォルダはOneDrive配下です。削除するとクラウド側にも反映される可能性があります。大容量のrunsをOneDrive配下に置くと同期負荷が高くなる可能性があります。"
     return ""
@@ -76,8 +77,8 @@ def storage_usage() -> dict[str, Any]:
     jobs = job_storage_rows()
     review_session_size = review_session_images_size()
     totals = {
-        "runs": path_size(settings.RUNS_DIR),
-        "exports": path_size(settings.EXPORTS_DIR),
+        "runs": path_size(runtime_runs_root()),
+        "exports": path_size(runtime_exports_root()),
         "backups": path_size(settings.ROOT_DIR / "backups"),
         "trash": path_size(trash_root()),
         "model_outputs": sum(job["model_size"] for job in jobs),
@@ -89,7 +90,7 @@ def storage_usage() -> dict[str, Any]:
         "totals": {key: {"bytes": value, "label": format_bytes(value)} for key, value in totals.items()},
         "jobs": jobs,
         "trash": trash_entries(),
-        "onedrive_warning": storage_root_warning(),
+        "onedrive_warning": storage_status().get("onedrive_warning") or storage_root_warning(),
     }
 
 
