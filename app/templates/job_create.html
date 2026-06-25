@@ -2,8 +2,8 @@
 <header class="page-head">
   <h1>{{ t('page.job_create.title') }}</h1>
   <div class="actions compact-actions">
-    <a class="button secondary" href="/training-recipes">Recipe Library</a>
-    <a class="button secondary" href="/optimizers">Optimizer Master</a>
+    <a class="button secondary" href="/training-recipes">{{ t('page.training_recipes.title') }}</a>
+    <a class="button secondary" href="/optimizers">{{ t('page.optimizers.title') }}</a>
   </div>
 </header>
 
@@ -15,7 +15,7 @@
 <section>
   <h2>{{ t('page.job_create.trigger_title') }}</h2>
   <table>
-    <thead><tr><th>データセット</th><th>トリガー</th><th>出現数</th><th>状態</th><th>メッセージ</th></tr></thead>
+    <thead><tr><th>{{ t('wizard.trigger.dataset') }}</th><th>{{ t('wizard.trigger.trigger') }}</th><th>{{ t('wizard.trigger.count') }}</th><th>{{ t('wizard.trigger.status') }}</th><th>{{ t('wizard.trigger.message') }}</th></tr></thead>
     <tbody>
       {% for dataset in datasets %}
       {% set info = trigger_infos.get(dataset.id) %}
@@ -24,7 +24,7 @@
         <td>{{ dataset.trigger_word or '-' }}</td>
         <td>{% if info %}{{ info.trigger_word_count or 0 }} / {{ dataset.caption_count or 0 }}{% else %}-{% endif %}</td>
         <td><span class="label {{ (info.trigger_consistency_label if info else 'unknown')|lower }}">{{ info.trigger_consistency_label if info else 'UNKNOWN' }}</span></td>
-        <td>{{ info.trigger_consistency_message if info else 'データセットをRescanするとトリガー整合性を計算できます。' }}</td>
+        <td>{{ info.trigger_consistency_message if info else t('wizard.trigger.rescan_hint') }}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -38,7 +38,7 @@
   <script type="application/json" data-step-presets-json>{{ step_estimator_presets|tojson }}</script>
   <script type="application/json" data-step-dataset-versions-json>{{ dataset_versions_json|tojson }}</script>
 
-  <nav class="wizard-steps" aria-label="作成手順">
+  <nav class="wizard-steps" aria-label="{{ t('wizard.steps.create') }}">
     <a href="#wizard-mode">{{ t('wizard.steps.mode') }}</a>
     <a href="#wizard-dataset">{{ t('wizard.steps.dataset') }}</a>
     <a href="#wizard-recipe">{{ t('wizard.steps.recipe') }}</a>
@@ -75,14 +75,14 @@
   </fieldset>
 
   <fieldset id="wizard-dataset" class="form-fieldset wide-field" data-project-mode-form>
-    <legend>2. Project / Dataset</legend>
-    <label>学習ジョブ名<input name="name" required value="{{ (selected_project.name ~ ' 学習ジョブ') if selected_project else '' }}"></label>
-    <label class="radio-line"><input type="radio" name="project_mode" value="new" {{ 'checked' if not selected_project else '' }}> 新しいProjectを作成</label>
-    <label class="radio-line"><input type="radio" name="project_mode" value="existing" {{ 'checked' if selected_project else '' }}> 既存Projectに追加</label>
+    <legend>{{ t('wizard.dataset.legend') }}</legend>
+    <label>{{ t('wizard.dataset.job_name') }}<input name="name" required value="{{ (selected_project.name ~ t('wizard.dataset.job_name_suffix')) if selected_project else '' }}"></label>
+    <label class="radio-line"><input type="radio" name="project_mode" value="new" {{ 'checked' if not selected_project else '' }}> {{ t('wizard.dataset.new_project') }}</label>
+    <label class="radio-line"><input type="radio" name="project_mode" value="existing" {{ 'checked' if selected_project else '' }}> {{ t('wizard.dataset.existing_project') }}</label>
     <div data-existing-project-fields>
-      <label>既存Project
+      <label>{{ t('wizard.dataset.existing_project_select') }}
         <select name="project_id">
-          <option value="">選択なし</option>
+          <option value="">{{ t('wizard.dataset.no_selection') }}</option>
           {% for project in projects %}
           <option value="{{ project.id }}" data-project-name="{{ project.name }}" data-project-trigger="{{ project.trigger_word or '' }}" data-project-dataset="{{ project.dataset_id or '' }}" {{ 'selected' if selected_project_id == project.id else '' }}>#{{ project.id }} {{ project.name }} / {{ project.trigger_word or '-' }}</option>
           {% endfor %}
@@ -90,24 +90,24 @@
       </label>
     </div>
     <div data-existing-project-note class="notice compact" hidden>
-      既存Projectに追加する場合は、選択したProjectの設定を使います。
+      {{ t('wizard.dataset.existing_note') }}
       <span data-existing-project-summary></span>
     </div>
     <div data-new-project-fields>
-      <label>Project名<input name="project_name" placeholder="例: zho_test_v2" data-new-project-field></label>
-      <label>Project説明<input name="project_description" data-new-project-field></label>
-      <label>Projectトリガー<input name="project_trigger_word" placeholder="例: zho" data-new-project-field></label>
+      <label>{{ t('wizard.dataset.project_name') }}<input name="project_name" placeholder="{{ t('wizard.dataset.project_name_placeholder') }}" data-new-project-field></label>
+      <label>{{ t('wizard.dataset.project_description') }}<input name="project_description" data-new-project-field></label>
+      <label>{{ t('wizard.dataset.project_trigger') }}<input name="project_trigger_word" placeholder="{{ t('wizard.dataset.project_trigger_placeholder') }}" data-new-project-field></label>
     </div>
-    <label>データセット
+    <label>{{ t('wizard.dataset.dataset') }}
       <select name="dataset_id" required data-dataset-select>
         {% for dataset in datasets %}
         <option value="{{ dataset.id }}" {{ 'selected' if selected_project and selected_project.dataset_id == dataset.id else '' }}>#{{ dataset.id }} {{ dataset.name }}</option>
         {% endfor %}
       </select>
     </label>
-    <label>データセットバージョン
+    <label>{{ t('wizard.dataset.dataset_version') }}
       <select name="dataset_version_id" data-dataset-version-select>
-        <option value="">選択データセットの最新</option>
+        <option value="">{{ t('wizard.dataset.latest_version') }}</option>
         {% for version in dataset_versions %}
         <option value="{{ version.id }}" data-dataset-id="{{ version.dataset_id }}" {{ 'selected' if selected_project and selected_project.current_dataset_version_id == version.id else '' }}>dataset #{{ version.dataset_id }} / v{{ version.version_no }} (#{{ version.id }})</option>
         {% endfor %}
@@ -119,14 +119,14 @@
     <legend>{{ t('wizard.recipe.legend') }}</legend>
     <p class="muted">{{ t('wizard.recipe.help') }}</p>
     <div class="form-grid compact-grid" data-recipe-filters>
-      <label>Model Family
+      <label>{{ t('wizard.recipe.model_family') }}
         <select data-recipe-filter="model_family">
           <option value="">{{ t('common.all') }}</option>
           <option value="SDXL">SDXL</option>
           <option value="SD15">SD15</option>
         </select>
       </label>
-      <label data-optimizer-filter-field>Optimizer
+      <label data-optimizer-filter-field>{{ t('wizard.recipe.optimizer') }}
         <select data-recipe-filter="optimizer_definition_id">
           <option value="">{{ t('common.all') }}</option>
           {% for optimizer in optimizers_v2 %}
@@ -134,7 +134,7 @@
           {% endfor %}
         </select>
       </label>
-      <label data-profile-filter-field>Optimizer Profile
+      <label data-profile-filter-field>{{ t('wizard.recipe.optimizer_profile') }}
         <select data-recipe-filter="optimizer_profile_id">
           <option value="">{{ t('common.all') }}</option>
           {% for profile in optimizer_profiles_v2 %}
@@ -142,7 +142,7 @@
           {% endfor %}
         </select>
       </label>
-      <label data-purpose-filter-field>用途
+      <label data-purpose-filter-field>{{ t('wizard.recipe.purpose') }}
         <select data-recipe-filter="training_purpose_id">
           <option value="">{{ t('common.all') }}</option>
           {% for purpose in training_purposes %}
@@ -150,7 +150,7 @@
           {% endfor %}
         </select>
       </label>
-      <label>Recipe Type
+      <label>{{ t('wizard.recipe.recipe_type') }}
         <select data-recipe-filter="recipe_type">
           <option value="">{{ t('common.all') }}</option>
           <option value="smoke">smoke</option>
@@ -164,7 +164,7 @@
           <option value="experimental">experimental</option>
         </select>
       </label>
-      <label data-network-filter-field>Network Type
+      <label data-network-filter-field>{{ t('wizard.recipe.network_type') }}
         <select data-recipe-filter="network_type_id">
           <option value="">{{ t('common.all') }}</option>
           {% for network in network_types %}
@@ -175,10 +175,10 @@
     </div>
     <div class="notice compact" data-optimizer-info-panel hidden></div>
     <div class="recipe-selection-layout">
-      <section class="recipe-candidates-panel" aria-label="Recipe候補">
+      <section class="recipe-candidates-panel" aria-label="{{ t('wizard.recipe.candidates') }}">
         <div class="recipe-candidates-head">
           <h3>{{ t('wizard.recipe.candidates') }} <span data-recipe-result-count>0</span></h3>
-          <p class="muted" data-recipe-group-hint>用途に合うRecipeをOptimizerカテゴリ別に表示しています。</p>
+          <p class="muted" data-recipe-group-hint>{{ t('wizard.recipe.group_hint_purpose') }}</p>
         </div>
         <div class="recipe-card-grid" data-recipe-cards></div>
         <p class="recipe-card-empty notice" data-recipe-empty-state hidden>{{ t('wizard.recipe.empty') }} <a href="/jobs/new?mode=custom">Custom</a> / <a href="/training-recipes">Recipe Library</a></p>
@@ -197,7 +197,7 @@
       <p class="muted">{{ t('wizard.recipe.direct_help') }}</p>
       <label class="compact-recipe-select">Training Recipe v2
         <select name="recipe_v2_id" data-recipe-select>
-          <option value="">旧形式プリセット / Custom</option>
+          <option value="">{{ t('wizard.recipe.legacy_custom') }}</option>
           {% for recipe in recipes_v2 %}
           <option value="{{ recipe.id }}"
             data-model-family="{{ recipe.model_family }}"
@@ -214,18 +214,18 @@
     </details>
     <details class="wide-field">
       <summary>{{ t('wizard.recipe.legacy') }}</summary>
-      <label>学習プリセット
+      <label>{{ t('wizard.recipe.legacy_select') }}
         <select name="preset_id" required>
           {% for preset in presets %}
-          <option value="{{ preset.id }}" {{ 'selected' if preset.id == default_preset_id else '' }}>旧形式: {{ preset.option_label.replace(preset.name, display_preset_name(preset)) }}</option>
+          <option value="{{ preset.id }}" {{ 'selected' if preset.id == default_preset_id else '' }}>{{ t('wizard.recipe.legacy_option_prefix') }} {{ preset.option_label.replace(preset.name, display_preset_name(preset)) }}</option>
           {% endfor %}
         </select>
       </label>
-      <p class="muted">Recipe v2が選択されている場合も互換用のpresetを保持します。完全カスタム時はこのpresetが初期値になります。</p>
+      <p class="muted">{{ t('wizard.recipe.legacy_help') }}</p>
     </details>
-    <label>サンプルプロンプトテンプレート
+    <label>{{ t('wizard.recipe.sample_template') }}
       <select name="sample_prompt_template_id">
-        <option value="">デフォルト生成プロンプト</option>
+        <option value="">{{ t('wizard.recipe.default_sample_template') }}</option>
         {% for template in sample_prompt_templates %}
         <option value="{{ template.id }}">{{ template.name }}</option>
         {% endfor %}
@@ -236,9 +236,9 @@
   <fieldset id="wizard-params" class="form-fieldset wide-field">
     <legend>{{ t('wizard.params.legend') }}</legend>
     <p class="muted">{{ t('wizard.params.help') }}</p>
-    <label data-derived-parent-field>派生元Job
+    <label data-derived-parent-field>{{ t('wizard.params.parent_job') }}
       <select name="parent_job_id">
-        <option value="">指定なし</option>
+        <option value="">{{ t('wizard.params.no_parent') }}</option>
         {% for item in recent_jobs %}
         {% set parent_params = json_loads(item.params_json) %}
         <option value="{{ item.id }}"
@@ -258,17 +258,17 @@
       </select>
     </label>
     <div class="notice compact" data-parent-job-summary hidden>
-      <strong>派生元Job概要</strong>
+      <strong>{{ t('wizard.params.parent_summary') }}</strong>
       <dl>
         <dt>Project</dt><dd data-parent-summary-field="project">-</dd>
-        <dt>状態</dt><dd data-parent-summary-field="status">-</dd>
+        <dt>{{ t('common.status') }}</dt><dd data-parent-summary-field="status">-</dd>
         <dt>Recipe</dt><dd data-parent-summary-field="recipe">-</dd>
         <dt>Optimizer</dt><dd data-parent-summary-field="optimizer">-</dd>
         <dt>Purpose</dt><dd data-parent-summary-field="purpose">-</dd>
         <dt>steps</dt><dd data-parent-summary-field="steps">-</dd>
-        <dt>params概要</dt><dd data-parent-summary-field="params">-</dd>
+        <dt>{{ t('wizard.params.param_summary') }}</dt><dd data-parent-summary-field="params">-</dd>
       </dl>
-      <p class="muted">派生モード例: 同じRecipeで微調整 / Optimizerだけ変更 / target steps調整 / full custom。差分は下のDiffと差分理由に残します。</p>
+      <p class="muted">{{ t('wizard.params.derived_hint') }}</p>
     </div>
     <div class="form-grid compact-grid">
       <label>max_train_epochs<input name="max_train_epochs" data-param-editor-key="max_train_epochs"></label>
@@ -291,27 +291,27 @@
       </div>
       <div class="form-grid compact-grid">
         <label>cache_latents
-          <select name="cache_latents" data-param-editor-key="cache_latents"><option value="">Recipe標準</option><option value="1">有効</option><option value="0">無効</option></select>
+          <select name="cache_latents" data-param-editor-key="cache_latents"><option value="">{{ t('wizard.params.recipe_default') }}</option><option value="1">{{ t('wizard.params.enabled') }}</option><option value="0">{{ t('wizard.params.disabled') }}</option></select>
         </label>
         <label>cache_text_encoder_outputs
-          <select name="cache_text_encoder_outputs" data-param-editor-key="cache_text_encoder_outputs"><option value="">Recipe標準</option><option value="1">有効</option><option value="0">無効</option></select>
+          <select name="cache_text_encoder_outputs" data-param-editor-key="cache_text_encoder_outputs"><option value="">{{ t('wizard.params.recipe_default') }}</option><option value="1">{{ t('wizard.params.enabled') }}</option><option value="0">{{ t('wizard.params.disabled') }}</option></select>
         </label>
         <label>network_train_unet_only
-          <select name="network_train_unet_only" data-param-editor-key="network_train_unet_only"><option value="">Recipe標準</option><option value="1">有効</option><option value="0">無効</option></select>
+          <select name="network_train_unet_only" data-param-editor-key="network_train_unet_only"><option value="">{{ t('wizard.params.recipe_default') }}</option><option value="1">{{ t('wizard.params.enabled') }}</option><option value="0">{{ t('wizard.params.disabled') }}</option></select>
         </label>
         <label class="checkbox-line">
           <input type="checkbox" name="generate_training_samples" value="1" data-param-editor-key="generate_training_samples">
-          学習中サンプル画像を生成する
+          {{ t('wizard.params.generate_samples') }}
         </label>
       </div>
-      <p class="muted">OFFの場合はsd-scriptsにsample_promptsを渡しません。ONの場合、サンプル間隔は1 epoch固定です。採用判断は学習後Review Pipelineを使います。</p>
+      <p class="muted">{{ t('wizard.params.sample_note') }}</p>
     </details>
     <details>
       <summary>Raw Args</summary>
-      <p class="notice warning">Raw ArgsはRecipeの互換性チェックをすり抜ける可能性があります。sd-scriptsの仕様を確認してから使ってください。</p>
+      <p class="notice warning">{{ t('wizard.params.raw_warning') }}</p>
       <label class="wide-field">raw_args_json<textarea name="raw_args_text" class="mono-textarea" data-param-editor-raw placeholder='{"min_snr_gamma": 5}'></textarea></label>
     </details>
-    <label class="wide-field">差分理由<input name="override_reason" data-param-editor-reason placeholder="例: 5000stepに合わせるためrepeatsを調整"></label>
+    <label class="wide-field">{{ t('wizard.params.override_reason') }}<input name="override_reason" data-param-editor-reason placeholder="{{ t('wizard.params.override_placeholder') }}"></label>
     <section class="notice wide-field">
       <h3>Resolved Params / Diff</h3>
       <div class="panel-grid">
@@ -321,7 +321,7 @@
         </div>
         <div>
           <h4>User Overrides Diff</h4>
-          <div data-param-diff-preview class="table-scroll muted">差分はまだありません。</div>
+          <div data-param-diff-preview class="table-scroll muted">{{ t('wizard.params.no_diff') }}</div>
         </div>
       </div>
     </section>
@@ -331,8 +331,8 @@
     {% set step_estimator_interactive = true %}
     {% include "partials/step_estimate_panel.html" %}
     <div class="notice compatibility-panel" data-compatibility-panel>
-      <h2>Compatibility Check</h2>
-      <p class="muted">ERRORがある場合はJobを作成できません。WARNINGは確認した上で作成できます。</p>
+      <h2>{{ t('wizard.check.title') }}</h2>
+      <p class="muted">{{ t('wizard.check.help') }}</p>
       <div class="summary-grid">
         <div><span>ERROR</span><strong data-compat-error-count>0</strong></div>
         <div><span>WARNING</span><strong data-compat-warning-count>0</strong></div>
@@ -346,59 +346,59 @@
   </section>
 
   <fieldset class="form-fieldset" data-review-automation-settings>
-    <legend>学習後レビュー自動化</legend>
-    <p class="muted">学習完了後の採用前Review Plan作成を自動化します。通常は「計画のみ」です。</p>
-    <label>モード
+    <legend>{{ t('wizard.review.legend') }}</legend>
+    <p class="muted">{{ t('wizard.review.help') }}</p>
+    <label>{{ t('wizard.review.mode') }}
       <select name="post_training_review_mode" data-review-automation-mode>
-        <option value="manual">手動</option>
-        <option value="plan_only" selected>計画のみ</option>
-        <option value="quick_auto">クイック自動（最大18枚）</option>
-        <option value="standard_auto">標準自動（45枚×候補epoch）</option>
+        <option value="manual">{{ t('wizard.review.manual') }}</option>
+        <option value="plan_only" selected>{{ t('wizard.review.plan_only') }}</option>
+        <option value="quick_auto">{{ t('wizard.review.quick_auto') }}</option>
+        <option value="standard_auto">{{ t('wizard.review.standard_auto') }}</option>
       </select>
     </label>
-    <label>自動開始する最大画像数<input name="max_auto_images" value="18" data-review-automation-images></label>
-    <label>自動開始する最大想定時間（分）<input name="max_auto_runtime_minutes" value="20" data-review-automation-runtime></label>
-    <label>レビューprovider<input name="auto_review_provider" value="default"></label>
-    <p class="muted" data-review-automation-note>計画のみではReview Planだけ作成し、画像生成は自動開始しません。</p>
-    <label class="checkbox-line"><input type="checkbox" name="include_neighbor_epochs" value="1"> loss候補の近隣epochも含める</label>
+    <label>{{ t('wizard.review.max_images') }}<input name="max_auto_images" value="18" data-review-automation-images></label>
+    <label>{{ t('wizard.review.max_runtime') }}<input name="max_auto_runtime_minutes" value="20" data-review-automation-runtime></label>
+    <label>{{ t('wizard.review.provider') }}<input name="auto_review_provider" value="default"></label>
+    <p class="muted" data-review-automation-note>{{ t('wizard.review.note_plan_only') }}</p>
+    <label class="checkbox-line"><input type="checkbox" name="include_neighbor_epochs" value="1"> {{ t('wizard.review.include_neighbors') }}</label>
   </fieldset>
 
   <fieldset class="form-fieldset">
-    <legend>使用モデル</legend>
-    <label>modelsフォルダ内のモデル
+    <legend>{{ t('wizard.model.legend') }}</legend>
+    <label>{{ t('wizard.model.available') }}
       <select data-fill-target="#base-model-path">
-        <option value="">候補から選択</option>
+        <option value="">{{ t('wizard.model.select_candidate') }}</option>
         {% for model in available_models %}
         <option value="{{ model.path }}" {% if available_models|length == 1 %}selected{% endif %}>{{ model.name }}</option>
         {% endfor %}
       </select>
     </label>
-    <label>ベースモデルパス
+    <label>{{ t('wizard.model.base_path') }}
       <span class="path-picker">
         <input id="base-model-path" name="base_model_path" required value="{{ available_models[0].path if available_models|length == 1 else '' }}" placeholder="D:\...\models\model.safetensors">
-        <button type="button" data-browse-target="#base-model-path" data-browse-kind="model" data-browse-title="ベースモデルを選択" data-browse-initial="{{ default_model_path }}">参照</button>
+        <button type="button" data-browse-target="#base-model-path" data-browse-kind="model" data-browse-title="{{ t('wizard.model.base_path') }}" data-browse-initial="{{ default_model_path }}">{{ t('wizard.model.browse_base') }}</button>
       </span>
     </label>
   </fieldset>
 
-  <label>VAEパス
+  <label>{{ t('wizard.model.vae_path') }}
     <span class="path-picker">
       <input id="vae-path" name="vae_path" placeholder="D:\...\vae.safetensors">
-      <button type="button" data-browse-target="#vae-path" data-browse-kind="model" data-browse-title="VAEを選択" data-browse-initial="{{ default_model_path }}">参照</button>
+      <button type="button" data-browse-target="#vae-path" data-browse-kind="model" data-browse-title="{{ t('wizard.model.vae_path') }}" data-browse-initial="{{ default_model_path }}">{{ t('wizard.model.browse_vae') }}</button>
     </span>
   </label>
-  <label>出力名<input name="output_name"></label>
-  <label class="wide-field">メモ<textarea name="memo"></textarea></label>
+  <label>{{ t('wizard.model.output_name') }}<input name="output_name"></label>
+  <label class="wide-field">{{ t('wizard.model.memo') }}<textarea name="memo"></textarea></label>
 
   <section id="wizard-summary" class="notice wide-field">
-    <h2>6. 作成前サマリ</h2>
+    <h2>{{ t('wizard.summary.title') }}</h2>
     <div class="summary-grid">
-      <div><span>作成方法</span><strong data-summary-mode>-</strong></div>
+      <div><span>{{ t('wizard.summary.mode') }}</span><strong data-summary-mode>-</strong></div>
       <div><span>Recipe</span><strong data-summary-recipe>-</strong></div>
       <div><span>Compatibility</span><strong data-summary-compat>-</strong></div>
-      <div><span>差分</span><strong data-summary-diff>-</strong></div>
+      <div><span>{{ t('wizard.summary.diff') }}</span><strong data-summary-diff>-</strong></div>
     </div>
-    <p class="muted">作成後はJob詳細でRecipe Snapshot、Resolved Params、User Overrides Diffを確認できます。</p>
+    <p class="muted">{{ t('wizard.summary.help') }}</p>
   </section>
 </form>
 {% endblock %}

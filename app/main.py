@@ -338,7 +338,10 @@ def render(request: Request, template: str, **context: Any) -> HTMLResponse:
     context.setdefault("display_machine_label", display_machine_label)
     context.setdefault("static_asset_version", static_asset_version())
     context.setdefault("json_loads", safe_json_loads)
-    return HTMLResponse(tpl.render(**context))
+    response = HTMLResponse(tpl.render(**context))
+    if request is not None and request.query_params.get("lang"):
+        response.set_cookie("locale", locale, max_age=60 * 60 * 24 * 365, samesite="lax")
+    return response
 
 
 def localized_status_labels(locale: str) -> dict[str, str]:

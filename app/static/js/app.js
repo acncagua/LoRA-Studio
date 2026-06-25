@@ -55,6 +55,16 @@ const LORA_STUDIO_TEXT = {
     compatibilityNotes: "互換メモ",
     details: "詳細を開く",
     countSuffix: "件",
+    select: "選択",
+    selecting: "選択中...",
+    pathSelectFailed: "パス選択に失敗しました: {message}",
+    projectCurrentSelection: "現在の選択: {name} / trigger {trigger}",
+    projectSelectExisting: "既存Projectを選択してください。",
+    useSuggestion: "この候補を入力",
+    reviewStandardAutoNote: "標準自動はStandard Validation v1を候補epochごとに実行します。候補3件なら45枚×3=135枚のため、既定では150枚・240分まで自動開始します。",
+    reviewQuickAutoNote: "クイック自動は候補epoch最大3件、prompt 3種、seed 1件、weight 2種の最大18枚を自動生成します。",
+    reviewManualNote: "手動ではReview Plan作成も画像生成も自動では行いません。",
+    reviewPlanOnlyNote: "計画のみではReview Planだけ作成し、画像生成は自動開始しません。",
   },
   en: {
     recipeNotSelected: "Recipe not selected",
@@ -102,6 +112,16 @@ const LORA_STUDIO_TEXT = {
     compatibilityNotes: "Compatibility notes",
     details: "Open details",
     countSuffix: "",
+    select: "Select",
+    selecting: "Selecting...",
+    pathSelectFailed: "Path selection failed: {message}",
+    projectCurrentSelection: "Current selection: {name} / trigger {trigger}",
+    projectSelectExisting: "Select an existing Project.",
+    useSuggestion: "Use this suggestion",
+    reviewStandardAutoNote: "Standard Auto runs Standard Validation v1 for each candidate epoch. With 3 candidates it generates 45 x 3 = 135 images, so the default auto-start limits are 150 images and 240 minutes.",
+    reviewQuickAutoNote: "Quick Auto generates up to 18 images: up to 3 candidate epochs, 3 prompts, 1 seed, and 2 weights.",
+    reviewManualNote: "Manual mode does not automatically create Review Plans or generate images.",
+    reviewPlanOnlyNote: "Plan Only creates only the Review Plan and does not start image generation automatically.",
   },
 };
 
@@ -128,7 +148,7 @@ document.addEventListener("click", async (event) => {
   }
 
   const kind = button.getAttribute("data-browse-kind") || "directory";
-  const title = button.getAttribute("data-browse-title") || "選択";
+  const title = button.getAttribute("data-browse-title") || uiText("select");
   const initialPath = target.value || button.getAttribute("data-browse-initial") || "";
   const query = new URLSearchParams({ title, initial_path: initialPath });
   const url = kind === "directory"
@@ -137,7 +157,7 @@ document.addEventListener("click", async (event) => {
 
   const originalText = button.textContent;
   button.disabled = true;
-  button.textContent = "選択中...";
+  button.textContent = uiText("selecting");
   try {
     const response = await fetch(url);
     if (!response.ok) {
@@ -150,7 +170,7 @@ document.addEventListener("click", async (event) => {
       target.dispatchEvent(new Event("change", { bubbles: true }));
     }
   } catch (error) {
-    alert(`パス選択に失敗しました: ${error.message}`);
+    alert(uiFormat("pathSelectFailed", { message: error.message }));
   } finally {
     button.disabled = false;
     button.textContent = originalText;
@@ -197,8 +217,8 @@ function updateProjectModeForm(form) {
     const name = selected?.getAttribute("data-project-name") || "";
     const trigger = selected?.getAttribute("data-project-trigger") || "";
     summary.textContent = name
-      ? ` 現在の選択: ${name} / trigger ${trigger || "-"}`
-      : " 既存Projectを選択してください。";
+      ? ` ${uiFormat("projectCurrentSelection", { name, trigger: trigger || "-" })}`
+      : ` ${uiText("projectSelectExisting")}`;
   }
 }
 
@@ -438,7 +458,7 @@ function updateStepSuggestions(form, suggestions) {
     tr.innerHTML = `<td>${item.repeats}</td><td>${item.max_train_epochs}</td><td>${item.expected_total_steps}</td><td>${item.save_every_n_epochs_proposal}</td><td></td>`;
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = "この候補を入力";
+    button.textContent = uiText("useSuggestion");
     button.addEventListener("click", () => {
       const repeats = form.querySelector("[name='repeats']");
       const epochs = form.querySelector("[name='max_train_epochs']");
@@ -1209,7 +1229,7 @@ function updateReviewAutomationDefaults(container, { initial = false } = {}) {
       runtime.value = "240";
     }
     if (note) {
-      note.textContent = "標準自動はStandard Validation v1を候補epochごとに実行します。候補3件なら45枚×3=135枚のため、既定では150枚・240分まで自動開始します。";
+      note.textContent = uiText("reviewStandardAutoNote");
     }
     return;
   }
@@ -1222,15 +1242,15 @@ function updateReviewAutomationDefaults(container, { initial = false } = {}) {
       runtime.value = "60";
     }
     if (note) {
-      note.textContent = "クイック自動は候補epoch最大3件、prompt 3種、seed 1件、weight 2種の最大18枚を自動生成します。";
+      note.textContent = uiText("reviewQuickAutoNote");
     }
     return;
   }
 
   if (note) {
     note.textContent = mode.value === "manual"
-      ? "手動ではReview Plan作成も画像生成も自動では行いません。"
-      : "計画のみではReview Planだけ作成し、画像生成は自動開始しません。";
+      ? uiText("reviewManualNote")
+      : uiText("reviewPlanOnlyNote");
   }
 }
 
