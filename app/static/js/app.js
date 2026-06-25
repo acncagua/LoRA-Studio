@@ -7,6 +7,113 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
+const LORA_STUDIO_LOCALE = (document.documentElement.getAttribute("lang") || "ja").split("-", 1)[0];
+const LORA_STUDIO_TEXT = {
+  ja: {
+    recipeNotSelected: "Recipe未選択",
+    chooseByPurpose: "用途から選ぶ",
+    chooseByOptimizer: "Optimizerから選ぶ",
+    deriveFromJob: "既存Jobから派生",
+    fullCustom: "完全カスタム",
+    recipeMissingCustom: "Recipe v2未選択です。完全カスタムとして作成します。",
+    recipeMissingError: "Training Recipe v2が未選択です。フィルタだけでは設定は反映されません。Recipeカードを選択してください。",
+    smokeUntested: "Optimizer ProfileはSmoke Test未検証です。AdamW8bit以外ではOptimizer詳細からSmoke Testを実行してから使うことを推奨します。",
+    prepareOnly: "Optimizer ProfileはPrepare TestのみOKです。2-step Smoke Testは未実行です。",
+    smokeFailed: "Optimizer Profileの前回Smoke Testが失敗しています。依存関係・optimizer指定・ログを確認してください。",
+    disabledProfile: "Optimizer Profileはdisabled扱いです。通常運用では選択しないでください。",
+    miniUntested: "Optimizer ProfileはSmoke OKでもMini Pilot未確認です。実用学習では挙動が未確認です。",
+    miniFailed: "Optimizer ProfileはMini Pilotで失敗しています。通常選択は推奨されません。",
+    miniWarning: "Optimizer ProfileはMini Pilotで警告があります。ログとartifact確認結果を見てください。",
+    miniOk: "Mini Pilot OK: 短時間実学習の起動・artifact確認を通過しています。",
+    advancedOptimizer: "optimizerです。比較用または上級者向けとして扱ってください。",
+    networkUnavailable: "Network Typeは{value}です。現在の実行対象ではありません。",
+    cacheTeError: "cache_text_encoder_outputs=true で text_encoder_lr が有効です。TEを学習する場合はcacheを外してください。",
+    unetTeError: "network_train_unet_only=true で text_encoder_lr が有効です。UNetのみ学習かTE学習のどちらかに揃えてください。",
+    schedulerWarning: "DAdapt / Prodigyではscheduler=constantを推奨します。",
+    adafactorNote: "Adafactor relative_step系は通常LRと意味が異なります。profile説明を確認してください。",
+    rawArgsObject: "Raw Args JSONはオブジェクトで入力してください。",
+    rawArgsParse: "Raw Args JSONを読めません: {message}",
+    rawArgsWarning: "Raw Argsが指定されています。Recipeの標準互換性チェック外の項目を含む可能性があります。",
+    filterHint: "フィルタは候補の絞り込みです。実際に使うRecipeカードを選択してください。",
+    noFilterRecipes: "現在のフィルタ条件に合うRecipeがありません。Optimizer ProfileやNetwork Typeを変更してください。",
+    customNoRecipe: "完全カスタムではRecipe未選択のまま作成できます。",
+    selectedHint: "左のRecipeカードから選択してください。",
+    noRecipeParams: "Recipe未選択です。フィルタだけでは学習パラメータは確定しません。Recipeカードを選択してください。",
+    noDiff: "差分はありません。Recipe標準値のままです。",
+    recipeValue: "作成値",
+    noErrors: "ERRORはありません。",
+    noWarnings: "WARNINGはありません。",
+    recommended: "おすすめ",
+    chooseRecipe: "このRecipeを選択",
+    recipeCount: "{count}件",
+    optimizerGroupingHint: "選択Optimizerで使えるRecipeを用途別に表示しています。",
+    purposeGroupingHint: "用途に合うRecipeをOptimizerカテゴリ別に表示しています。",
+    purpose: "用途",
+    expectedBehavior: "期待する挙動",
+    note: "注意",
+    risk: "注意",
+    compatibilityNotes: "互換メモ",
+    details: "詳細を開く",
+    countSuffix: "件",
+  },
+  en: {
+    recipeNotSelected: "Recipe not selected",
+    chooseByPurpose: "Choose by Purpose",
+    chooseByOptimizer: "Choose by Optimizer",
+    deriveFromJob: "Derive from Existing Job",
+    fullCustom: "Full Custom",
+    recipeMissingCustom: "No Recipe v2 is selected. A full custom Job will be created.",
+    recipeMissingError: "Training Recipe v2 is not selected. Filters do not apply settings by themselves. Select a Recipe card.",
+    smokeUntested: "This Optimizer Profile has not passed Smoke Test yet. For non-AdamW8bit optimizers, run Smoke Test from Optimizer details first.",
+    prepareOnly: "This Optimizer Profile has only passed Prepare Test. 2-step Smoke Test has not run.",
+    smokeFailed: "The previous Smoke Test failed. Check dependencies, optimizer settings, and logs.",
+    disabledProfile: "This Optimizer Profile is disabled and should not be used for normal jobs.",
+    miniUntested: "This Optimizer Profile has Smoke OK but no Mini Pilot result yet. Practical behavior is unverified.",
+    miniFailed: "This Optimizer Profile failed Mini Pilot and is not recommended for normal selection.",
+    miniWarning: "This Optimizer Profile has Mini Pilot warnings. Check logs and artifact results.",
+    miniOk: "Mini Pilot OK: short real training startup and artifact checks passed.",
+    advancedOptimizer: "optimizer. Treat this as comparison or advanced use.",
+    networkUnavailable: "Network Type is {value}. It is not currently enabled for execution.",
+    cacheTeError: "cache_text_encoder_outputs=true conflicts with enabled text_encoder_lr. Disable cache when training TE.",
+    unetTeError: "network_train_unet_only=true conflicts with enabled text_encoder_lr. Choose either UNet-only or TE training.",
+    schedulerWarning: "DAdapt / Prodigy should usually use scheduler=constant.",
+    adafactorNote: "Adafactor relative_step profiles use LR differently from normal LR. Check the profile description.",
+    rawArgsObject: "Raw Args JSON must be an object.",
+    rawArgsParse: "Could not parse Raw Args JSON: {message}",
+    rawArgsWarning: "Raw Args are set. They may include items outside the standard Recipe compatibility checks.",
+    filterHint: "Filters only narrow candidates. Select the Recipe card you will actually use.",
+    noFilterRecipes: "No Recipes match the current filters. Change Optimizer Profile or Network Type.",
+    customNoRecipe: "Full Custom can be created without selecting a Recipe.",
+    selectedHint: "Select a Recipe card on the left.",
+    noRecipeParams: "Recipe is not selected. Filters alone do not decide training parameters. Select a Recipe card.",
+    noDiff: "No differences. Recipe defaults are unchanged.",
+    recipeValue: "Job value",
+    noErrors: "No ERRORs.",
+    noWarnings: "No WARNINGs.",
+    recommended: "Recommended",
+    chooseRecipe: "Select this Recipe",
+    recipeCount: "{count} recipes",
+    optimizerGroupingHint: "Recipes available for the selected optimizer are grouped by purpose.",
+    purposeGroupingHint: "Recipes matching the purpose are grouped by optimizer category.",
+    purpose: "Purpose",
+    expectedBehavior: "Expected behavior",
+    note: "Note",
+    risk: "Risk",
+    compatibilityNotes: "Compatibility notes",
+    details: "Open details",
+    countSuffix: "",
+  },
+};
+
+function uiText(key, fallback = "") {
+  const table = LORA_STUDIO_TEXT[LORA_STUDIO_LOCALE] || LORA_STUDIO_TEXT.ja;
+  return table[key] || LORA_STUDIO_TEXT.en[key] || fallback || key;
+}
+
+function uiFormat(key, values = {}, fallback = "") {
+  return uiText(key, fallback).replace(/\{(\w+)\}/g, (_, name) => values[name] ?? "");
+}
+
 document.addEventListener("click", async (event) => {
   const button = event.target.closest("[data-browse-target]");
   if (!button) {
@@ -382,25 +489,25 @@ function initStepEstimators() {
 
 function recipeLabel(recipe) {
   if (!recipe) {
-    return "Recipe未選択";
+    return uiText("recipeNotSelected");
   }
-  return recipe.short_label || recipe.display_name || recipe.name || recipe.id;
+  return recipe.localized_label || recipe.short_label || recipe.display_name || recipe.name || recipe.id;
 }
 
 function recipeFullLabel(recipe) {
   if (!recipe) {
-    return "Recipe未選択";
+    return uiText("recipeNotSelected");
   }
-  return recipe.full_label || recipe.display_name || recipe.name || recipe.id;
+  return recipe.localized_full_label || recipe.full_label || recipe.display_name || recipe.name || recipe.id;
 }
 
 function currentModeLabel(form) {
   const mode = form.querySelector("[data-recipe-mode-input]")?.value || "purpose";
   const modeLabels = {
-    purpose: "用途から選ぶ",
-    optimizer: "Optimizerから選ぶ",
-    derived: "既存Jobから派生",
-    custom: "完全カスタム",
+    purpose: uiText("chooseByPurpose"),
+    optimizer: uiText("chooseByOptimizer"),
+    derived: uiText("deriveFromJob"),
+    custom: uiText("fullCustom"),
   };
   return modeLabels[mode] || mode;
 }
@@ -453,9 +560,9 @@ function wizardCompatibility(form, recipe, params, rawText = "") {
   const mode = form.querySelector("[data-recipe-mode-input]")?.value || "purpose";
   if (!recipe) {
     if (mode === "custom") {
-      notes.push("Recipe v2未選択です。完全カスタムとして作成します。");
+      notes.push(uiText("recipeMissingCustom"));
     } else {
-      errors.push("Training Recipe v2が未選択です。フィルタだけでは設定は反映されません。Recipeカードを選択してください。");
+      errors.push(uiText("recipeMissingError"));
     }
   } else {
     notes.push(`Recipe: ${recipeLabel(recipe)}`);
@@ -469,59 +576,59 @@ function wizardCompatibility(form, recipe, params, rawText = "") {
     const validationStatus = recipe.optimizer_profile_validation_status || "untested";
     const miniPilotStatus = recipe.optimizer_profile_mini_pilot_status || "untested";
     if (validationStatus === "untested") {
-      warnings.push("Optimizer ProfileはSmoke Test未検証です。AdamW8bit以外ではOptimizer詳細からSmoke Testを実行してから使うことを推奨します。");
+      warnings.push(uiText("smokeUntested"));
     } else if (validationStatus === "prepare_ok") {
-      warnings.push("Optimizer ProfileはPrepare TestのみOKです。2-step Smoke Testは未実行です。");
+      warnings.push(uiText("prepareOnly"));
     } else if (validationStatus === "smoke_failed") {
-      warnings.push("Optimizer Profileの前回Smoke Testが失敗しています。依存関係・optimizer指定・ログを確認してください。");
+      warnings.push(uiText("smokeFailed"));
     } else if (validationStatus === "disabled") {
-      warnings.push("Optimizer Profileはdisabled扱いです。通常運用では選択しないでください。");
+      warnings.push(uiText("disabledProfile"));
     } else if (validationStatus === "smoke_ok" || validationStatus === "mini_pilot_ok") {
       notes.push(`Optimizer Profile validation: ${validationStatus}`);
     }
     if (miniPilotStatus === "untested") {
-      warnings.push("Optimizer ProfileはSmoke OKでもMini Pilot未確認です。実用学習では挙動が未確認です。");
+      warnings.push(uiText("miniUntested"));
     } else if (miniPilotStatus === "mini_pilot_failed") {
-      warnings.push("Optimizer ProfileはMini Pilotで失敗しています。通常選択は推奨されません。");
+      warnings.push(uiText("miniFailed"));
     } else if (miniPilotStatus === "mini_pilot_warning") {
-      warnings.push("Optimizer ProfileはMini Pilotで警告があります。ログとartifact確認結果を見てください。");
+      warnings.push(uiText("miniWarning"));
     } else if (miniPilotStatus === "mini_pilot_ok") {
-      notes.push("Mini Pilot OK: 短時間実学習の起動・artifact確認を通過しています。");
+      notes.push(uiText("miniOk"));
     }
     const category = String(recipe.optimizer_category || "");
     if (category.includes("advanced") || category.includes("experimental")) {
-      warnings.push(`${category} optimizerです。比較用または上級者向けとして扱ってください。`);
+      warnings.push(`${category} ${uiText("advancedOptimizer")}`);
     }
     if (recipe.network_type_availability && recipe.network_type_availability !== "available") {
-      errors.push(`Network Typeは${recipe.network_type_availability}です。現在の実行対象ではありません。`);
+      errors.push(uiFormat("networkUnavailable", { value: recipe.network_type_availability }));
     }
   }
   const te1 = Number(params.text_encoder_lr1 ?? params.text_encoder_lr ?? 0) || 0;
   const te2 = Number(params.text_encoder_lr2 ?? 0) || 0;
   if (params.cache_text_encoder_outputs && (te1 > 0 || te2 > 0)) {
-    errors.push("cache_text_encoder_outputs=true で text_encoder_lr が有効です。TEを学習する場合はcacheを外してください。");
+    errors.push(uiText("cacheTeError"));
   }
   if (params.network_train_unet_only && (te1 > 0 || te2 > 0)) {
-    errors.push("network_train_unet_only=true で text_encoder_lr が有効です。UNetのみ学習かTE学習のどちらかに揃えてください。");
+    errors.push(uiText("unetTeError"));
   }
   const optimizer = String(params.optimizer_type || recipe?.optimizer_definition_id || "");
   const scheduler = String(params.lr_scheduler || "");
   if ((optimizer.includes("DAdapt") || optimizer === "Prodigy") && scheduler && scheduler !== "constant") {
-    warnings.push("DAdapt / Prodigyではscheduler=constantを推奨します。");
+    warnings.push(uiText("schedulerWarning"));
   }
   if (optimizer === "Adafactor" || recipe?.optimizer_lr_semantics === "relative_step") {
-    notes.push("Adafactor relative_step系は通常LRと意味が異なります。profile説明を確認してください。");
+    notes.push(uiText("adafactorNote"));
   }
   if (rawText.trim()) {
     try {
       const raw = JSON.parse(rawText);
       if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-        errors.push("Raw Args JSONはオブジェクトで入力してください。");
+        errors.push(uiText("rawArgsObject"));
       } else {
-        warnings.push("Raw Argsが指定されています。Recipeの標準互換性チェック外の項目を含む可能性があります。");
+        warnings.push(uiText("rawArgsWarning"));
       }
     } catch (error) {
-      errors.push(`Raw Args JSONを読めません: ${error.message}`);
+      errors.push(uiFormat("rawArgsParse", { message: error.message }));
     }
   }
   return { errors, warnings, notes };
@@ -535,24 +642,24 @@ function updateRecipeDetail(form) {
     const mode = form.querySelector("[data-recipe-mode-input]")?.value || "purpose";
     const visibleCards = Array.from(form.querySelectorAll("[data-recipe-card]")).filter((card) => !card.hidden).length;
     const message = visibleCards
-      ? "フィルタは候補の絞り込みです。実際に使うRecipeカードを選択してください。"
-      : "現在のフィルタ条件に合うRecipeがありません。Optimizer ProfileやNetwork Typeを変更してください。";
-    const customNote = mode === "custom" ? "完全カスタムではRecipe未選択のまま作成できます。" : message;
-    detail.innerHTML = `<strong>Recipe未選択</strong><p class="muted">${customNote}</p>`;
+      ? uiText("filterHint")
+      : uiText("noFilterRecipes");
+    const customNote = mode === "custom" ? uiText("customNoRecipe") : message;
+    detail.innerHTML = `<strong>${uiText("recipeNotSelected")}</strong><p class="muted">${customNote}</p>`;
     return;
   }
   detail.innerHTML = `
     <strong>${recipeLabel(recipe)}</strong>
     <dl>
-      <dt>用途</dt><dd>${recipe.purpose_display_name || recipe.training_purpose_id || "-"}</dd>
+      <dt>${uiText("purpose")}</dt><dd>${recipe.purpose_display_name || recipe.training_purpose_id || "-"}</dd>
       <dt>Optimizer</dt><dd>${recipe.optimizer_display_name || recipe.optimizer_definition_id || "-"} / ${recipe.optimizer_category || "-"}</dd>
       <dt>Profile</dt><dd>${recipe.optimizer_profile_display_name || recipe.optimizer_profile_id || "-"}</dd>
       <dt>Network</dt><dd>${recipe.network_type_display_name || recipe.network_type_id || "-"} / ${recipe.network_type_availability || "-"}</dd>
       <dt>Target steps</dt><dd>${recipe.target_steps_min ?? "-"} / <strong>${recipe.target_steps_recommended ?? "-"}</strong> / ${recipe.target_steps_max ?? "-"}</dd>
-      <dt>期待する挙動</dt><dd>${recipe.expected_behavior || "-"}</dd>
-      <dt>注意</dt><dd>${recipe.risk_note || recipe.optimizer_risk_note || "-"}</dd>
+      <dt>${uiText("expectedBehavior")}</dt><dd>${recipe.expected_behavior || "-"}</dd>
+      <dt>${uiText("note")}</dt><dd>${recipe.risk_note || recipe.optimizer_risk_note || "-"}</dd>
     </dl>
-    <p><a href="/training-recipes/${encodeURIComponent(recipe.id)}">Recipe詳細を開く</a> / <a href="/optimizers/${encodeURIComponent(recipe.optimizer_definition_id || "")}">Optimizer詳細を開く</a></p>
+    <p><a href="/training-recipes/${encodeURIComponent(recipe.id)}">${uiText("details")}</a> / <a href="/optimizers/${encodeURIComponent(recipe.optimizer_definition_id || "")}">Optimizer ${uiText("details")}</a></p>
   `;
 }
 
@@ -567,7 +674,7 @@ function updateSelectedRecipePanel(form) {
   const stepTotal = form.querySelector("[data-step-field='total_steps']")?.textContent || "-";
   const createButton = form.querySelector("[data-selected-create-button]");
   if (!recipe) {
-    summary.innerHTML = `<strong>未選択</strong><p class="muted">左のRecipeカードから選択してください。</p>`;
+    summary.innerHTML = `<strong>${uiText("recipeNotSelected")}</strong><p class="muted">${uiText("selectedHint")}</p>`;
     if (createButton) createButton.disabled = true;
     return;
   }
@@ -582,8 +689,8 @@ function updateSelectedRecipePanel(form) {
       <dt>Expected steps</dt><dd>${stepTotal}</dd>
       <dt>Compatibility</dt><dd>${result.errors.length ? `ERROR ${result.errors.length}` : (result.warnings.length ? `WARNING ${result.warnings.length}` : "OK")}</dd>
       <dt>Smoke</dt><dd><span class="label ${validation.klass}">${validation.text}</span></dd>
-      <dt>Override</dt><dd>${overrideCount} 件</dd>
-      <dt>Risk</dt><dd><span class="label ${riskClass}">${recipe.risk_note || recipe.optimizer_category || "-"}</span></dd>
+      <dt>Override</dt><dd>${overrideCount} ${uiText("countSuffix")}</dd>
+      <dt>${uiText("risk")}</dt><dd><span class="label ${riskClass}">${recipe.risk_note || recipe.optimizer_category || "-"}</span></dd>
     </dl>
   `;
   if (createButton) {
@@ -599,7 +706,7 @@ function updateParamDiff(form) {
   const preview = form.querySelector("[data-resolved-params-preview]");
   if (preview) {
     if (!recipe && mode !== "custom") {
-      preview.textContent = "Recipe未選択です。フィルタだけでは学習パラメータは確定しません。Recipeカードを選択してください。";
+      preview.textContent = uiText("noRecipeParams");
     } else {
       preview.textContent = JSON.stringify(resolved, null, 2);
     }
@@ -610,14 +717,14 @@ function updateParamDiff(form) {
   const diff = form.querySelector("[data-param-diff-preview]");
   if (diff) {
     if (!changed.length) {
-      diff.textContent = "差分はありません。Recipe標準値のままです。";
+      diff.textContent = uiText("noDiff");
     } else {
       const rows = changed.map((key) => `<tr><td><code>${key}</code></td><td>${formatParamValue(base[key])}</td><td>${formatParamValue(resolved[key])}</td></tr>`).join("");
-      diff.innerHTML = `<table class="compact-table"><thead><tr><th>key</th><th>Recipe</th><th>作成値</th></tr></thead><tbody>${rows}</tbody></table>`;
+      diff.innerHTML = `<table class="compact-table"><thead><tr><th>key</th><th>Recipe</th><th>${uiText("recipeValue")}</th></tr></thead><tbody>${rows}</tbody></table>`;
     }
   }
   const summaryDiff = form.querySelector("[data-summary-diff]");
-  if (summaryDiff) summaryDiff.textContent = `${changed.length} 件`;
+  if (summaryDiff) summaryDiff.textContent = `${changed.length} ${uiText("countSuffix")}`;
   return changed.length;
 }
 
@@ -635,8 +742,8 @@ function updateCompatibilityPanel(form) {
   if (errorCount) errorCount.textContent = result.errors.length;
   if (warningCount) warningCount.textContent = result.warnings.length;
   if (noteCount) noteCount.textContent = result.notes.length;
-  setListItems(panel.querySelector("[data-compat-errors]"), result.errors.length ? result.errors : ["ERRORはありません。"]);
-  setListItems(panel.querySelector("[data-compat-warnings]"), result.warnings.length ? result.warnings : ["WARNINGはありません。"]);
+  setListItems(panel.querySelector("[data-compat-errors]"), result.errors.length ? result.errors : [uiText("noErrors")]);
+  setListItems(panel.querySelector("[data-compat-warnings]"), result.warnings.length ? result.warnings : [uiText("noWarnings")]);
   setListItems(panel.querySelector("[data-compat-notes]"), result.notes);
   const submit = form.querySelector("[data-wizard-submit]");
   if (submit) {
@@ -652,10 +759,10 @@ function updateCompatibilityPanel(form) {
 function updateWizardSummary(form) {
   const mode = form.querySelector("[data-recipe-mode-input]")?.value || "purpose";
   const modeLabels = {
-    purpose: "用途から選ぶ",
-    optimizer: "Optimizerから選ぶ",
-    derived: "既存Jobから派生",
-    custom: "完全カスタム",
+    purpose: uiText("chooseByPurpose"),
+    optimizer: uiText("chooseByOptimizer"),
+    derived: uiText("deriveFromJob"),
+    custom: uiText("fullCustom"),
   };
   const modeNode = form.querySelector("[data-summary-mode]");
   if (modeNode) modeNode.textContent = modeLabels[mode] || mode;
@@ -718,7 +825,7 @@ function appendRecipeCard(form, grid, recipe) {
     button.setAttribute("data-network-id", recipe.network_type_id || "");
     button.setAttribute("data-recipe-type", recipe.recipe_type || "");
     const risk = recipe.risk_note || recipe.optimizer_risk_note || "";
-    const recommended = recipe.recommended_badge || ((recipe.recipe_type === "balanced" || recipe.recipe_type === "balanced_long") ? "おすすめ" : "");
+    const recommended = recipe.recommended_badge || ((recipe.recipe_type === "balanced" || recipe.recipe_type === "balanced_long") ? uiText("recommended") : "");
     const difficulty = recipe.difficulty_label || recipe.optimizer_category || "-";
     const validation = recipeValidationBadge(recipe);
     button.innerHTML = `
@@ -730,7 +837,7 @@ function appendRecipeCard(form, grid, recipe) {
       <small>key params: ${recipeKeyParams(recipe)}</small>
       <small>${recipe.expected_behavior || "-"}</small>
       ${risk ? `<span class="label warning">${risk}</span>` : ''}
-      <span class="button small-button recipe-card-action">このRecipeを選択</span>
+      <span class="button small-button recipe-card-action">${uiText("chooseRecipe")}</span>
     `;
     button.addEventListener("click", () => {
       const select = form.querySelector("[data-recipe-select]");
@@ -752,11 +859,11 @@ function renderRecipeCards(form, filters = {}) {
   const countNode = form.querySelector("[data-recipe-result-count]");
   const hintNode = form.querySelector("[data-recipe-group-hint]");
   const emptyTemplate = form.querySelector("[data-recipe-empty-state]");
-  if (countNode) countNode.textContent = `${filtered.length}件`;
+  if (countNode) countNode.textContent = uiFormat("recipeCount", { count: filtered.length });
   if (hintNode) {
     hintNode.textContent = mode === "optimizer"
-      ? "選択Optimizerで使えるRecipeを用途別に表示しています。"
-      : "用途に合うRecipeをOptimizerカテゴリ別に表示しています。";
+      ? uiText("optimizerGroupingHint")
+      : uiText("purposeGroupingHint");
   }
   grid.innerHTML = "";
 
@@ -904,8 +1011,8 @@ function updateOptimizerInfoPanel(form) {
       <dt>LR意味</dt><dd>${optimizer.lr_semantics || "-"}</dd>
       <dt>default LR</dt><dd>${optimizer.default_learning_rate ?? "-"} / UNet ${optimizer.default_unet_lr ?? "-"} / TE ${optimizer.default_text_encoder_lr ?? "-"}</dd>
       <dt>target steps</dt><dd>${optimizer.target_steps_min ?? "-"} / <strong>${optimizer.target_steps_recommended ?? "-"}</strong> / ${optimizer.target_steps_max ?? "-"}</dd>
-      <dt>注意</dt><dd>${optimizer.risk_note || "-"}</dd>
-      <dt>互換メモ</dt><dd>${notes || "-"}</dd>
+      <dt>${uiText("risk")}</dt><dd>${optimizer.risk_note || "-"}</dd>
+      <dt>${uiText("compatibilityNotes")}</dt><dd>${notes || "-"}</dd>
     </dl>
   `;
 }

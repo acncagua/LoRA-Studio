@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% block content %}
-<nav class="breadcrumbs"><a href="/">ダッシュボード</a><span>検証Run</span></nav>
+<nav class="breadcrumbs"><a href="/">{{ t('nav.dashboard') }}</a><span>{{ t('page.validation_runs.title') }}</span></nav>
 <header class="page-head">
-  <h1>検証Run</h1>
+  <h1>{{ t('page.validation_runs.title') }}</h1>
 </header>
 
 <section class="notice">
@@ -30,8 +30,8 @@
           <td>{{ run.reviewed_count or 0 }}</td>
           <td>{{ run.recommended_weight_min if run.recommended_weight_min is not none else '-' }} - {{ run.recommended_weight_max if run.recommended_weight_max is not none else '-' }}</td>
           <td class="inline-actions">
-            <a class="button small-button" href="/validation-runs/{{ run.id }}">詳細</a>
-            {% if run.job_id %}<a class="button small-button" href="/jobs/{{ run.job_id }}#validation-runs">ジョブへ</a>{% endif %}
+            <a class="button small-button" href="/validation-runs/{{ run.id }}">{{ t('primary.open_details') }}</a>
+            {% if run.job_id %}<a class="button small-button" href="/jobs/{{ run.job_id }}#validation-runs">{{ t('primary.open_job_short') }}</a>{% endif %}
           </td>
         </tr>
         {% else %}

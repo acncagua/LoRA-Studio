@@ -1,6 +1,6 @@
 {% extends "base.html" %}{% block content %}
 <header class="page-head">
-  <h1>学習ジョブ作成</h1>
+  <h1>{{ t('page.job_create.title') }}</h1>
   <div class="actions compact-actions">
     <a class="button secondary" href="/training-recipes">Recipe Library</a>
     <a class="button secondary" href="/optimizers">Optimizer Master</a>
@@ -8,12 +8,12 @@
 </header>
 
 <section class="notice">
-  <h2>Recipe Wizard UX</h2>
-  <p>用途またはOptimizerからRecipeを選び、必要な差分だけをParameter Editorで上書きします。ERRORがある場合はJob作成を止めます。</p>
+  <h2>{{ t('page.job_create.recipe_wizard_title') }}</h2>
+  <p>{{ t('page.job_create.recipe_wizard_body') }}</p>
 </section>
 
 <section>
-  <h2>データセットのトリガー整合性</h2>
+  <h2>{{ t('page.job_create.trigger_title') }}</h2>
   <table>
     <thead><tr><th>データセット</th><th>トリガー</th><th>出現数</th><th>状態</th><th>メッセージ</th></tr></thead>
     <tbody>
@@ -39,37 +39,37 @@
   <script type="application/json" data-step-dataset-versions-json>{{ dataset_versions_json|tojson }}</script>
 
   <nav class="wizard-steps" aria-label="作成手順">
-    <a href="#wizard-mode">1. 入口</a>
-    <a href="#wizard-dataset">2. Project / Dataset</a>
-    <a href="#wizard-recipe">3. Recipe</a>
-    <a href="#wizard-params">4. Parameter Editor</a>
-    <a href="#wizard-check">5. Estimate / Check</a>
-    <a href="#wizard-summary">6. 作成</a>
+    <a href="#wizard-mode">{{ t('wizard.steps.mode') }}</a>
+    <a href="#wizard-dataset">{{ t('wizard.steps.dataset') }}</a>
+    <a href="#wizard-recipe">{{ t('wizard.steps.recipe') }}</a>
+    <a href="#wizard-params">{{ t('wizard.steps.params') }}</a>
+    <a href="#wizard-check">{{ t('wizard.steps.check') }}</a>
+    <a href="#wizard-summary">{{ t('wizard.steps.create') }}</a>
   </nav>
 
   <fieldset id="wizard-mode" class="form-fieldset wide-field">
-    <legend>1. 作成方法</legend>
+    <legend>{{ t('wizard.mode.legend') }}</legend>
     <input type="hidden" name="job_creation_mode" value="{{ initial_job_creation_mode }}" data-recipe-mode-input>
     <div class="mode-summary" data-mode-summary>
-      <span>作成モード: <strong data-mode-summary-label>用途から選ぶ</strong></span>
-      <button type="button" class="button secondary small-button" data-mode-change-button>変更</button>
+      <span>{{ t('wizard.mode.summary') }} <strong data-mode-summary-label>{{ t('wizard.mode.purpose') }}</strong></span>
+      <button type="button" class="button secondary small-button" data-mode-change-button>{{ t('wizard.mode.change') }}</button>
     </div>
     <div class="choice-card-grid" data-mode-cards>
       <button type="button" class="choice-card" data-mode-card="purpose">
-        <strong>用途から選ぶ</strong>
-        <span>Character Face / Style など目的を先に決め、安定Recipeから選択します。</span>
+        <strong>{{ t('wizard.mode.purpose') }}</strong>
+        <span>{{ t('wizard.mode.purpose_desc') }}</span>
       </button>
       <button type="button" class="choice-card" data-mode-card="optimizer">
-        <strong>Optimizerから選ぶ</strong>
-        <span>AdamW / Prodigy / DAdapt などOptimizer軸でRecipeを絞ります。</span>
+        <strong>{{ t('wizard.mode.optimizer') }}</strong>
+        <span>{{ t('wizard.mode.optimizer_desc') }}</span>
       </button>
       <button type="button" class="choice-card" data-mode-card="derived">
-        <strong>既存Jobから派生</strong>
-        <span>親Jobを選び、差分理由を残して派生ドラフトを作ります。</span>
+        <strong>{{ t('wizard.mode.derived') }}</strong>
+        <span>{{ t('wizard.mode.derived_desc') }}</span>
       </button>
       <button type="button" class="choice-card" data-mode-card="custom">
-        <strong>完全カスタム</strong>
-        <span>Recipeを使わず、旧形式プリセットとParameter Editorで作成します。</span>
+        <strong>{{ t('wizard.mode.custom') }}</strong>
+        <span>{{ t('wizard.mode.custom_desc') }}</span>
       </button>
     </div>
   </fieldset>
@@ -116,19 +116,19 @@
   </fieldset>
 
   <fieldset id="wizard-recipe" class="form-fieldset wide-field">
-    <legend>3. Recipe</legend>
-    <p class="muted">最終的に使うRecipeカードを選択してください。作成モードとフィルタは候補を探すための補助操作です。</p>
+    <legend>{{ t('wizard.recipe.legend') }}</legend>
+    <p class="muted">{{ t('wizard.recipe.help') }}</p>
     <div class="form-grid compact-grid" data-recipe-filters>
       <label>Model Family
         <select data-recipe-filter="model_family">
-          <option value="">すべて</option>
+          <option value="">{{ t('common.all') }}</option>
           <option value="SDXL">SDXL</option>
           <option value="SD15">SD15</option>
         </select>
       </label>
       <label data-optimizer-filter-field>Optimizer
         <select data-recipe-filter="optimizer_definition_id">
-          <option value="">すべて</option>
+          <option value="">{{ t('common.all') }}</option>
           {% for optimizer in optimizers_v2 %}
           <option value="{{ optimizer.id }}">{{ optimizer.display_name }} / {{ optimizer.category }}</option>
           {% endfor %}
@@ -136,7 +136,7 @@
       </label>
       <label data-profile-filter-field>Optimizer Profile
         <select data-recipe-filter="optimizer_profile_id">
-          <option value="">すべて</option>
+          <option value="">{{ t('common.all') }}</option>
           {% for profile in optimizer_profiles_v2 %}
           <option value="{{ profile.id }}" data-optimizer-id="{{ profile.optimizer_definition_id }}">{{ profile.display_name }} / {{ profile.profile_type }}</option>
           {% endfor %}
@@ -144,7 +144,7 @@
       </label>
       <label data-purpose-filter-field>用途
         <select data-recipe-filter="training_purpose_id">
-          <option value="">すべて</option>
+          <option value="">{{ t('common.all') }}</option>
           {% for purpose in training_purposes %}
           <option value="{{ purpose.id }}">{{ purpose.display_name }}</option>
           {% endfor %}
@@ -152,7 +152,7 @@
       </label>
       <label>Recipe Type
         <select data-recipe-filter="recipe_type">
-          <option value="">すべて</option>
+          <option value="">{{ t('common.all') }}</option>
           <option value="smoke">smoke</option>
           <option value="pilot">pilot</option>
           <option value="soft">soft</option>
@@ -166,7 +166,7 @@
       </label>
       <label data-network-filter-field>Network Type
         <select data-recipe-filter="network_type_id">
-          <option value="">すべて</option>
+          <option value="">{{ t('common.all') }}</option>
           {% for network in network_types %}
           <option value="{{ network.id }}">{{ network.display_name }} / {{ network.availability }}</option>
           {% endfor %}
@@ -177,24 +177,24 @@
     <div class="recipe-selection-layout">
       <section class="recipe-candidates-panel" aria-label="Recipe候補">
         <div class="recipe-candidates-head">
-          <h3>Recipe候補 <span data-recipe-result-count>0件</span></h3>
+          <h3>{{ t('wizard.recipe.candidates') }} <span data-recipe-result-count>0</span></h3>
           <p class="muted" data-recipe-group-hint>用途に合うRecipeをOptimizerカテゴリ別に表示しています。</p>
         </div>
         <div class="recipe-card-grid" data-recipe-cards></div>
-        <p class="recipe-card-empty notice" data-recipe-empty-state hidden>この条件に合うRecipeはまだ登録されていません。<a href="/jobs/new?mode=custom">Customで作成</a>するか、<a href="/training-recipes">Recipe Library</a>で追加してください。</p>
+        <p class="recipe-card-empty notice" data-recipe-empty-state hidden>{{ t('wizard.recipe.empty') }} <a href="/jobs/new?mode=custom">Custom</a> / <a href="/training-recipes">Recipe Library</a></p>
       </section>
       <aside class="selected-recipe-panel" data-selected-recipe-panel>
-        <h3>選択中Recipe</h3>
+        <h3>{{ t('wizard.recipe.selected') }}</h3>
         <div data-selected-recipe-summary>
-          <strong>未選択</strong>
-          <p class="muted">左のRecipeカードから選択してください。</p>
+          <strong>{{ t('common.not_selected') }}</strong>
+          <p class="muted">{{ t('wizard.recipe.unselected_hint') }}</p>
         </div>
-        <button type="submit" data-wizard-submit data-selected-create-button disabled>Jobを作成</button>
+        <button type="submit" data-wizard-submit data-selected-create-button disabled>{{ t('common.create_job') }}</button>
       </aside>
     </div>
     <details class="wide-field">
-      <summary>Recipeを直接選択（検索・確認用）</summary>
-      <p class="muted">カード選択が主導線です。直接選択ではModel Familyを含むfull labelを表示します。</p>
+      <summary>{{ t('wizard.recipe.direct') }}</summary>
+      <p class="muted">{{ t('wizard.recipe.direct_help') }}</p>
       <label class="compact-recipe-select">Training Recipe v2
         <select name="recipe_v2_id" data-recipe-select>
           <option value="">旧形式プリセット / Custom</option>
@@ -213,7 +213,7 @@
       </label>
     </details>
     <details class="wide-field">
-      <summary>旧形式プリセット（legacy）</summary>
+      <summary>{{ t('wizard.recipe.legacy') }}</summary>
       <label>学習プリセット
         <select name="preset_id" required>
           {% for preset in presets %}
@@ -234,8 +234,8 @@
   </fieldset>
 
   <fieldset id="wizard-params" class="form-fieldset wide-field">
-    <legend>4. Parameter Editor v2</legend>
-    <p class="muted">通常はBasicだけ調整します。Raw Argsはsd-scriptsに直接影響するためAdvanced扱いです。</p>
+    <legend>{{ t('wizard.params.legend') }}</legend>
+    <p class="muted">{{ t('wizard.params.help') }}</p>
     <label data-derived-parent-field>派生元Job
       <select name="parent_job_id">
         <option value="">指定なし</option>

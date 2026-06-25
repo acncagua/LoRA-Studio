@@ -1,19 +1,19 @@
 {% extends "base.html" %}{% block content %}
 <nav class="breadcrumbs">
-  <a href="/">ダッシュボード</a>
-  <a href="/review-sessions">レビューセッション</a>
+  <a href="/">{{ t('nav.dashboard') }}</a>
+  <a href="/review-sessions">{{ t('page.review_sessions.title') }}</a>
   <span>#{{ session.id }}</span>
 </nav>
 <header class="page-head">
-  <h1>レビューセッション #{{ session.id }}</h1>
+  <h1>{{ t('page.review_session.title') }} #{{ session.id }}</h1>
   <div class="actions">
-    {% if session.job_id %}<a class="button" href="/jobs/{{ session.job_id }}#review-preparation">学習ジョブへ戻る</a>{% endif %}
-    {% if session.project_id %}<a class="button" href="/projects/{{ session.project_id }}">Projectへ戻る</a>{% endif %}
+    {% if session.job_id %}<a class="button" href="/jobs/{{ session.job_id }}#review-preparation">{{ t('primary.open_job_short') }}</a>{% endif %}
+    {% if session.project_id %}<a class="button" href="/projects/{{ session.project_id }}">{{ t('common.back') }}</a>{% endif %}
   </div>
 </header>
 
 <section class="notice">
-  <h2>採用前epoch比較</h2>
+  <h2>{{ t('label.before_review') }}</h2>
   <p>レビューセッションは、採用LoRAを決める前に候補epochを横並びで確認するための作業画面です。検証Runは採用epoch決定後のweight検証に使います。</p>
 </section>
 <div id="review-session-log">
@@ -24,7 +24,7 @@
 {% include "partials/performance_summary.html" %}
 
 <section class="status-strip">
-  <div class="status-card"><span>状態</span><strong>{{ session.status }}</strong></div>
+  <div class="status-card"><span>{{ t('common.status') }}</span><strong>{{ status_labels.get(session.status, session.status) }}</strong></div>
   <div class="status-card"><span>Project</span><strong>{% if session.project_id %}#{{ session.project_id }} {{ session.project_name or '' }}{% else %}-{% endif %}</strong></div>
   <div class="status-card"><span>学習ジョブ</span><strong>{% if session.job_id %}#{{ session.job_id }} {{ session.job_name or '' }}{% else %}-{% endif %}</strong></div>
   <div class="status-card"><span>候補epoch</span><strong>{{ candidate_epochs|join(', ') if candidate_epochs else '-' }}</strong></div>
@@ -55,24 +55,24 @@
     {% endif %}
   </div>
   <div>
-    <h2>このReview Sessionでの主要操作</h2>
+    <h2>{{ t('label.primary_action') }}</h2>
     <div class="actions compact-actions">
       {% if primary_action == 'start' and session.job_id %}
-      <form method="post" action="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/run"><button type="submit">{{ primary_label }}</button></form>
+      <form method="post" action="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/run"><button type="submit">{{ action_text(primary_label) }}</button></form>
       {% elif primary_action == 'progress' %}
-      <a class="button" href="#review-session-log">進捗を確認</a>
-      {% if session.job_id %}<form method="post" action="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/stop"><button type="submit" class="danger">停止</button></form>{% endif %}
+      <a class="button" href="#review-session-log">{{ t('primary.progress') }}</a>
+      {% if session.job_id %}<form method="post" action="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/stop"><button type="submit" class="danger">{{ t('primary.stop') }}</button></form>{% endif %}
       {% elif primary_action == 'retry' and session.job_id %}
-      <form method="post" action="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/run"><button type="submit" class="danger">レビュー準備をリトライ</button></form>
-      <a class="button secondary" href="#review-session-log">ログを確認</a>
+      <form method="post" action="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/run"><button type="submit" class="danger">{{ t('primary.retry_review_preparation') }}</button></form>
+      <a class="button secondary" href="#review-session-log">{{ t('primary.check_logs') }}</a>
       {% elif primary_action == 'open_matrix' and session.job_id %}
-      <a class="button" href="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix">{{ primary_label }}</a>
+      <a class="button" href="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix">{{ action_text(primary_label) }}</a>
       <p class="muted">画像比較とレビュー入力はReview Matrixで行います。同じprompt / seed / weightごとに候補epochを横並びで確認できます。</p>
       {% elif primary_action == 'build_matrix' and session.job_id %}
-      <form method="post" action="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix/build"><button type="submit">{{ primary_label }}</button></form>
+      <form method="post" action="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix/build"><button type="submit">{{ action_text(primary_label) }}</button></form>
       {% elif primary_action == 'check_log' %}
-      <a class="button" href="#review-session-log">{{ primary_label }}</a>
-      {% if session.job_id %}<form method="post" action="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/run"><button type="submit" class="danger">再実行</button></form>{% endif %}
+      <a class="button" href="#review-session-log">{{ action_text(primary_label) }}</a>
+      {% if session.job_id %}<form method="post" action="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/run"><button type="submit" class="danger">{{ t('primary.retry') }}</button></form>{% endif %}
       {% endif %}
     </div>
     {% if session.status in ['planned', 'prepared'] %}

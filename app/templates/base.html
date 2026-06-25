@@ -1,5 +1,5 @@
 ﻿<!doctype html>
-<html lang="ja">
+<html lang="{{ locale or 'ja' }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -13,39 +13,43 @@
     <a class="brand" href="/">LoRA-Studio</a>
     <nav>
       <div class="nav-group">
-        <div class="nav-heading">作業</div>
-        <a href="/">ダッシュボード</a>
-        <a href="/projects">Project（LoRA作成単位）</a>
-        <a href="/lora-library">LoRAライブラリ</a>
+        <div class="nav-heading">{{ t('nav.work') }}</div>
+        <a href="/">{{ t('nav.dashboard') }}</a>
+        <a href="/projects">{{ t('nav.projects') }}</a>
+        <a href="/lora-library">{{ t('nav.lora_library') }}</a>
       </div>
       <div class="nav-group">
-        <div class="nav-heading">データ</div>
-        <a href="/datasets">データセット</a>
-        <a href="/reference-sets">リファレンスセット</a>
+        <div class="nav-heading">{{ t('nav.data') }}</div>
+        <a href="/datasets">{{ t('nav.datasets') }}</a>
+        <a href="/reference-sets">{{ t('nav.reference_sets') }}</a>
       </div>
       <div class="nav-group">
-        <div class="nav-heading">実行履歴</div>
-        <a href="/jobs">学習ジョブ</a>
-        <a href="/review-sessions">レビューセッション</a>
-        <a href="/validation-runs">検証Run</a>
+        <div class="nav-heading">{{ t('nav.run_history') }}</div>
+        <a href="/jobs">{{ t('nav.jobs') }}</a>
+        <a href="/review-sessions">{{ t('nav.review_sessions') }}</a>
+        <a href="/validation-runs">{{ t('nav.validation_runs') }}</a>
       </div>
       <div class="nav-group">
-        <div class="nav-heading">設定</div>
-        <a href="/presets">学習プリセット</a>
-        <a href="/sample-prompt-templates">サンプルプロンプト</a>
-        <a href="/validation-presets">検証プリセット</a>
-        <a href="/optimizer-master-checks">Optimizer Master Check</a>
-        <a href="/optimizer-mini-pilots">Optimizer Mini Pilot</a>
-        <a href="/environment">環境</a>
-        <a href="/settings/embeddings">Embedding / 機械補助レビュー設定</a>
+        <div class="nav-heading">{{ t('nav.settings') }}</div>
+        <a href="/presets">{{ t('nav.presets') }}</a>
+        <a href="/sample-prompt-templates">{{ t('nav.sample_prompts') }}</a>
+        <a href="/validation-presets">{{ t('nav.validation_presets') }}</a>
+        <a href="/optimizer-master-checks">{{ t('nav.optimizer_master_check') }}</a>
+        <a href="/optimizer-mini-pilots">{{ t('nav.optimizer_mini_pilot') }}</a>
+        <a href="/environment">{{ t('nav.environment') }}</a>
+        <a href="/settings/embeddings">{{ t('nav.embedding_settings') }}</a>
       </div>
       <div class="nav-group">
-        <div class="nav-heading">運用</div>
-        <a href="/storage">ストレージ</a>
-        <a href="/maintenance">メンテナンス</a>
-        <a href="/workflow">推奨ワークフロー</a>
+        <div class="nav-heading">{{ t('nav.operations') }}</div>
+        <a href="/storage">{{ t('nav.storage') }}</a>
+        <a href="/maintenance">{{ t('nav.maintenance') }}</a>
+        <a href="/workflow">{{ t('nav.workflow') }}</a>
       </div>
     </nav>
+    <div class="language-switch">
+      <a href="{{ lang_url('ja') }}" class="{{ 'active' if locale == 'ja' else '' }}">{{ t('lang.ja') }}</a>
+      <a href="{{ lang_url('en') }}" class="{{ 'active' if locale == 'en' else '' }}">{{ t('lang.en') }}</a>
+    </div>
     <div class="release">
       app {{ app_meta.app_version }} / {{ app_meta.git_commit }}<br>
       DB {{ app_meta.db_schema_version }}<br>

@@ -432,6 +432,57 @@ def optimizer_profile_param_bundle(row: tuple[Any, ...]) -> dict[str, Any]:
     }
 
 
+OPTIMIZER_DESCRIPTION_EN: dict[str, str] = {
+    "AdamW8bit": "Stable 8-bit AdamW optimizer. Use normal learning rates around 1e-4 as a baseline.",
+    "PagedAdamW8bit": "Memory-saving AdamW8bit variant. Use normal learning rates and confirm environment support.",
+    "Prodigy": "Auto-LR optimizer using learning_rate as a multiplier, commonly 1.0 rather than a normal LR.",
+    "Adafactor": "Memory-oriented optimizer. relative_step profiles manage LR differently from normal LR profiles.",
+    "Lion": "Experimental normal-LR optimizer with behavior different from AdamW. Use for comparison first.",
+    "DAdaptAdam": "Auto-LR DAdaptation optimizer. learning_rate acts as a multiplier and dadaptation is required.",
+    "DAdaptLion": "Experimental DAdaptation + Lion optimizer. Keep it as an advanced comparison profile.",
+}
+
+
+OPTIMIZER_RISK_NOTE_EN: dict[str, str] = {
+    "AdamW8bit": "Recommended stable baseline. Watch overtraining when repeats or epochs are high.",
+    "PagedAdamW8bit": "Useful for memory pressure, but verify support in the sd-scripts environment.",
+    "Prodigy": "Auto-LR can become strong. Compare weights and watch for overtraining.",
+    "Adafactor": "LR semantics differ by profile. Confirm whether relative_step or fixed LR is selected.",
+    "Lion": "Experimental. Start with soft settings and compare against AdamW before relying on it.",
+    "DAdaptAdam": "Requires dadaptation in the sd-scripts venv. Long-run behavior should be verified.",
+    "DAdaptLion": "Experimental and dependency-sensitive. Use only after Smoke/Mini Pilot validation.",
+}
+
+
+def optimizer_description_en(item: dict[str, Any]) -> str:
+    return OPTIMIZER_DESCRIPTION_EN.get(str(item.get("id") or ""), str(item.get("description") or ""))
+
+
+def optimizer_risk_note_en(item: dict[str, Any]) -> str:
+    return OPTIMIZER_RISK_NOTE_EN.get(str(item.get("id") or ""), str(item.get("risk_note") or ""))
+
+
+def optimizer_profile_description_en(optimizer_id: str, profile_type: str) -> str:
+    kind = str(profile_type or "").replace("_", " ")
+    if optimizer_id == "Prodigy":
+        return f"Prodigy {kind} profile. Uses auto-LR multiplier settings for advanced comparison."
+    if optimizer_id == "Adafactor":
+        return f"Adafactor {kind} profile. Check whether it uses relative_step or fixed LR."
+    if optimizer_id == "Lion":
+        return f"Lion {kind} experimental profile. Use as a comparison against AdamW."
+    if optimizer_id == "DAdaptAdam":
+        return f"DAdaptAdam {kind} profile. Requires dadaptation and benefits from longer validation."
+    if optimizer_id == "DAdaptLion":
+        return f"DAdaptLion {kind} experimental profile. Requires dadaptation and careful validation."
+    if optimizer_id == "PagedAdamW8bit":
+        return f"PagedAdamW8bit {kind} profile for memory-saving AdamW-style training."
+    return f"{optimizer_id} {kind} profile for stable baseline training."
+
+
+def optimizer_profile_risk_note_en(optimizer_id: str) -> str:
+    return OPTIMIZER_RISK_NOTE_EN.get(optimizer_id, "Review Smoke/Mini Pilot status before using this profile.")
+
+
 TRAINING_RECIPES_V2 = [
     {
         "id": "sdxl_character_face_adamw8bit_smoke",
@@ -958,6 +1009,9 @@ TRAINING_RECIPES_V2.extend(
 def optimizer_definition_v2_rows(now: str):
     for item in OPTIMIZER_DEFINITIONS_V2:
         extra = optimizer_definition_extra(item)
+        labels_json = json_dumps({"ja": item["display_name"], "en": item["display_name"]})
+        descriptions_json = json_dumps({"ja": item["description"], "en": optimizer_description_en(item)})
+        risk_notes_json = json_dumps({"ja": item["risk_note"], "en": optimizer_risk_note_en(item)})
         yield (
             item["id"],
             item["name"],
@@ -986,6 +1040,9 @@ def optimizer_definition_v2_rows(now: str):
             extra["smoke_test_priority"],
             extra["validated_optimizer_type"],
             extra["validation_status"],
+            labels_json,
+            descriptions_json,
+            risk_notes_json,
             1,
             1,
             now,
@@ -1013,6 +1070,11 @@ def optimizer_profile_v2_rows(now: str):
             description,
             risk_note,
         ) = row
+        labels_json = json_dumps({"ja": display_name, "en": display_name})
+        descriptions_json = json_dumps(
+            {"ja": description, "en": optimizer_profile_description_en(optimizer_definition_id, profile_type)}
+        )
+        risk_notes_json = json_dumps({"ja": risk_note, "en": optimizer_profile_risk_note_en(optimizer_definition_id)})
         yield (
             profile_id,
             optimizer_definition_id,
@@ -1034,6 +1096,9 @@ def optimizer_profile_v2_rows(now: str):
             json_dumps(bundle["recommended_params"]),
             json_dumps(bundle["command_params"]),
             json_dumps(bundle["smoke_params"]),
+            labels_json,
+            descriptions_json,
+            risk_notes_json,
             1,
             1,
             now,
@@ -1076,6 +1141,16 @@ PURPOSE_SHORT_LABELS = {
     "custom": "Custom",
 }
 
+PURPOSE_SHORT_LABELS_EN = {
+    "character_face": "Face Character",
+    "character_full_body": "Full Body Character",
+    "style": "Style",
+    "costume": "Costume",
+    "object": "Object",
+    "concept": "Concept",
+    "custom": "Custom",
+}
+
 RECIPE_TYPE_SHORT_LABELS = {
     "smoke": "動作確認",
     "pilot": "Pilot",
@@ -1086,6 +1161,19 @@ RECIPE_TYPE_SHORT_LABELS = {
     "generalize": "汎化寄り",
     "advanced": "Advanced",
     "experimental": "実験",
+    "custom": "Custom",
+}
+
+RECIPE_TYPE_SHORT_LABELS_EN = {
+    "smoke": "Smoke",
+    "pilot": "Pilot",
+    "soft": "Soft",
+    "balanced": "Balanced",
+    "balanced_long": "Standard 10ep",
+    "strong": "Strong",
+    "generalize": "Generalize",
+    "advanced": "Advanced",
+    "experimental": "Experimental",
     "custom": "Custom",
 }
 
@@ -1105,6 +1193,9 @@ def difficulty_label_for_recipe(recipe: dict[str, Any]) -> str:
 
 def recipe_display_labels(recipe: dict[str, Any]) -> dict[str, str]:
     purpose = PURPOSE_SHORT_LABELS.get(recipe.get("training_purpose_id"), recipe.get("training_purpose_id") or "Recipe")
+    purpose_en = PURPOSE_SHORT_LABELS_EN.get(
+        recipe.get("training_purpose_id"), str(recipe.get("training_purpose_id") or "Recipe").replace("_", " ").title()
+    )
     recipe_type = str(recipe.get("recipe_type") or "")
     optimizer = recipe.get("optimizer_definition_id") or "Optimizer"
     params = recipe.get("params") or {}
@@ -1113,62 +1204,149 @@ def recipe_display_labels(recipe: dict[str, Any]) -> dict[str, str]:
     lr = params.get("learning_rate") or params.get("unet_lr")
     target_min, target_recommended, target_max, _checkpoint_count = recipe["target"]
     type_label = RECIPE_TYPE_SHORT_LABELS.get(recipe_type, recipe_type or "Recipe")
+    type_label_en = RECIPE_TYPE_SHORT_LABELS_EN.get(recipe_type, (recipe_type or "Recipe").replace("_", " ").title())
 
     display_name = str(recipe.get("display_name") or "")
     if optimizer == "Prodigy" and ("Soft" in display_name or recipe_type in {"soft", "advanced"}):
         short_label = f"{purpose}・Prodigy弱め"
+        short_label_en = f"{purpose_en} - Prodigy Soft"
     elif optimizer == "Lion":
         short_label = f"{purpose}・Lion弱め実験" if "Soft" in display_name else f"{purpose}・Lion実験"
+        short_label_en = f"{purpose_en} - Lion Soft Experimental" if "Soft" in display_name else f"{purpose_en} - Lion Experimental"
     elif optimizer == "Adafactor":
         short_label = f"{purpose}・Adafactor固定LR" if "Fixed" in display_name else f"{purpose}・Adafactor省メモリ"
+        short_label_en = f"{purpose_en} - Adafactor Fixed LR" if "Fixed" in display_name else f"{purpose_en} - Adafactor Memory"
     elif optimizer.startswith("DAdapt"):
         short_label = f"{purpose}・DAdaptLion実験" if optimizer == "DAdaptLion" else f"{purpose}・DAdapt自動LR"
+        short_label_en = f"{purpose_en} - DAdaptLion Experimental" if optimizer == "DAdaptLion" else f"{purpose_en} - DAdapt Auto LR"
     elif optimizer in {"Lion8bit", "PagedLion8bit"}:
         short_label = f"{purpose}・Lion実験"
+        short_label_en = f"{purpose_en} - Lion Experimental"
     elif optimizer == "PagedAdamW8bit":
         short_label = f"{purpose}・省メモリ標準"
+        short_label_en = f"{purpose_en} - Memory Balanced"
     else:
         short_label = f"{purpose}・{type_label}"
+        short_label_en = f"{purpose_en} - {type_label_en}"
 
     subtitle_parts = [optimizer, "Standard LoRA", f"{epochs}epoch", f"dim{dim}", f"{target_recommended}step目安"]
+    subtitle_parts_en = [optimizer, "Standard LoRA", f"{epochs} epochs", f"dim {dim}", f"target {target_recommended} steps"]
     if recipe_type == "soft":
         subtitle_parts.append("LR低め")
+        subtitle_parts_en.append("lower LR")
     if optimizer == "Prodigy":
         d_coef = (params.get("optimizer_args") or {}).get("d_coef") if isinstance(params.get("optimizer_args"), dict) else None
         subtitle_parts = ["Auto-LR", "Advanced", f"d_coef {d_coef or '-'}", "過学習注意"]
+        subtitle_parts_en = ["Auto-LR", "Advanced", f"d_coef {d_coef or '-'}", "watch overtraining"]
     elif optimizer == "Lion":
         subtitle_parts = ["Lion", "Experimental", "LR低め", "比較用"]
+        subtitle_parts_en = ["Lion", "Experimental", "lower LR", "comparison"]
     elif optimizer == "Adafactor":
         if "Fixed" in display_name:
             subtitle_parts = ["Adafactor", "Advanced", "固定LR", "max_grad_norm 0.0"]
+            subtitle_parts_en = ["Adafactor", "Advanced", "fixed LR", "max_grad_norm 0.0"]
         else:
             subtitle_parts = ["Adafactor", "Advanced", "relative_step", "LR自動調整"]
+            subtitle_parts_en = ["Adafactor", "Advanced", "relative_step", "auto LR"]
     elif optimizer.startswith("DAdapt"):
         subtitle_parts = ["Auto-LR", "Experimental" if optimizer == "DAdaptLion" else "Advanced", "倍率LR", "過学習注意"]
+        subtitle_parts_en = ["Auto-LR", "Experimental" if optimizer == "DAdaptLion" else "Advanced", "LR multiplier", "watch overtraining"]
     elif recipe_type == "strong":
         subtitle_parts.append("効き強め")
+        subtitle_parts_en.append("stronger effect")
     elif lr:
         subtitle_parts.append(f"LR {lr}")
+        subtitle_parts_en.append(f"LR {lr}")
 
     full_label = f"[{recipe['model_family']}] {short_label} / {optimizer} / {epochs}epoch / {target_recommended}step目安"
+    full_label_en = f"[{recipe['model_family']}] {short_label_en} / {optimizer} / {epochs} epochs / target {target_recommended} steps"
     direct_select_label = f"[{recipe['model_family']}] {short_label} / {optimizer} / {epochs}ep / dim{dim}"
+    direct_select_label_en = f"[{recipe['model_family']}] {short_label_en} / {optimizer} / {epochs}ep / dim{dim}"
     difficulty = difficulty_label_for_recipe(recipe)
     recommended_badge = "おすすめ" if recipe_type in {"balanced", "balanced_long"} and difficulty == "stable" else ""
     return {
         "short_label": short_label,
+        "short_label_en": short_label_en,
         "full_label": full_label,
+        "full_label_en": full_label_en,
         "card_subtitle": " / ".join(str(part) for part in subtitle_parts if part not in {None, ""}),
+        "card_subtitle_en": " / ".join(str(part) for part in subtitle_parts_en if part not in {None, ""}),
         "direct_select_label": direct_select_label,
+        "direct_select_label_en": direct_select_label_en,
         "group_label": "",
         "recommended_badge": recommended_badge,
+        "recommended_badge_en": "Recommended" if recommended_badge else "",
         "difficulty_label": difficulty,
     }
+
+
+def recipe_expected_behavior_en(recipe: dict[str, Any]) -> str:
+    purpose = PURPOSE_SHORT_LABELS_EN.get(
+        recipe.get("training_purpose_id"), str(recipe.get("training_purpose_id") or "Recipe").replace("_", " ").title()
+    )
+    recipe_type = str(recipe.get("recipe_type") or "")
+    optimizer = str(recipe.get("optimizer_definition_id") or "")
+    if recipe_type == "smoke":
+        return "Smoke Recipe for checking the execution path. Not intended for quality evaluation."
+    if recipe_type == "pilot":
+        return f"Lightweight pilot Recipe for checking loss trend and epoch differences for {purpose}."
+    if recipe_type == "soft":
+        return f"Lower-strength {purpose} Recipe designed to reduce fixation and overtraining risk."
+    if recipe_type == "strong":
+        return f"Stronger {purpose} Recipe for clearer LoRA effect. Compare epochs carefully."
+    if optimizer == "Prodigy":
+        return f"Auto-LR advanced {purpose} Recipe using Prodigy."
+    if optimizer == "Adafactor":
+        return f"Memory-oriented advanced {purpose} Recipe using Adafactor."
+    if optimizer.startswith("DAdapt"):
+        return f"Auto-LR advanced {purpose} Recipe using {optimizer}."
+    if "Lion" in optimizer:
+        return f"Experimental {purpose} Recipe using Lion for comparison."
+    return f"Balanced {purpose} Recipe for standard LoRA training."
+
+
+def recipe_risk_note_en(recipe: dict[str, Any]) -> str:
+    recipe_type = str(recipe.get("recipe_type") or "")
+    optimizer = str(recipe.get("optimizer_definition_id") or "")
+    if recipe_type == "smoke":
+        return "Do not use this for quality evaluation."
+    if recipe_type == "pilot":
+        return "Pilot output is not final quality. Use it only to inspect early trends."
+    if recipe_type == "strong":
+        return "Higher overtraining risk. Review candidate epochs and weights carefully."
+    if optimizer == "Prodigy":
+        return "Auto-LR can become strong. Watch overtraining and compare lower weights."
+    if optimizer == "Adafactor":
+        return "LR semantics differ by profile. Confirm relative_step or fixed LR before use."
+    if optimizer.startswith("DAdapt"):
+        return "Requires dadaptation and longer behavior checks. Keep Smoke/Mini Pilot results in mind."
+    if "Lion" in optimizer:
+        return "Experimental optimizer. Compare against an AdamW baseline."
+    if optimizer == "PagedAdamW8bit":
+        return "Memory-saving candidate. Confirm runtime support in the sd-scripts environment."
+    return "Stable baseline. Still review candidate epochs before adopting a LoRA."
 
 
 def training_recipe_v2_rows(now: str):
     for recipe in TRAINING_RECIPES_V2:
         target_min, target_recommended, target_max, checkpoint_count = recipe["target"]
         labels = recipe_display_labels(recipe)
+        labels_json = json_dumps(
+            {
+                "ja": labels["short_label"],
+                "en": labels["short_label_en"],
+                "full_ja": labels["full_label"],
+                "full_en": labels["full_label_en"],
+                "direct_ja": labels["direct_select_label"],
+                "direct_en": labels["direct_select_label_en"],
+                "subtitle_ja": labels["card_subtitle"],
+                "subtitle_en": labels["card_subtitle_en"],
+                "badge_ja": labels["recommended_badge"],
+                "badge_en": labels["recommended_badge_en"],
+            }
+        )
+        descriptions_json = json_dumps({"ja": recipe["expected_behavior"], "en": recipe_expected_behavior_en(recipe)})
+        risk_notes_json = json_dumps({"ja": recipe["risk_note"], "en": recipe_risk_note_en(recipe)})
         yield (
             recipe["id"],
             recipe["name"],
@@ -1200,6 +1378,9 @@ def training_recipe_v2_rows(now: str):
             recipe["sort_order"],
             1,
             1,
+            labels_json,
+            descriptions_json,
+            risk_notes_json,
             now,
             now,
         )

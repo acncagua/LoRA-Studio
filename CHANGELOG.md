@@ -1,5 +1,20 @@
 # Changelog
 
+## phase12.4 / v0.5.3-beta - 2026-06-25
+
+### 主な変更
+
+- 段階的i18n基盤を追加しました。標準表示は日本語、`?lang=en` または左ナビの言語切替で英語表示にできます。
+- 初期翻訳対象として、左ナビ、ページ見出し、主要ボタン、状態バッジ、Primary Action、Job作成Wizardの主要表示を扱います。
+- Built-in Recipe v2 / Optimizer masterに `labels_json`、`descriptions_json`、`risk_notes_json` を追加し、多言語表示を保存できるようにしました。
+- RecipeカードとOptimizer/Recipe Libraryで、built-in masterの表示名・説明・risk noteをlocaleに応じて表示する基盤を追加しました。
+
+### 注意点
+
+- sd-scripts log、生成command、raw args、tracebackは翻訳しません。
+- Custom Recipeやユーザー入力名は翻訳せず、入力された名前をそのまま表示します。
+- 初期版のため、詳細フォーム内の全ラベル翻訳は段階的に追加します。
+
 ## phase12.3.1 / v0.5.3-beta - 2026-06-25
 
 Phase 12.3.1 adds Practical Mini Pilot checks for Optimizer Profiles after Smoke OK.

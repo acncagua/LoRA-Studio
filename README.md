@@ -22,7 +22,7 @@ than training itself.
 ## Status
 
 Current release: v0.5.3-beta
-Development phase: Phase 12.3.1
+Development phase: Phase 12.4
 
 The core workflow is operational and
 actively used for local LoRA production,
@@ -57,6 +57,23 @@ for the entire LoRA lifecycle.
 - LoRA Selection Workflow
 - Machine Review Assist
 - Storage Cleanup Support
+- Gradual i18n foundation for Japanese/English UI screenshots
+
+## Gradual i18n
+
+LoRA-Studio now has a staged i18n foundation. The default UI locale is
+Japanese, and English can be enabled from the language switch in the left
+navigation or by adding `?lang=en` to a page URL. This makes README and OSS
+screenshots reproducible in English without changing the internal workflow.
+
+The first translation scope covers the left navigation, page headings, main
+buttons, status badges, primary actions, and Recipe / Optimizer master labels.
+Internal identifiers remain English keys. sd-scripts logs, generated commands,
+raw args, and tracebacks are intentionally not translated.
+
+Built-in Recipe v2 and Optimizer master rows can store localized
+`labels_json`, `descriptions_json`, and `risk_notes_json`. Custom Recipes and
+user-entered names are shown as entered and are not translated automatically.
 
 ## Phase 12.3.1: Practical Mini Pilot
 

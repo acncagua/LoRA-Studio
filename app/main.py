@@ -52,6 +52,7 @@ from app.services.image_store import (
     validation_images_root,
     verify_image_file,
 )
+from app.services.i18n import language_url, localized_json_value, request_locale, translate, translate_action_text
 from app.services.maintenance import create_app_backup, export_diagnostics, maintenance_summary
 from app.services.machine_review import (
     create_machine_review_job,
@@ -312,21 +313,91 @@ def on_startup() -> None:
 
 def render(request: Request, template: str, **context: Any) -> HTMLResponse:
     tpl = templates.get_template(template)
+    locale = request_locale(request)
+    t = lambda key, default=None: translate(key, locale, default)
     context.setdefault("app_name", settings.APP_NAME)
     context.setdefault("request", request)
+    context.setdefault("locale", locale)
+    context.setdefault("supported_locales", ["ja", "en"])
+    context.setdefault("t", t)
+    context.setdefault("lang_url", lambda lang: language_url(request, lang))
     context.setdefault("sd_scripts_release_tag", settings.SD_SCRIPTS_RELEASE_TAG)
     context.setdefault("sd_scripts_release_commit", settings.SD_SCRIPTS_RELEASE_COMMIT)
     context.setdefault("app_meta", current_app_meta())
     context.setdefault("display_preset_name", display_preset_name)
     context.setdefault("display_validation_preset_name", display_validation_preset_name)
     context.setdefault("display_validation_level", display_validation_level)
-    context.setdefault("display_validation_status", display_validation_status)
-    context.setdefault("validation_run_status_options", list(VALIDATION_RUN_STATUS_LABELS.items()))
-    context.setdefault("display_status_text", display_status_text)
+    context.setdefault("display_validation_status", lambda status: translate(f"status.{status}", locale, display_validation_status(status)))
+    context.setdefault("validation_run_status_options", validation_run_status_options(locale))
+    if "status_labels" not in context or context.get("status_labels") is STATUS_LABELS:
+        context["status_labels"] = localized_status_labels(locale)
+    if "project_status_labels" not in context or context.get("project_status_labels") is PROJECT_STATUS_LABELS:
+        context["project_status_labels"] = localized_project_status_labels(locale)
+    context.setdefault("display_status_text", lambda text: translate_action_text(display_status_text(text), locale))
+    context.setdefault("action_text", lambda text: translate_action_text(text, locale))
     context.setdefault("display_machine_label", display_machine_label)
     context.setdefault("static_asset_version", static_asset_version())
     context.setdefault("json_loads", safe_json_loads)
     return HTMLResponse(tpl.render(**context))
+
+
+def localized_status_labels(locale: str) -> dict[str, str]:
+    return {key: translate(f"status.{key}", locale, value) for key, value in STATUS_LABELS.items()}
+
+
+def localized_project_status_labels(locale: str) -> dict[str, str]:
+    return {key: translate(f"status.{key}", locale, value) for key, value in PROJECT_STATUS_LABELS.items()}
+
+
+def validation_run_status_options(locale: str) -> list[tuple[str, str]]:
+    return [(key, translate(f"status.{key}", locale, value)) for key, value in VALIDATION_RUN_STATUS_LABELS.items()]
+
+
+def localize_catalog_row(row: Any, locale: str) -> dict[str, Any]:
+    item = dict(row)
+    labels_raw = item.get("labels_json")
+    labels_data: dict[str, Any] = {}
+    if labels_raw:
+        if isinstance(labels_raw, dict):
+            labels_data = labels_raw
+        else:
+            try:
+                parsed = json.loads(str(labels_raw))
+                if isinstance(parsed, dict):
+                    labels_data = parsed
+            except json.JSONDecodeError:
+                labels_data = {}
+    label = localized_json_value(labels_data or labels_raw, locale)
+    desc = localized_json_value(item.get("descriptions_json"), locale)
+    risk = localized_json_value(item.get("risk_notes_json"), locale)
+    if label:
+        item["localized_label"] = label
+        if "short_label" in item:
+            item["short_label"] = label
+        elif "display_name" in item:
+            item["display_name"] = label
+    if labels_data:
+        prefix = "en" if locale == "en" else "ja"
+        item["localized_full_label"] = labels_data.get(f"full_{prefix}") or labels_data.get("full_en") or labels_data.get("full_ja") or item.get("full_label")
+        item["full_label"] = item["localized_full_label"]
+        item["direct_select_label"] = labels_data.get(f"direct_{prefix}") or labels_data.get("direct_en") or labels_data.get("direct_ja") or item.get("direct_select_label")
+        item["card_subtitle"] = labels_data.get(f"subtitle_{prefix}") or labels_data.get("subtitle_en") or labels_data.get("subtitle_ja") or item.get("card_subtitle")
+        if "recommended_badge" in item:
+            item["recommended_badge"] = labels_data.get(f"badge_{prefix}") or labels_data.get("badge_en") or labels_data.get("badge_ja") or item.get("recommended_badge")
+    if desc:
+        item["localized_description"] = desc
+        if "expected_behavior" in item:
+            item["expected_behavior"] = desc
+        elif "description" in item:
+            item["description"] = desc
+    if risk:
+        item["localized_risk_note"] = risk
+        item["risk_note"] = risk
+    return item
+
+
+def localize_catalog_rows(rows: list[Any], locale: str) -> list[dict[str, Any]]:
+    return [localize_catalog_row(row, locale) for row in rows]
 
 
 def safe_json_loads(value: Any, default: Any | None = None) -> Any:
@@ -338,6 +409,26 @@ def safe_json_loads(value: Any, default: Any | None = None) -> Any:
         return json.loads(str(value))
     except (TypeError, json.JSONDecodeError):
         return {} if default is None else default
+
+
+OPTIMIZER_COMPATIBILITY_NOTES_EN = {
+    "AdamW8bit": ["Stable baseline optimizer. Use normal LR values."],
+    "PagedAdamW8bit": ["Memory-saving AdamW variant. Confirm sd-scripts/environment support."],
+    "Prodigy": ["Use scheduler=constant.", "learning_rate is an auto-LR multiplier, not a normal LR."],
+    "Adafactor": ["relative_step profiles use LR differently from normal LR.", "Fixed-LR profiles may require max_grad_norm=0.0."],
+    "Lion": ["Experimental optimizer. Compare against AdamW first."],
+    "DAdaptAdam": ["Requires dadaptation in the sd-scripts venv.", "Use scheduler=constant and LR multiplier semantics."],
+    "DAdaptLion": ["Requires dadaptation in the sd-scripts venv.", "Experimental profile; validate with Smoke/Mini Pilot."],
+}
+
+
+def localized_optimizer_compatibility_notes(row: Any, locale: str) -> list[str]:
+    item = dict(row)
+    if locale == "en":
+        notes = OPTIMIZER_COMPATIBILITY_NOTES_EN.get(str(item.get("id") or ""))
+        if notes:
+            return notes
+    return safe_json_loads(item.get("compatibility_notes_json"), [])
 
 
 def static_asset_version() -> str:
@@ -3205,11 +3296,12 @@ def job_delete(job_id: int, delete_reason: str = Form(""), delete_mode: str = Fo
 
 @app.get("/jobs/new", response_class=HTMLResponse)
 def job_new(request: Request, project_id: str = Query(""), mode: str = Query("")) -> HTMLResponse:
+    locale = request_locale(request)
     mode_aliases = {"clone": "derived", "derive": "derived"}
     initial_mode = mode_aliases.get(mode, mode)
     datasets = fetch_all("SELECT * FROM datasets ORDER BY id DESC")
     presets = preset_option_rows(fetch_all("SELECT * FROM presets ORDER BY model_family DESC, name"))
-    recipes_v2 = fetch_all(
+    recipes_v2 = localize_catalog_rows(fetch_all(
         """
         SELECT r.*, p.display_name AS purpose_display_name,
                p.description AS purpose_description,
@@ -3236,9 +3328,9 @@ def job_new(request: Request, project_id: str = Query(""), mode: str = Query("")
         WHERE r.is_active = 1
         ORDER BY r.model_family DESC, p.sort_order, r.sort_order, r.display_name
         """
-    )
-    optimizers_v2 = fetch_all("SELECT * FROM optimizer_definitions_v2 WHERE is_active = 1 ORDER BY display_name")
-    optimizer_profiles_v2 = fetch_all("SELECT * FROM optimizer_profiles_v2 WHERE is_active = 1 ORDER BY optimizer_definition_id, model_family, profile_type")
+    ), locale)
+    optimizers_v2 = localize_catalog_rows(fetch_all("SELECT * FROM optimizer_definitions_v2 WHERE is_active = 1 ORDER BY display_name"), locale)
+    optimizer_profiles_v2 = localize_catalog_rows(fetch_all("SELECT * FROM optimizer_profiles_v2 WHERE is_active = 1 ORDER BY optimizer_definition_id, model_family, profile_type"), locale)
     training_purposes = fetch_all("SELECT * FROM training_purposes WHERE is_active = 1 ORDER BY sort_order, display_name")
     network_types = fetch_all("SELECT * FROM network_type_definitions WHERE is_active = 1 ORDER BY display_name")
     projects = fetch_all("SELECT * FROM lora_projects WHERE status != 'archived' ORDER BY updated_at DESC, id DESC")
@@ -3286,7 +3378,7 @@ def job_new(request: Request, project_id: str = Query(""), mode: str = Query("")
                 **dict(row),
                 "allowed_schedulers": safe_json_loads(row["allowed_schedulers_json"], []),
                 "optimizer_args_schema": safe_json_loads(row["optimizer_args_schema_json"], {}),
-                "compatibility_notes": safe_json_loads(row["compatibility_notes_json"], []),
+                "compatibility_notes": localized_optimizer_compatibility_notes(row, locale),
             }
             for row in optimizers_v2
         ],
@@ -3322,6 +3414,7 @@ def training_recipes_library(
     source: str = Query(""),
     recipe_type: str = Query(""),
 ) -> HTMLResponse:
+    locale = request_locale(request)
     optimizer_category = optimizer_category if isinstance(optimizer_category, str) else ""
     network_type = network_type if isinstance(network_type, str) else ""
     source = source if isinstance(source, str) else ""
@@ -3349,7 +3442,7 @@ def training_recipes_library(
     if recipe_type:
         where.append("r.recipe_type = ?")
         params.append(recipe_type)
-    recipes = fetch_all(
+    recipes = localize_catalog_rows(fetch_all(
         f"""
         SELECT r.*, p.display_name AS purpose_display_name,
                od.display_name AS optimizer_display_name,
@@ -3369,13 +3462,13 @@ def training_recipes_library(
         ORDER BY r.model_family DESC, p.sort_order, r.sort_order, r.display_name
         """,
         tuple(params),
-    )
+    ), locale)
     return render(
         request,
         "training_recipes.html",
         recipes=recipes,
         purposes=fetch_all("SELECT * FROM training_purposes WHERE is_active = 1 ORDER BY sort_order, display_name"),
-        optimizers=fetch_all("SELECT * FROM optimizer_definitions_v2 WHERE is_active = 1 ORDER BY display_name"),
+        optimizers=localize_catalog_rows(fetch_all("SELECT * FROM optimizer_definitions_v2 WHERE is_active = 1 ORDER BY display_name"), locale),
         network_types=fetch_all("SELECT * FROM network_type_definitions WHERE is_active = 1 ORDER BY display_name"),
         model_family=model_family,
         purpose=purpose,
@@ -3389,6 +3482,7 @@ def training_recipes_library(
 
 @app.get("/training-recipes/{recipe_id}", response_class=HTMLResponse)
 def training_recipe_detail(request: Request, recipe_id: str) -> HTMLResponse:
+    locale = request_locale(request)
     recipe = fetch_one(
         """
         SELECT r.*, p.display_name AS purpose_display_name,
@@ -3413,6 +3507,7 @@ def training_recipe_detail(request: Request, recipe_id: str) -> HTMLResponse:
     )
     if recipe is None:
         raise HTTPException(status_code=404, detail="Recipe not found")
+    recipe = localize_catalog_row(recipe, locale)
     jobs = fetch_all(
         "SELECT id, name, status, created_at FROM training_jobs WHERE recipe_v2_id = ? ORDER BY id DESC LIMIT 20",
         (recipe_id,),
@@ -3431,8 +3526,9 @@ def training_recipe_detail(request: Request, recipe_id: str) -> HTMLResponse:
 
 @app.get("/optimizers", response_class=HTMLResponse)
 def optimizers_library(request: Request) -> HTMLResponse:
-    optimizers = fetch_all("SELECT * FROM optimizer_definitions_v2 WHERE is_active = 1 ORDER BY display_name")
-    profiles = fetch_all(
+    locale = request_locale(request)
+    optimizers = localize_catalog_rows(fetch_all("SELECT * FROM optimizer_definitions_v2 WHERE is_active = 1 ORDER BY display_name"), locale)
+    profiles = localize_catalog_rows(fetch_all(
         """
         SELECT p.*, od.display_name AS optimizer_display_name, od.lr_semantics
         FROM optimizer_profiles_v2 p
@@ -3440,7 +3536,7 @@ def optimizers_library(request: Request) -> HTMLResponse:
         WHERE p.is_active = 1
         ORDER BY od.display_name, p.model_family, p.profile_type
         """
-    )
+    ), locale)
     network_types = fetch_all("SELECT * FROM network_type_definitions WHERE is_active = 1 ORDER BY display_name")
     return render(request, "optimizers.html", optimizers=optimizers, profiles=profiles, network_types=network_types, latest_master_check=latest_master_check_run())
 
@@ -3665,6 +3761,7 @@ def optimizer_mini_pilot_report(run_id: int) -> RedirectResponse:
 
 @app.get("/optimizers/{optimizer_id}", response_class=HTMLResponse)
 def optimizer_detail(request: Request, optimizer_id: str, message: str = Query(""), error: str = Query("")) -> HTMLResponse:
+    locale = request_locale(request)
     optimizer = fetch_one("SELECT * FROM optimizer_definitions_v2 WHERE id = ?", (optimizer_id,))
     if optimizer is None:
         raise HTTPException(status_code=404, detail="Optimizer not found")
@@ -3686,6 +3783,9 @@ def optimizer_detail(request: Request, optimizer_id: str, message: str = Query("
         """,
         (optimizer_id,),
     )
+    optimizer = localize_catalog_row(optimizer, locale)
+    profiles = localize_catalog_rows(profiles, locale)
+    recipes = localize_catalog_rows(recipes, locale)
     profile_ids = [row["id"] for row in profiles]
     latest_results: dict[str, Any] = {}
     if profile_ids:
@@ -3717,7 +3817,7 @@ def optimizer_detail(request: Request, optimizer_id: str, message: str = Query("
         default_base_model_path=str(settings.ROOT_DIR / "models"),
         message=message,
         error=error,
-        notes=safe_json_loads(optimizer["compatibility_notes_json"], []),
+        notes=localized_optimizer_compatibility_notes(optimizer, locale),
         allowed_schedulers=safe_json_loads(optimizer["allowed_schedulers_json"], []),
         args_schema=json.dumps(safe_json_loads(optimizer["optimizer_args_schema_json"], {}), ensure_ascii=False, indent=2),
     )

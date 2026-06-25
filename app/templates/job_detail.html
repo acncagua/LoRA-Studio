@@ -3,7 +3,7 @@
 {% set review_current_status = review_current.status if review_current else '' %}
 {% set review_running_statuses = ['starting', 'running', 'generating_images', 'embedding_images', 'machine_reviewing', 'building_matrix'] %}
 {% set review_prepare_stale_start = review_prepare and ('レビュー準備を開始' in review_prepare or 'Review Preparationを開始' in review_prepare) and review_current_status not in review_running_statuses %}
-<nav class="breadcrumbs"><a href="/">ダッシュボード</a><a href="/jobs">学習ジョブ一覧</a><span>学習ジョブ #{{ job.id }}</span></nav>
+<nav class="breadcrumbs"><a href="/">{{ t('nav.dashboard') }}</a><a href="/jobs">{{ t('page.jobs.title') }}</a><span>{{ t('page.job.title') }} #{{ job.id }}</span></nav>
 <header class="page-head">
   <h1>#{{ job.id }} {{ job.name }}</h1>
 </header>
@@ -11,9 +11,9 @@
 <section class="notice">
   <h2>Project（LoRA作成単位）: {{ project.name }}</h2>
   <p>
-    <a class="button" href="/projects/{{ project.id }}">Projectへ戻る</a>
-    {% if project.selected_job_id %}<a class="button" href="/jobs/{{ project.selected_job_id }}">現在の採用学習ジョブを開く</a>{% endif %}
-    <a class="button" href="/projects/{{ project.id }}#training-jobs">Project内の学習ジョブ一覧</a>
+    <a class="button" href="/projects/{{ project.id }}">{{ t('common.back') }}</a>
+    {% if project.selected_job_id %}<a class="button" href="/jobs/{{ project.selected_job_id }}">{{ t('primary.open_selected_job') }}</a>{% endif %}
+    <a class="button" href="/projects/{{ project.id }}#training-jobs">{{ t('primary.open_project_jobs') }}</a>
   </p>
   {% if project.selected_job_id and project.selected_job_id != job.id %}
   <p class="warning">この学習ジョブはProject内の過去/派生ジョブです。現在の採用学習ジョブは <a href="/jobs/{{ project.selected_job_id }}">#{{ project.selected_job_id }}{% if project_selected_job %} {{ project_selected_job.name }}{% endif %}</a> です。</p>
@@ -28,47 +28,47 @@
 {% if action_state.dirty %}<p class="notice warning">設定が変更されています。実行前にファイル準備を再実行してください。</p>{% endif %}
 <section class="action-panel">
   <div>
-    <h2>Job全体の次にやること</h2>
+    <h2>{{ t('label.job_next') }}</h2>
     <p>{{ next_action }}</p>
   </div>
   <div>
-    <h2>Job全体の主要操作</h2>
+    <h2>{{ t('label.job_primary') }}</h2>
     <div class="actions primary-action">
       {% if action_state.dirty and action_state.prepare %}
-      <form method="post" action="/jobs/{{ job.id }}/prepare"><button type="submit">ファイル準備を再実行</button></form>
+      <form method="post" action="/jobs/{{ job.id }}/prepare"><button type="submit">{{ t('primary.prepare_files_again') }}</button></form>
       {% elif job.status == 'draft' and action_state.prepare %}
-      <form method="post" action="/jobs/{{ job.id }}/prepare"><button type="submit">ファイル準備</button></form>
+      <form method="post" action="/jobs/{{ job.id }}/prepare"><button type="submit">{{ t('primary.prepare_files') }}</button></form>
       {% elif job.status in ['prepared', 'failed', 'stopped'] and action_state.run %}
       <form method="post" action="/jobs/{{ job.id }}/run">
         {% if trigger_status.current_label == 'ERROR' %}<label class="inline-check"><input type="checkbox" name="acknowledge_trigger_mismatch" value="yes"> トリガー不一致を確認済み</label>{% endif %}
-        <button type="submit">実行</button>
+        <button type="submit">{{ t('primary.run') }}</button>
       </form>
       {% elif job.status == 'running' and action_state.stop %}
-      <form method="post" action="/jobs/{{ job.id }}/stop"><button type="submit" class="danger">停止</button></form>
+      <form method="post" action="/jobs/{{ job.id }}/stop"><button type="submit" class="danger">{{ t('primary.stop') }}</button></form>
       {% elif job.status == 'completed' and candidate_standard_running_group and not selected_output %}
-      <a class="button" href="#active-operation-monitor">標準候補比較の進捗を確認</a>
+      <a class="button" href="#active-operation-monitor">{{ t('primary.check_standard_progress') }}</a>
       {% elif job.status == 'completed' and candidate_standard_ready_group and not selected_output %}
-      <a class="button" href="/jobs/{{ job.id }}/candidate-comparisons/{{ candidate_standard_ready_group.id }}/matrix">標準候補比較Matrixを開く</a>
+      <a class="button" href="/jobs/{{ job.id }}/candidate-comparisons/{{ candidate_standard_ready_group.id }}/matrix">{{ t('primary.open_standard_matrix') }}</a>
       {% elif review_preparation.current and review_preparation.current.primary_action == 'progress' %}
-      <a class="button" href="#review-preparation">レビュー準備の進捗を確認</a>
+      <a class="button" href="#review-preparation">{{ t('primary.check_review_progress') }}</a>
       {% elif job.status == 'completed' and review_preparation.current and review_preparation.current.primary_action == 'open_matrix' and not selected_output %}
-      <a class="button" href="/jobs/{{ job.id }}/review-sessions/{{ review_preparation.current.session_id }}/matrix">レビューMatrixを開く</a>
+      <a class="button" href="/jobs/{{ job.id }}/review-sessions/{{ review_preparation.current.session_id }}/matrix">{{ t('primary.open_review_matrix') }}</a>
       {% elif job.status == 'completed' and review_preparation.current and review_preparation.current.primary_action == 'build_matrix' and not selected_output %}
-      <form method="post" action="/jobs/{{ job.id }}/review-sessions/{{ review_preparation.current.session_id }}/matrix/build"><button type="submit">レビューMatrixを作成</button></form>
+      <form method="post" action="/jobs/{{ job.id }}/review-sessions/{{ review_preparation.current.session_id }}/matrix/build"><button type="submit">{{ t('primary.create_review_matrix') }}</button></form>
       {% elif job.status == 'completed' and review_preparation.current and review_preparation.current.primary_action == 'start' and not selected_output %}
-      <form method="post" action="/jobs/{{ job.id }}/review-sessions/{{ review_preparation.current.session_id }}/run" data-review-preparation-run-form><button type="submit" data-review-preparation-run-button {% if outputs|length == 0 %}disabled{% endif %}>候補レビューを開始</button></form>
+      <form method="post" action="/jobs/{{ job.id }}/review-sessions/{{ review_preparation.current.session_id }}/run" data-review-preparation-run-form><button type="submit" data-review-preparation-run-button {% if outputs|length == 0 %}disabled{% endif %}>{{ t('primary.start_review') }}</button></form>
       {% elif job.status == 'completed' and review_preparation.current and review_preparation.current.primary_action == 'check_log' and not selected_output %}
-      <a class="button danger" href="#review-preparation-log">ログを確認</a>
+      <a class="button danger" href="#review-preparation-log">{{ t('primary.check_logs') }}</a>
       {% elif selected_output %}
-      <a class="button" href="#validation-runs">weight検証Runを作成</a>
+      <a class="button" href="#validation-runs">{{ t('primary.create_weight_validation') }}</a>
       {% elif job.status == 'completed' and outputs|length > 0 %}
-      <form method="post" action="/jobs/{{ job.id }}/review-preparation/run" data-review-preparation-run-form><button type="submit" data-review-preparation-run-button>候補レビューを作成</button></form>
+      <form method="post" action="/jobs/{{ job.id }}/review-preparation/run" data-review-preparation-run-form><button type="submit" data-review-preparation-run-button>{{ t('primary.create_candidate_review') }}</button></form>
       {% elif job.status == 'failed' %}
-      <a class="button danger" href="#technical-log">ログを確認</a>
+      <a class="button danger" href="#technical-log">{{ t('primary.check_logs') }}</a>
       {% elif action_state.edit %}
-      <a class="button" href="/jobs/{{ job.id }}/edit">学習ジョブを編集</a>
+      <a class="button" href="/jobs/{{ job.id }}/edit">{{ t('primary.edit_job') }}</a>
       {% else %}
-      <a class="button" href="#overview">概要を確認</a>
+      <a class="button" href="#overview">{{ t('primary.open_details') }}</a>
       {% endif %}
     </div>
     {% if selected_output %}
@@ -86,41 +86,41 @@
     <details class="secondary-actions">
       <summary>その他操作</summary>
       <div class="actions compact-actions">
-    {% if action_state.edit %}<a class="button" href="/jobs/{{ job.id }}/edit">学習ジョブを編集</a>{% else %}<span class="button disabled">学習ジョブを編集</span>{% endif %}
-    {% if action_state.prepare %}<form method="post" action="/jobs/{{ job.id }}/prepare"><button type="submit">ファイル準備</button></form>{% else %}<span class="button disabled">ファイル準備</span>{% endif %}
+    {% if action_state.edit %}<a class="button" href="/jobs/{{ job.id }}/edit">{{ t('primary.edit_job') }}</a>{% else %}<span class="button disabled">{{ t('primary.edit_job') }}</span>{% endif %}
+    {% if action_state.prepare %}<form method="post" action="/jobs/{{ job.id }}/prepare"><button type="submit">{{ t('primary.prepare_files') }}</button></form>{% else %}<span class="button disabled">{{ t('primary.prepare_files') }}</span>{% endif %}
     {% if action_state.preflight %}
     <form method="post" action="/jobs/{{ job.id }}/preflight">
       {% if trigger_status.current_label == 'ERROR' %}
       <label class="inline-check"><input type="checkbox" name="acknowledge_trigger_mismatch" value="yes"> トリガー不一致を確認済み</label>
       {% endif %}
-      <button type="submit">事前確認</button>
+      <button type="submit">{{ t('primary.preflight') }}</button>
     </form>
-    {% else %}<span class="button disabled">事前確認</span>{% endif %}
+    {% else %}<span class="button disabled">{{ t('primary.preflight') }}</span>{% endif %}
     {% if action_state.run %}
     <form method="post" action="/jobs/{{ job.id }}/run">
       {% if trigger_status.current_label == 'ERROR' %}
       <label class="inline-check"><input type="checkbox" name="acknowledge_trigger_mismatch" value="yes"> トリガー不一致を確認済み</label>
       {% endif %}
-      <button type="submit">実行</button>
+      <button type="submit">{{ t('primary.run') }}</button>
     </form>
-    {% else %}<span class="button disabled">実行</span>{% endif %}
-    {% if action_state.stop %}<form method="post" action="/jobs/{{ job.id }}/stop"><button type="submit" class="danger">停止</button></form>{% else %}<span class="button disabled">停止</span>{% endif %}
-    {% if action_state.reimport %}<form method="post" action="/jobs/{{ job.id }}/reimport"><button type="submit">結果を再取り込み</button></form>{% else %}<span class="button disabled">結果を再取り込み</span>{% endif %}
-    {% if action_state.select %}<a class="button" href="#outputs">LoRAを選択</a>{% else %}<span class="button disabled">LoRAを選択</span>{% endif %}
-    {% if project %}<form method="post" action="/jobs/{{ job.id }}/sync-project-selection" data-adoption-form><button type="submit" {% if not selected_output %}disabled{% endif %}>この学習ジョブの選択LoRAをProject採用に反映</button><span class="save-status" data-adoption-status></span></form>{% endif %}
-    {% if action_state.clone %}<form method="post" action="/jobs/{{ job.id }}/clone"><button type="submit">学習ジョブを複製</button></form>{% else %}<span class="button disabled">学習ジョブを複製</span>{% endif %}
-    {% if action_state.revised %}<form method="post" action="/jobs/{{ job.id }}/revised-draft"><button type="submit">派生ドラフトを作成</button></form>{% else %}<span class="button disabled">派生ドラフトを作成</span>{% endif %}
-    {% if action_state.compare %}<a class="button" href="/compare?job_a={{ job.id }}">比較</a>{% else %}<span class="button disabled">比較</span>{% endif %}
-    {% if action_state.export %}<form method="post" action="/jobs/{{ job.id }}/export-selected-lora"><button type="submit">採用LoRA出力</button></form>{% else %}<span class="button disabled">採用LoRA出力</span>{% endif %}
-    {% if action_state.contact_sheet %}<form method="post" action="/jobs/{{ job.id }}/export-contact-sheet"><button type="submit">コンタクトシート出力</button></form>{% else %}<span class="button disabled">コンタクトシート出力</span>{% endif %}
-    {% if action_state.archive %}<form method="post" action="/jobs/{{ job.id }}/archive"><button type="submit">アーカイブ</button></form>{% endif %}
+    {% else %}<span class="button disabled">{{ t('primary.run') }}</span>{% endif %}
+    {% if action_state.stop %}<form method="post" action="/jobs/{{ job.id }}/stop"><button type="submit" class="danger">{{ t('primary.stop') }}</button></form>{% else %}<span class="button disabled">{{ t('primary.stop') }}</span>{% endif %}
+    {% if action_state.reimport %}<form method="post" action="/jobs/{{ job.id }}/reimport"><button type="submit">{{ t('primary.reimport') }}</button></form>{% else %}<span class="button disabled">{{ t('primary.reimport') }}</span>{% endif %}
+    {% if action_state.select %}<a class="button" href="#outputs">{{ t('primary.select_lora') }}</a>{% else %}<span class="button disabled">{{ t('primary.select_lora') }}</span>{% endif %}
+    {% if project %}<form method="post" action="/jobs/{{ job.id }}/sync-project-selection" data-adoption-form><button type="submit" {% if not selected_output %}disabled{% endif %}>{{ t('primary.sync_project_selection') }}</button><span class="save-status" data-adoption-status></span></form>{% endif %}
+    {% if action_state.clone %}<form method="post" action="/jobs/{{ job.id }}/clone"><button type="submit">{{ t('primary.clone_job') }}</button></form>{% else %}<span class="button disabled">{{ t('primary.clone_job') }}</span>{% endif %}
+    {% if action_state.revised %}<form method="post" action="/jobs/{{ job.id }}/revised-draft"><button type="submit">{{ t('primary.create_derived_draft') }}</button></form>{% else %}<span class="button disabled">{{ t('primary.create_derived_draft') }}</span>{% endif %}
+    {% if action_state.compare %}<a class="button" href="/compare?job_a={{ job.id }}">{{ t('primary.compare') }}</a>{% else %}<span class="button disabled">{{ t('primary.compare') }}</span>{% endif %}
+    {% if action_state.export %}<form method="post" action="/jobs/{{ job.id }}/export-selected-lora"><button type="submit">{{ t('primary.export_selected_lora') }}</button></form>{% else %}<span class="button disabled">{{ t('primary.export_selected_lora') }}</span>{% endif %}
+    {% if action_state.contact_sheet %}<form method="post" action="/jobs/{{ job.id }}/export-contact-sheet"><button type="submit">{{ t('primary.export_contact_sheet') }}</button></form>{% else %}<span class="button disabled">{{ t('primary.export_contact_sheet') }}</span>{% endif %}
+    {% if action_state.archive %}<form method="post" action="/jobs/{{ job.id }}/archive"><button type="submit">{{ t('primary.archive') }}</button></form>{% endif %}
     {% if action_state.delete %}
     <form method="post" action="/jobs/{{ job.id }}/delete-draft" onsubmit="return confirm('この未実行の下書き学習ジョブを削除します。runsファイルは削除されません。よろしいですか？');">
       <input type="hidden" name="delete_reason" value="未実行の下書き整理">
-      <button type="submit" class="danger">削除</button>
+      <button type="submit" class="danger">{{ t('primary.delete') }}</button>
     </form>
     {% endif %}
-    {% if action_state.restore %}<form method="post" action="/jobs/{{ job.id }}/restore"><button type="submit">アーカイブから復元</button></form>{% endif %}
+    {% if action_state.restore %}<form method="post" action="/jobs/{{ job.id }}/restore"><button type="submit">{{ t('primary.restore') }}</button></form>{% endif %}
       </div>
     </details>
   </div>
@@ -240,7 +240,7 @@
           {% for group in candidate_standard_groups %}
           <tr>
             <td>#{{ group.id }}</td>
-            <td><span class="label {{ group.status }}">{{ group.status }}</span>{% if group.error_message %}<br><span class="muted">{{ group.error_message }}</span>{% endif %}</td>
+            <td><span class="label {{ group.status }}">{{ display_validation_status(group.status) }}</span>{% if group.error_message %}<br><span class="muted">{{ group.error_message }}</span>{% endif %}</td>
             <td>{{ group.candidate_epochs|join(', ') }}</td>
             <td>{% for run_id in group.validation_run_ids %}<a href="/validation-runs/{{ run_id }}">#{{ run_id }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</td>
             <td>{{ group.registered_image_count }} / {{ group.logical_image_count or group.expected_total_images }}</td>
@@ -295,7 +295,7 @@
   <h3>現在のレビューセッション #{{ review_preparation.current.session_id }}</h3>
   <p class="muted">この枠の数値はすべてレビューセッション #{{ review_preparation.current.session_id }}だけから取得しています。</p>
   <div class="stats-grid">
-    <div><span>状態</span><strong data-review-preparation-status>{{ review_preparation.current.status }}</strong></div>
+    <div><span>状態</span><strong data-review-preparation-status>{{ status_labels.get(review_preparation.current.status, display_validation_status(review_preparation.current.status)) }}</strong></div>
     <div><span>候補epoch</span><strong>{{ review_preparation.current.candidate_epochs|join(', ') if review_preparation.current.candidate_epochs else '-' }}</strong></div>
     <div><span>条件数</span><strong>{{ review_preparation.current.condition_count }}</strong><small>候補epochとprompt/seed/weightの全条件</small></div>
     <div><span>生成対象</span><strong>{{ review_preparation.current.generation_target_count }}</strong><small>実際に画像生成する対象</small></div>
@@ -392,7 +392,7 @@
           {% for item in review_preparation.other_sessions %}
           <tr class="{% if item.status in ['planned', 'prepared'] %}pending-review-session{% endif %}">
             <td>#{{ item.session_id }}</td>
-            <td><span class="label {{ item.status }}">{{ item.status }}</span>{% if item.status in ['planned', 'prepared'] %}<br><span class="muted">未実行の別レビューセッション</span>{% endif %}</td>
+            <td><span class="label {{ item.status }}">{{ status_labels.get(item.status, item.status) }}</span>{% if item.status in ['planned', 'prepared'] %}<br><span class="muted">未実行の別レビューセッション</span>{% endif %}</td>
             <td>{{ item.candidate_epochs|join(', ') if item.candidate_epochs else '-' }}</td>
             <td>{{ item.condition_count }}</td>
             <td>{{ item.generation_target_count }}</td>

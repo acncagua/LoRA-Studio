@@ -38,6 +38,9 @@ nav a:hover { background: #30403b; }
 .nav-group { display: grid; gap: 4px; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,.08); }
 .nav-group:last-child { border-bottom: 0; }
 .nav-heading { color: #8fb0a4; font-size: 11px; font-weight: 700; letter-spacing: 0; padding: 4px 10px 0; }
+.language-switch { display: flex; gap: 6px; flex-wrap: wrap; }
+.language-switch a { color: #dbe7e1; border: 1px solid rgba(255,255,255,.18); border-radius: 6px; padding: 5px 8px; font-size: 12px; }
+.language-switch a.active { background: #dbe7e1; color: #1f2926; font-weight: 700; }
 .release { margin-top: auto; color: #b8c6bf; font-size: 12px; line-height: 1.5; }
 .content { margin-left: 270px; padding: 28px 34px 48px; min-width: 0; width: calc(100% - 270px); }
 .page-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }

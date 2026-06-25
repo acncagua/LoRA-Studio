@@ -1,8 +1,8 @@
 {% extends "base.html" %}{% block content %}
 <header class="page-head">
-  <h1>Optimizer Master</h1>
+  <h1>{{ t('page.optimizers.title') }}</h1>
   <div class="actions compact-actions">
-    <a class="button" href="/jobs/new?mode=optimizer">OptimizerからJob作成</a>
+    <a class="button" href="/jobs/new?mode=optimizer">{{ t('wizard.mode.optimizer') }}</a>
     <a class="button secondary" href="/optimizer-master-checks">Master Check</a>
     <a class="button secondary" href="/optimizer-mini-pilots">Mini Pilot</a>
     <a class="button secondary" href="/training-recipes">Recipe Library</a>
@@ -13,7 +13,7 @@
 {% endif %}
 
 <section class="notice">
-  <h2>LR semantics</h2>
+  <h2>{{ t('page.optimizers.lr_semantics') }}</h2>
   <dl>
     <dt>normal_lr</dt><dd>AdamW / Lion系の通常learning rateです。1e-4や5e-5のような値を使います。</dd>
     <dt>relative_step</dt><dd>Adafactor系の相対step運用です。固定LRとは意味が違うためprofileを確認してください。</dd>
@@ -22,7 +22,7 @@
 </section>
 
 <section>
-  <h2>Optimizer Definitions</h2>
+  <h2>{{ t('page.optimizers.definitions') }}</h2>
   <div class="recipe-card-grid">
     {% for item in optimizers %}
     <article class="notice">
@@ -44,7 +44,7 @@
 </section>
 
 <section>
-  <h2>Optimizer Profiles</h2>
+  <h2>{{ t('page.optimizers.profiles') }}</h2>
   <div class="table-scroll">
     <table class="wide-table compact-table">
       <thead><tr><th>ID</th><th>Optimizer</th><th>model</th><th>profile</th><th>検証</th><th>LR</th><th>target</th><th>risk</th></tr></thead>

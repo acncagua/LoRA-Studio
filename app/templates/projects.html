@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% block content %}
 <header class="page-head">
-  <h1>Project一覧</h1>
-  <div class="actions"><a class="button" href="/jobs/new">新規Project / ジョブ作成</a></div>
+  <h1>{{ t('page.projects.title') }}</h1>
+  <div class="actions"><a class="button" href="/jobs/new">{{ t('primary.create_job') }}</a></div>
 </header>
 
 <section>
@@ -34,9 +34,9 @@
         <td>{{ project.updated_at }}</td>
         <td>
           <div class="actions compact-actions">
-            <a class="button small-button" href="/projects/{{ project.id }}">Projectを開く</a>
-            {% if project.selected_job_id %}<a class="button small-button" href="/jobs/{{ project.selected_job_id }}">採用ジョブ</a>{% endif %}
-            {% if project.selected_lora_profile_id %}<a class="button small-button" href="/lora-library/{{ project.selected_lora_profile_id }}/edit">プロファイル</a>{% endif %}
+            <a class="button small-button" href="/projects/{{ project.id }}">{{ t('primary.open_project') }}</a>
+            {% if project.selected_job_id %}<a class="button small-button" href="/jobs/{{ project.selected_job_id }}">{{ t('primary.open_selected_job') }}</a>{% endif %}
+            {% if project.selected_lora_profile_id %}<a class="button small-button" href="/lora-library/{{ project.selected_lora_profile_id }}/edit">{{ t('primary.open_profile_short') }}</a>{% endif %}
             {% if not project.archived_at and not project.deleted_at
               and not project.selected_job_id and not project.selected_output_id and not project.selected_lora_profile_id
               and project.profile_count == 0 and project.validation_run_count == 0 and project.completed_job_count == 0
@@ -47,10 +47,10 @@
                 class="small-button danger"
                 type="submit"
                 onclick="return confirm('この下書きProjectと配下の未実行学習ジョブを削除済みに移動します。よろしいですか？')"
-              >削除</button>
+              >{{ t('primary.delete') }}</button>
             </form>
             {% endif %}
-            {% if project.archived_at and not project.deleted_at %}<form method="post" action="/projects/{{ project.id }}/restore"><button class="small-button" type="submit">復元</button></form>{% endif %}
+            {% if project.archived_at and not project.deleted_at %}<form method="post" action="/projects/{{ project.id }}/restore"><button class="small-button" type="submit">{{ t('primary.restore') }}</button></form>{% endif %}
           </div>
         </td>
       </tr>

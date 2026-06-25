@@ -1,27 +1,27 @@
 {% extends "base.html" %}{% block content %}
-<nav class="breadcrumbs"><a href="/">ダッシュボード</a><a href="/projects">Project一覧</a><span>Project #{{ project.id }}</span></nav>
+<nav class="breadcrumbs"><a href="/">{{ t('nav.dashboard') }}</a><a href="/projects">{{ t('page.projects.title') }}</a><span>Project #{{ project.id }}</span></nav>
 <header class="page-head">
-  <h1>Project（LoRA作成単位） #{{ project.id }} {{ project.name }}</h1>
+  <h1>{{ t('page.project.title') }} #{{ project.id }} {{ project.name }}</h1>
   <div class="actions">
-    {% if project.selected_job_id %}<a class="button" href="/jobs/{{ project.selected_job_id }}">採用中の学習ジョブを開く</a>{% endif %}
-    {% if project.selected_lora_profile_id %}<a class="button" href="/lora-library/{{ project.selected_lora_profile_id }}/edit">LoRAプロファイル</a>{% endif %}
-    <a class="button" href="/jobs/new?project_id={{ project.id }}">このProjectに学習ジョブを追加</a>
-    {% if project.archived_at %}<form method="post" action="/projects/{{ project.id }}/restore"><button type="submit">アーカイブから復元</button></form>{% endif %}
+    {% if project.selected_job_id %}<a class="button" href="/jobs/{{ project.selected_job_id }}">{{ t('primary.open_selected_job') }}</a>{% endif %}
+    {% if project.selected_lora_profile_id %}<a class="button" href="/lora-library/{{ project.selected_lora_profile_id }}/edit">{{ t('primary.open_profile_short') }}</a>{% endif %}
+    <a class="button" href="/jobs/new?project_id={{ project.id }}">{{ t('primary.add_job_to_project') }}</a>
+    {% if project.archived_at %}<form method="post" action="/projects/{{ project.id }}/restore"><button type="submit">{{ t('primary.restore') }}</button></form>{% endif %}
   </div>
 </header>
 
 <section class="action-panel project-workspace-panel">
   <div>
-    <h2>現在の状態</h2>
+    <h2>{{ t('label.current_status') }}</h2>
     <p><span class="label {{ project.status }}">{{ project_status_labels.get(project.status, project.status) }}</span></p>
     <p class="muted">ProjectはLoRA作成単位です。学習ジョブ、レビューセッション、採用LoRA、検証Runをここから辿ります。</p>
   </div>
   <div>
-    <h2>次にやること</h2>
-    <p><strong>{{ project_next_action.label }}</strong></p>
+    <h2>{{ t('label.next_action') }}</h2>
+    <p><strong>{{ action_text(project_next_action.label) }}</strong></p>
     <p class="muted">{{ project_next_action.description }}</p>
     <div class="actions primary-action">
-      <a class="button" href="{{ project_next_action.href }}">{{ project_next_action.button }}</a>
+      <a class="button" href="{{ project_next_action.href }}">{{ action_text(project_next_action.button) }}</a>
     </div>
   </div>
 </section>
@@ -39,7 +39,7 @@
   </div>
   <div class="status-card">
     <span>最新のレビューセッション</span>
-    <strong>{% if review_sessions %}<a href="/review-sessions/{{ review_sessions[0].id }}">#{{ review_sessions[0].id }} {{ review_sessions[0].status }}</a>{% else %}-{% endif %}</strong>
+    <strong>{% if review_sessions %}<a href="/review-sessions/{{ review_sessions[0].id }}">#{{ review_sessions[0].id }} {{ status_labels.get(review_sessions[0].status, review_sessions[0].status) }}</a>{% else %}-{% endif %}</strong>
   </div>
   <div class="status-card">
     <span>最新の検証Run</span>
@@ -47,7 +47,7 @@
   </div>
   <div class="status-card">
     <span>次にやること</span>
-    <strong>{{ project_next_action.label }}</strong>
+    <strong>{{ action_text(project_next_action.label) }}</strong>
   </div>
 </section>
 
@@ -142,7 +142,7 @@
         <td>{{ job.health_label or job.loss_health_label or '-' }}</td>
         <td>
           <div class="actions compact-actions">
-            <a class="button small-button" href="/jobs/{{ job.id }}">開く</a>
+            <a class="button small-button" href="/jobs/{{ job.id }}">{{ t('common.open') }}</a>
             {% if job.selected_output_id %}<form method="post" action="/projects/{{ project.id }}/select-job/{{ job.id }}"><button class="small-button" type="submit">Project採用に反映</button></form>{% endif %}
           </div>
         </td>
@@ -164,15 +164,15 @@
       <tr>
         <td><a href="/review-sessions/{{ session.id }}">#{{ session.id }}</a></td>
         <td>{% if session.job_id %}<a href="/jobs/{{ session.job_id }}">#{{ session.job_id }} {{ session.job_name or '' }}</a>{% else %}-{% endif %}</td>
-        <td><span class="label {{ session.status }}">{{ session.status }}</span></td>
+        <td><span class="label {{ session.status }}">{{ status_labels.get(session.status, session.status) }}</span></td>
         <td>{{ session.candidate_epochs_json or '-' }}</td>
         <td>{{ session.condition_count or 0 }}</td>
         <td>{{ session.imported_image_count if session.imported_image_count is not none else session.image_count or 0 }} / {{ session.expected_image_count or 0 }}</td>
         <td>{{ session.scored_image_count or 0 }}</td>
         <td>
           <div class="actions compact-actions">
-            <a class="button small-button" href="/review-sessions/{{ session.id }}">詳細</a>
-            {% if session.matrix_path %}<a class="button small-button" href="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix">Matrixを開く</a>{% endif %}
+            <a class="button small-button" href="/review-sessions/{{ session.id }}">{{ t('primary.open_details') }}</a>
+            {% if session.matrix_path %}<a class="button small-button" href="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix">{{ t('primary.open_matrix') }}</a>{% endif %}
           </div>
         </td>
       </tr>

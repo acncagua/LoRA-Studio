@@ -235,6 +235,9 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "group_label": "TEXT",
             "recommended_badge": "TEXT",
             "difficulty_label": "TEXT",
+            "labels_json": "TEXT",
+            "descriptions_json": "TEXT",
+            "risk_notes_json": "TEXT",
         },
     )
     ensure_columns(
@@ -252,6 +255,9 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "mini_pilot_status": "TEXT NOT NULL DEFAULT 'untested'",
             "last_mini_pilot_at": "TEXT",
             "last_mini_pilot_result_id": "INTEGER",
+            "labels_json": "TEXT",
+            "descriptions_json": "TEXT",
+            "risk_notes_json": "TEXT",
         },
     )
     ensure_columns(
@@ -269,6 +275,9 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "validation_status": "TEXT NOT NULL DEFAULT 'untested'",
             "last_tested_at": "TEXT",
             "last_test_result_id": "INTEGER",
+            "labels_json": "TEXT",
+            "descriptions_json": "TEXT",
+            "risk_notes_json": "TEXT",
         },
     )
     ensure_columns(
@@ -1055,9 +1064,10 @@ def seed_recipe_optimizer_catalog_v2(conn: sqlite3.Connection, now: str | None =
             sd_scripts_optimizer_type, aliases_json, required_dependencies_json,
             required_params_schema_json, recommended_params_schema_json,
             lr_semantics_help, smoke_test_priority, validated_optimizer_type,
-            validation_status, is_builtin, is_active, created_at, updated_at
+            validation_status, labels_json, descriptions_json, risk_notes_json,
+            is_builtin, is_active, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             name=excluded.name,
             display_name=excluded.display_name,
@@ -1085,6 +1095,9 @@ def seed_recipe_optimizer_catalog_v2(conn: sqlite3.Connection, now: str | None =
             smoke_test_priority=excluded.smoke_test_priority,
             validated_optimizer_type=COALESCE(optimizer_definitions_v2.validated_optimizer_type, excluded.validated_optimizer_type),
             validation_status=COALESCE(optimizer_definitions_v2.validation_status, excluded.validation_status),
+            labels_json=excluded.labels_json,
+            descriptions_json=excluded.descriptions_json,
+            risk_notes_json=excluded.risk_notes_json,
             is_builtin=excluded.is_builtin,
             is_active=excluded.is_active,
             updated_at=excluded.updated_at
@@ -1099,9 +1112,11 @@ def seed_recipe_optimizer_catalog_v2(conn: sqlite3.Connection, now: str | None =
             default_scheduler, optimizer_args_json, target_steps_min,
             target_steps_recommended, target_steps_max, description, risk_note,
             sd_scripts_optimizer_type, required_params_json, recommended_params_json,
-            command_params_json, smoke_params_json, is_builtin, is_active, created_at, updated_at
+            command_params_json, smoke_params_json,
+            labels_json, descriptions_json, risk_notes_json,
+            is_builtin, is_active, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             optimizer_definition_id=excluded.optimizer_definition_id,
             model_family=excluded.model_family,
@@ -1122,6 +1137,9 @@ def seed_recipe_optimizer_catalog_v2(conn: sqlite3.Connection, now: str | None =
             recommended_params_json=excluded.recommended_params_json,
             command_params_json=excluded.command_params_json,
             smoke_params_json=excluded.smoke_params_json,
+            labels_json=excluded.labels_json,
+            descriptions_json=excluded.descriptions_json,
+            risk_notes_json=excluded.risk_notes_json,
             is_builtin=excluded.is_builtin,
             is_active=excluded.is_active,
             updated_at=excluded.updated_at
@@ -1187,9 +1205,9 @@ def seed_recipe_optimizer_catalog_v2(conn: sqlite3.Connection, now: str | None =
             raw_args_json, compatibility_rules_json, target_steps_min,
             target_steps_recommended, target_steps_max, target_checkpoint_count,
             expected_behavior, risk_note, sort_order, is_builtin, is_active,
-            created_at, updated_at
+            labels_json, descriptions_json, risk_notes_json, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             name=excluded.name,
             display_name=excluded.display_name,
@@ -1217,6 +1235,9 @@ def seed_recipe_optimizer_catalog_v2(conn: sqlite3.Connection, now: str | None =
             target_checkpoint_count=excluded.target_checkpoint_count,
             expected_behavior=excluded.expected_behavior,
             risk_note=excluded.risk_note,
+            labels_json=excluded.labels_json,
+            descriptions_json=excluded.descriptions_json,
+            risk_notes_json=excluded.risk_notes_json,
             sort_order=excluded.sort_order,
             is_builtin=excluded.is_builtin,
             is_active=excluded.is_active,
@@ -2346,6 +2367,7 @@ CREATE TABLE IF NOT EXISTS optimizer_definitions_v2 (
     required_dependencies_json TEXT, required_params_schema_json TEXT,
     recommended_params_schema_json TEXT, lr_semantics_help TEXT, smoke_test_priority INTEGER,
     validated_optimizer_type TEXT, validation_status TEXT NOT NULL DEFAULT 'untested',
+    labels_json TEXT, descriptions_json TEXT, risk_notes_json TEXT,
     last_tested_at TEXT, last_test_result_id INTEGER, is_builtin INTEGER NOT NULL DEFAULT 0,
     is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
@@ -2357,7 +2379,8 @@ CREATE TABLE IF NOT EXISTS optimizer_profiles_v2 (
     target_steps_min INTEGER, target_steps_recommended INTEGER, target_steps_max INTEGER,
     description TEXT, risk_note TEXT, sd_scripts_optimizer_type TEXT,
     required_params_json TEXT, recommended_params_json TEXT, command_params_json TEXT,
-    smoke_params_json TEXT, is_builtin INTEGER NOT NULL DEFAULT 0,
+    smoke_params_json TEXT, labels_json TEXT, descriptions_json TEXT, risk_notes_json TEXT,
+    is_builtin INTEGER NOT NULL DEFAULT 0,
     is_active INTEGER NOT NULL DEFAULT 1, validation_status TEXT NOT NULL DEFAULT 'untested',
     last_tested_at TEXT, last_test_result_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
@@ -2517,6 +2540,7 @@ CREATE TABLE IF NOT EXISTS training_recipes_v2 (
     raw_args_json TEXT, compatibility_rules_json TEXT,
     target_steps_min INTEGER, target_steps_recommended INTEGER, target_steps_max INTEGER,
     target_checkpoint_count INTEGER, expected_behavior TEXT, risk_note TEXT,
+    labels_json TEXT, descriptions_json TEXT, risk_notes_json TEXT,
     sort_order INTEGER NOT NULL DEFAULT 100, is_builtin INTEGER NOT NULL DEFAULT 0,
     is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );

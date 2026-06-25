@@ -1,11 +1,11 @@
 {% extends "base.html" %}{% block content %}
-<nav class="breadcrumbs"><a href="/">ダッシュボード</a><span>レビューセッション</span></nav>
+<nav class="breadcrumbs"><a href="/">{{ t('nav.dashboard') }}</a><span>{{ t('page.review_sessions.title') }}</span></nav>
 <header class="page-head">
-  <h1>レビューセッション</h1>
+  <h1>{{ t('page.review_sessions.title') }}</h1>
 </header>
 
 <section class="notice">
-  <h2>採用前epoch比較</h2>
+  <h2>{{ t('label.before_review') }}</h2>
   <p>レビューセッションは、採用LoRAを決める前に候補epochを横並びで見るための履歴です。通常はProjectまたは学習ジョブ詳細から開きます。</p>
 </section>
 
@@ -23,16 +23,16 @@
           <td><a href="/review-sessions/{{ session.id }}">#{{ session.id }}</a></td>
           <td>{% if session.project_id %}<a href="/projects/{{ session.project_id }}">#{{ session.project_id }} {{ session.project_name or '' }}</a>{% else %}-{% endif %}</td>
           <td>{% if session.job_id %}<a href="/jobs/{{ session.job_id }}">#{{ session.job_id }} {{ session.job_name or '' }}</a>{% else %}-{% endif %}</td>
-          <td><span class="label {{ session.status }}">{{ session.status }}</span></td>
+          <td><span class="label {{ session.status }}">{{ status_labels.get(session.status, session.status) }}</span></td>
           <td>{{ session.candidate_epochs_json or '-' }}</td>
           <td>{{ session.condition_count or 0 }}</td>
           <td>{{ session.imported_image_count if session.imported_image_count is not none else session.image_count or 0 }} / {{ session.expected_image_count or 0 }}</td>
           <td>{{ session.scored_image_count or 0 }}</td>
           <td>{{ session.created_at or '-' }}</td>
           <td class="inline-actions">
-            <a class="button small-button" href="/review-sessions/{{ session.id }}">詳細</a>
-            {% if session.job_id %}<a class="button small-button" href="/jobs/{{ session.job_id }}#review-preparation">ジョブへ</a>{% endif %}
-            {% if session.matrix_path and session.job_id %}<a class="button small-button" href="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix">Matrix</a>{% endif %}
+            <a class="button small-button" href="/review-sessions/{{ session.id }}">{{ t('primary.open_details') }}</a>
+            {% if session.job_id %}<a class="button small-button" href="/jobs/{{ session.job_id }}#review-preparation">{{ t('primary.open_job_short') }}</a>{% endif %}
+            {% if session.matrix_path and session.job_id %}<a class="button small-button" href="/jobs/{{ session.job_id }}/review-sessions/{{ session.id }}/matrix">{{ t('primary.open_matrix') }}</a>{% endif %}
           </td>
         </tr>
         {% else %}

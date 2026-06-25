@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
 <header class="page-head">
-  <h1>検証Run #{{ run.id }}</h1>
+  <h1>{{ t('page.validation_run.title') }} #{{ run.id }}</h1>
   <div class="actions">
-    <a class="button" href="{{ job_return_to or ('/jobs/' ~ run.job_id) }}">ジョブへ戻る</a>
-    {% if run.project_id %}<a class="button" href="/projects/{{ run.project_id }}">Projectへ戻る</a>{% endif %}
-    {% if run.selected_lora_profile_id %}<a class="button" href="/lora-library/{{ run.selected_lora_profile_id }}/edit">LoRAプロファイルへ</a>{% endif %}
+    <a class="button" href="{{ job_return_to or ('/jobs/' ~ run.job_id) }}">{{ t('primary.open_job_short') }}</a>
+    {% if run.project_id %}<a class="button" href="/projects/{{ run.project_id }}">{{ t('common.back') }}</a>{% endif %}
+    {% if run.selected_lora_profile_id %}<a class="button" href="/lora-library/{{ run.selected_lora_profile_id }}/edit">{{ t('primary.open_profile') }}</a>{% endif %}
   </div>
 </header>
 
@@ -29,7 +29,7 @@
 
 <section class="action-panel validation-action-panel" data-validation-run-detail="{{ run.id }}" data-generation-status="{{ generation.status if generation else '' }}">
   <div>
-    <h2>ステータス</h2>
+    <h2>{{ t('label.validation_status') }}</h2>
     <dl>
       <dt>状態</dt><dd><span class="label {{ run.status }}">{{ display_validation_status(run.status) }}</span></dd>
       <dt>Pipeline</dt><dd><span class="label {{ run.pipeline_status or 'planned' }}">{{ display_validation_status(run.pipeline_status or 'planned') }}</span></dd>
@@ -41,7 +41,7 @@
       <dt>推奨weight</dt><dd>{{ suggestion.suggested_weight_min if suggestion.suggested_weight_min is not none else '-' }} - {{ suggestion.suggested_weight_max if suggestion.suggested_weight_max is not none else '-' }}</dd>
       <dt>Profile反映</dt><dd>{{ run.profile_applied_at or '-' }}</dd>
       <dt>Matrix</dt><dd>{% if run.matrix_path %}{{ run.matrix_path }}{% else %}-{% endif %}</dd>
-      <dt>画像生成</dt><dd>{% if generation %}<span class="label {{ generation.status }}" data-detail-generation-status-label>{{ generation.status }}</span>{% else %}<span data-detail-generation-status-label>-</span>{% endif %}</dd>
+      <dt>画像生成</dt><dd>{% if generation %}<span class="label {{ generation.status }}" data-detail-generation-status-label>{{ display_validation_status(generation.status) }}</span>{% else %}<span data-detail-generation-status-label>-</span>{% endif %}</dd>
       {% if generation %}
       <dt>生成PID</dt><dd data-detail-generation-pid>{{ generation.process_id or '-' }}</dd>
       <dt>プロセス確認</dt><dd data-detail-generation-process>{% if generation.status == 'running' %}{% if generation_process_alive %}<span class="label running">動作中</span>{% else %}<span class="label warning">未確認 / 停止の可能性</span>{% endif %}{% else %}-{% endif %}</dd>
@@ -52,7 +52,7 @@
   </div>
   <div>
     {% set pipeline_state = run.pipeline_status or run.status or 'planned' %}
-    <h2>次にやること</h2>
+    <h2>{{ t('label.next_action') }}</h2>
     {% if pipeline_state in ['generating_images', 'importing_images', 'embedding_images', 'machine_reviewing', 'building_matrix'] %}
     <p>Weight Calibration Pipelineが実行中です。進捗とログを確認してください。</p>
     {% elif run.status == 'completed' and run.profile_applied_at %}
@@ -70,7 +70,7 @@
     {% endif %}
     {% if generation and generation.status in ['running', 'failed', 'stopped'] %}
     <div class="notice generation-status-note" data-detail-generation-note>
-      <strong>画像生成: <span data-detail-generation-status-text>{{ generation.status }}</span></strong>
+      <strong>画像生成: <span data-detail-generation-status-text>{{ display_validation_status(generation.status) }}</span></strong>
       {% if generation.status == 'running' %}
       / {% if generation_process_alive %}プロセス動作中{% else %}PIDが確認できません。停止している可能性があります{% endif %}
       {% elif generation.return_code is not none %}
@@ -91,28 +91,28 @@
     <p class="muted">通常操作ではWeight検証を開始するだけで、準備からMatrix作成までPipelineが順番に実行します。</p>
     <div class="actions compact-actions primary-actions">
       {% if pipeline_state in ['generating_images', 'importing_images', 'embedding_images', 'machine_reviewing', 'building_matrix'] %}
-      <form method="post" action="/validation-runs/{{ run.id }}/pipeline/stop"><button type="submit" class="danger">停止</button></form>
-      <a class="button secondary" href="#active-operation-monitor">進捗確認</a>
+      <form method="post" action="/validation-runs/{{ run.id }}/pipeline/stop"><button type="submit" class="danger">{{ t('primary.stop') }}</button></form>
+      <a class="button secondary" href="#active-operation-monitor">{{ t('primary.progress') }}</a>
       {% elif pipeline_state in ['failed', 'stopped'] %}
-      <a class="button secondary" href="#generation-log-tail">ログ確認</a>
-      <form method="post" action="/validation-runs/{{ run.id }}/pipeline/retry"><button type="submit">再試行</button></form>
+      <a class="button secondary" href="#generation-log-tail">{{ t('primary.check_logs') }}</a>
+      <form method="post" action="/validation-runs/{{ run.id }}/pipeline/retry"><button type="submit">{{ t('primary.retry') }}</button></form>
       {% elif run.status == 'completed' and not run.profile_applied_at %}
-      <a class="button" href="/validation-runs/{{ run.id }}/apply">Profileへ反映</a>
+      <a class="button" href="/validation-runs/{{ run.id }}/apply">{{ t('primary.apply_profile') }}</a>
       {% elif pipeline_state == 'ready_for_review' or (run.status == 'completed' and run.profile_applied_at) %}
-      {% if matrix_exists or run.matrix_path %}<a class="button" href="/validation-runs/{{ run.id }}/matrix" target="_blank" rel="noopener">Weight Review Matrixを開く</a>{% else %}<form method="post" action="/validation-runs/{{ run.id }}/matrix/rebuild"><button type="submit">Weight Review Matrixを作成</button></form>{% endif %}
+      {% if matrix_exists or run.matrix_path %}<a class="button" href="/validation-runs/{{ run.id }}/matrix" target="_blank" rel="noopener">{{ t('primary.open_weight_matrix') }}</a>{% else %}<form method="post" action="/validation-runs/{{ run.id }}/matrix/rebuild"><button type="submit">{{ t('primary.create_weight_matrix') }}</button></form>{% endif %}
       {% else %}
-      <a class="button" href="/validation-runs/{{ run.id }}/pipeline/run" {% if operation_monitor or (validation_preflight and validation_preflight.has_errors) %}aria-disabled="true"{% endif %}>Weight検証を開始</a>
+      <a class="button" href="/validation-runs/{{ run.id }}/pipeline/run" {% if operation_monitor or (validation_preflight and validation_preflight.has_errors) %}aria-disabled="true"{% endif %}>{{ t('primary.start_weight_validation') }}</a>
       {% endif %}
     </div>
     <details class="details-block">
       <summary>詳細操作</summary>
       <div class="actions compact-actions">
-        <form method="post" action="/validation-runs/{{ run.id }}/pipeline/prepare"><button type="submit">Weight検証を準備</button></form>
-        <form method="post" action="/validation-runs/{{ run.id }}/generation/run" data-generation-run-form><button type="submit" data-generation-run-button {% if (generation and generation.status == 'running') or (running_generation and (not generation or generation.status != 'running')) %}disabled{% endif %}>画像生成＋不足レビュー計算</button></form>
-        <form method="post" action="/validation-runs/{{ run.id }}/generation/stop" data-generation-stop-form><button type="submit" class="danger" data-generation-stop-button {% if not generation or generation.status != 'running' %}disabled{% endif %}>画像生成を停止</button></form>
+        <form method="post" action="/validation-runs/{{ run.id }}/pipeline/prepare"><button type="submit">{{ t('primary.prepare_weight_validation') }}</button></form>
+        <form method="post" action="/validation-runs/{{ run.id }}/generation/run" data-generation-run-form><button type="submit" data-generation-run-button {% if (generation and generation.status == 'running') or (running_generation and (not generation or generation.status != 'running')) %}disabled{% endif %}>{{ t('primary.generate_images_and_review') }}</button></form>
+        <form method="post" action="/validation-runs/{{ run.id }}/generation/stop" data-generation-stop-form><button type="submit" class="danger" data-generation-stop-button {% if not generation or generation.status != 'running' %}disabled{% endif %}>{{ t('primary.stop_generation') }}</button></form>
         <form method="post" action="/validation-runs/{{ run.id }}/generation/import"><button type="submit">Reimport</button></form>
-        <form method="post" action="/validation-runs/{{ run.id }}/export-report"><button type="submit">検証レポート出力</button></form>
-        <form method="post" action="/validation-runs/{{ run.id }}/matrix/rebuild"><button type="submit">Matrix再作成</button></form>
+        <form method="post" action="/validation-runs/{{ run.id }}/export-report"><button type="submit">{{ t('primary.export_report') }}</button></form>
+        <form method="post" action="/validation-runs/{{ run.id }}/matrix/rebuild"><button type="submit">{{ t('primary.rebuild_matrix') }}</button></form>
       </div>
     </details>
   </div>
@@ -498,7 +498,7 @@
     <h2>生成ステータス</h2>
     {% if generation %}
     <dl>
-      <dt>状態</dt><dd><span class="label {{ generation.status }}">{{ generation.status }}</span></dd>
+      <dt>状態</dt><dd><span class="label {{ generation.status }}">{{ display_validation_status(generation.status) }}</span></dd>
       <dt>生成数</dt><dd>{{ generation.generated_image_count }}</dd>
       <dt>取り込み数</dt><dd>{{ generation.imported_image_count }}</dd>
       <dt>終了コード</dt><dd>{{ generation.return_code if generation.return_code is not none else '-' }}</dd>
@@ -545,7 +545,7 @@
           <td>{{ row.seed }}</td>
           <td>{{ row.lora_weight }}</td>
           <td>{{ 'あり' if row.hires_enabled else 'なし' }}</td>
-          <td><span class="label {{ row.status }}">{{ row.status }}</span></td>
+          <td><span class="label {{ row.status }}">{{ display_validation_status(row.status) }}</span></td>
           <td>{{ row.image_count }}</td>
           <td>{{ row.condition_hash[:12] }}</td>
         </tr>
