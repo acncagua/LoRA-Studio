@@ -16,6 +16,11 @@
     <div><span>Matrix作成時間</span><strong>{{ format_seconds(performance_summary.matrix_elapsed_seconds) }}</strong></div>
     <div><span>画像生成プロセス数</span><strong>{{ performance_summary.generation_process_count }}</strong></div>
     <div><span>1枚あたり平均秒数</span><strong>{{ performance_summary.avg_seconds_per_image if performance_summary.avg_seconds_per_image is not none else '-' }}</strong></div>
+    <div><span>import 秒/枚</span><strong>{{ performance_summary.per_image_seconds.import_seconds if performance_summary.per_image_seconds.import_seconds is not none else '-' }}</strong></div>
+    <div><span>Embedding 秒/枚</span><strong>{{ performance_summary.per_image_seconds.embedding_seconds if performance_summary.per_image_seconds.embedding_seconds is not none else '-' }}</strong></div>
+    <div><span>機械補助レビュー 秒/枚</span><strong>{{ performance_summary.per_image_seconds.machine_review_seconds if performance_summary.per_image_seconds.machine_review_seconds is not none else '-' }}</strong></div>
+    <div><span>Matrix 秒/枚</span><strong>{{ performance_summary.per_image_seconds.matrix_seconds if performance_summary.per_image_seconds.matrix_seconds is not none else '-' }}</strong></div>
+    <div><span>機械補助DB書込</span><strong>{{ format_seconds(performance_summary.machine_review_detail.db_write_seconds) if performance_summary.machine_review_detail else '-' }}</strong></div>
     <div><span>推定モデルロード時間</span><strong>{{ format_seconds(performance_summary.estimated_model_load_overhead_seconds) }}</strong></div>
     <div><span>Embedding provider</span><strong>{{ performance_summary.embedding_runtime.provider or '-' }}</strong></div>
     <div><span>Embedding device</span><strong>{{ performance_summary.embedding_runtime.device or '-' }}</strong></div>

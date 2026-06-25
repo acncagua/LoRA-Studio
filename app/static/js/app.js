@@ -1,3 +1,12 @@
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 document.addEventListener("click", async (event) => {
   const button = event.target.closest("[data-browse-target]");
   if (!button) {
@@ -240,7 +249,13 @@ async function refreshStepEstimate(form, withSuggestions = false) {
 }
 
 function updateStepEstimatePanel(panel, estimate) {
-  Object.entries(estimate).forEach(([key, value]) => {
+  const flatEstimate = {...estimate};
+  if (estimate.duration_estimate) {
+    flatEstimate.duration_estimated_label = estimate.duration_estimate.estimated_label || "-";
+    flatEstimate.duration_seconds_per_step = estimate.duration_estimate.seconds_per_step ?? "-";
+    flatEstimate.duration_basis = estimate.duration_estimate.basis || "";
+  }
+  Object.entries(flatEstimate).forEach(([key, value]) => {
     const node = panel.querySelector(`[data-step-field='${key}']`);
     if (!node) {
       return;
@@ -2764,6 +2779,42 @@ function initActiveOperationMonitorPolling() {
   }, 5000);
 }
 
+function initLazySections() {
+  document.querySelectorAll("[data-lazy-section]").forEach((section) => {
+    const button = section.querySelector("[data-lazy-load-button]");
+    const content = section.querySelector("[data-lazy-content]");
+    const url = section.getAttribute("data-lazy-url");
+    if (!button || !content || !url) {
+      return;
+    }
+    const load = async () => {
+      if (section.getAttribute("data-lazy-loaded") === "1") {
+        return;
+      }
+      button.disabled = true;
+      const originalText = button.textContent;
+      button.textContent = "読み込み中...";
+      try {
+        const response = await fetch(url, { headers: { "Accept": "text/html" } });
+        if (!response.ok) {
+          throw new Error(await response.text());
+        }
+        content.innerHTML = await response.text();
+        section.setAttribute("data-lazy-loaded", "1");
+        button.remove();
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = originalText || "再読み込み";
+        content.innerHTML = `<p class="notice warning">読み込みに失敗しました: ${escapeHtml(error.message)}</p>`;
+      }
+    };
+    button.addEventListener("click", load);
+    if (section.hasAttribute("data-lazy-autoload")) {
+      load();
+    }
+  });
+}
+
 document.addEventListener("DOMContentLoaded", initValidationGenerationPolling);
 document.addEventListener("DOMContentLoaded", initValidationGenerationDetailPolling);
 document.addEventListener("DOMContentLoaded", initBulkValidationGenerationSubmit);
@@ -2781,3 +2832,4 @@ document.addEventListener("DOMContentLoaded", initMachineReviewJobStatusPolling)
 document.addEventListener("DOMContentLoaded", initReviewPreparationPolling);
 document.addEventListener("DOMContentLoaded", initTrainLogPolling);
 document.addEventListener("DOMContentLoaded", initActiveOperationMonitorPolling);
+document.addEventListener("DOMContentLoaded", initLazySections);

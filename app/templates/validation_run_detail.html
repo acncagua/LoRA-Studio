@@ -180,6 +180,14 @@
 </section>
 {% endif %}
 
+{% if defer_heavy_sections %}
+<section class="notice" data-lazy-section data-lazy-url="/validation-runs/{{ run.id }}/machine-assist-panel">
+  <h2>機械補助レビュー</h2>
+  <p>45枚以上の検証Runのため、Machine Assist詳細は遅延読み込みします。</p>
+  <button type="button" data-lazy-load-button>Machine Assist詳細を読み込む</button>
+  <div data-lazy-content></div>
+</section>
+{% else %}
 {% if machine_review_readiness %}
 <section id="machine-assist-readiness" class="notice">
   <h2>機械補助レビュー準備状況</h2>
@@ -272,6 +280,7 @@
     </tbody>
   </table>
 </section>
+{% endif %}
 
 <nav class="validation-tabs" aria-label="検証Runページ内ナビ">
   <a href="#overview">概要</a>
@@ -368,6 +377,13 @@
     <a class="button" href="#expected-conditions">未登録条件を見る</a>
   </div>
   <div class="sample-grid compare">
+    {% if defer_heavy_sections %}
+    <div class="notice" data-lazy-section data-lazy-url="/validation-runs/{{ run.id }}/images-panel">
+      <p>登録画像 {{ coverage.registered_condition_count }} 件の一覧は遅延読み込みします。初期表示を軽くするため、必要な時だけ読み込んでください。</p>
+      <button type="button" data-lazy-load-button>画像一覧とレビュー入力を読み込む</button>
+      <div data-lazy-content></div>
+    </div>
+    {% else %}
     {% for image in images %}
     <figure>
       <img src="/validation-images/{{ image.id }}" alt="検証画像 {{ image.id }}" data-lightbox-src="/validation-images/{{ image.id }}" data-lightbox-title="#{{ image.id }} {{ image.prompt_key or '-' }} / seed {{ image.seed or '-' }} / weight {{ image.lora_weight if image.lora_weight is not none else '-' }}">
@@ -413,6 +429,7 @@
     {% else %}
     <p class="muted">登録済み画像はありません。</p>
     {% endfor %}
+    {% endif %}
   </div>
 </section>
 

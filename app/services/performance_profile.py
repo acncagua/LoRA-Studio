@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from app import settings
-from app.db import connect, fetch_one, utc_now
+from app.db import connect, fetch_all, fetch_one, utc_now
 from app.services.embedding_service import active_embedding_model, load_embedding_settings
 
 
@@ -102,6 +102,18 @@ def performance_summary(row: Any | None, *, output_dir: str = "", model_paths: l
     model_load_overhead = max(0, command_elapsed - image_span) if command_elapsed else None
     command_count = len(commands)
     avg_seconds = round(generation_elapsed / generated_count, 2) if generation_elapsed and generated_count else None
+    import_elapsed = seconds_between(timing.get("import_start"), timing.get("import_end"))
+    embedding_elapsed = seconds_between(timing.get("embedding_start"), timing.get("embedding_end"))
+    machine_review_elapsed = seconds_between(timing.get("machine_review_start"), timing.get("machine_review_end"))
+    matrix_elapsed = seconds_between(timing.get("matrix_start"), timing.get("matrix_end"))
+    per_image = {
+        "generation_seconds": avg_seconds,
+        "import_seconds": round(import_elapsed / generated_count, 2) if import_elapsed and generated_count else None,
+        "embedding_seconds": round(embedding_elapsed / generated_count, 2) if embedding_elapsed and generated_count else None,
+        "machine_review_seconds": round(machine_review_elapsed / generated_count, 2) if machine_review_elapsed and generated_count else None,
+        "matrix_seconds": round(matrix_elapsed / generated_count, 2) if matrix_elapsed and generated_count else None,
+    }
+    machine_detail = timing.get("machine_review_detail") if isinstance(timing.get("machine_review_detail"), dict) else {}
     one_drive_paths = [path for path in model_paths or [] if is_onedrive_path(path)]
     if output_dir and is_onedrive_path(output_dir):
         one_drive_paths.append(output_dir)
@@ -122,13 +134,15 @@ def performance_summary(row: Any | None, *, output_dir: str = "", model_paths: l
         "stage_timing": timing,
         "total_elapsed_seconds": seconds_between(timing.get("pipeline_start"), timing.get("pipeline_end")) or row_elapsed(row),
         "generation_elapsed_seconds": generation_elapsed,
-        "import_elapsed_seconds": seconds_between(timing.get("import_start"), timing.get("import_end")),
-        "embedding_elapsed_seconds": seconds_between(timing.get("embedding_start"), timing.get("embedding_end")),
-        "machine_review_elapsed_seconds": seconds_between(timing.get("machine_review_start"), timing.get("machine_review_end")),
-        "matrix_elapsed_seconds": seconds_between(timing.get("matrix_start"), timing.get("matrix_end")),
+        "import_elapsed_seconds": import_elapsed,
+        "embedding_elapsed_seconds": embedding_elapsed,
+        "machine_review_elapsed_seconds": machine_review_elapsed,
+        "matrix_elapsed_seconds": matrix_elapsed,
         "generation_process_count": command_count,
         "generated_output_count": generated_count,
         "avg_seconds_per_image": avg_seconds,
+        "per_image_seconds": per_image,
+        "machine_review_detail": machine_detail,
         "estimated_model_load_overhead_seconds": model_load_overhead,
         "commands": commands,
         "warnings": warnings,
@@ -151,6 +165,69 @@ def format_seconds(value: Any) -> str:
     if minutes:
         return f"{minutes}m {sec}s"
     return f"{sec}s"
+
+
+def historical_training_seconds_per_step(limit: int = 10) -> float | None:
+    rows = fetch_all(
+        """
+        SELECT elapsed_seconds, COALESCE(actual_max_step, expected_total_steps, expected_total_steps_at_creation) AS steps
+        FROM training_jobs
+        WHERE status = 'completed'
+          AND elapsed_seconds IS NOT NULL
+          AND elapsed_seconds > 0
+          AND COALESCE(actual_max_step, expected_total_steps, expected_total_steps_at_creation) > 0
+        ORDER BY end_time DESC, id DESC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    values = [float(row["elapsed_seconds"]) / max(1, float(row["steps"])) for row in rows]
+    return round(sum(values) / len(values), 4) if values else None
+
+
+def historical_validation_seconds_per_image(limit: int = 10) -> dict[str, Any]:
+    rows = fetch_all(
+        """
+        SELECT elapsed_seconds, generated_image_count
+        FROM validation_generation_runs
+        WHERE status = 'completed'
+          AND elapsed_seconds IS NOT NULL
+          AND elapsed_seconds > 0
+          AND generated_image_count > 0
+        ORDER BY ended_at DESC, id DESC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    values = [float(row["elapsed_seconds"]) / max(1, float(row["generated_image_count"])) for row in rows]
+    return {"seconds_per_image": round(sum(values) / len(values), 2) if values else None, "sample_count": len(values)}
+
+
+def training_duration_estimate(total_steps: int | None) -> dict[str, Any]:
+    seconds_per_step = historical_training_seconds_per_step()
+    if not total_steps or not seconds_per_step:
+        return {"seconds_per_step": seconds_per_step, "estimated_seconds": None, "basis": "過去の完了Job実績が不足しています。"}
+    estimated = int(round(float(total_steps) * seconds_per_step))
+    return {
+        "seconds_per_step": seconds_per_step,
+        "estimated_seconds": estimated,
+        "estimated_label": format_seconds(estimated),
+        "basis": f"直近完了Jobの平均 {seconds_per_step} 秒/step から概算しています。",
+    }
+
+
+def validation_duration_estimate(image_count: int | None) -> dict[str, Any]:
+    stats = historical_validation_seconds_per_image()
+    seconds_per_image = stats["seconds_per_image"]
+    if not image_count or not seconds_per_image:
+        return {**stats, "estimated_seconds": None, "basis": "過去の検証画像生成実績が不足しています。"}
+    estimated = int(round(float(image_count) * seconds_per_image))
+    return {
+        **stats,
+        "estimated_seconds": estimated,
+        "estimated_label": format_seconds(estimated),
+        "basis": f"直近検証生成の平均 {seconds_per_image} 秒/枚から概算しています。",
+    }
 
 
 def update_timing(table_name: str, row_id: int, mutate: Callable[[dict[str, Any]], None]) -> None:

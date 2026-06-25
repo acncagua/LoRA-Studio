@@ -45,6 +45,8 @@
       </form>
       {% elif job.status == 'running' and action_state.stop %}
       <form method="post" action="/jobs/{{ job.id }}/stop"><button type="submit" class="danger">停止</button></form>
+      {% elif job.status == 'completed' and candidate_standard_running_group and not selected_output %}
+      <a class="button" href="#active-operation-monitor">標準候補比較の進捗を確認</a>
       {% elif job.status == 'completed' and candidate_standard_ready_group and not selected_output %}
       <a class="button" href="/jobs/{{ job.id }}/candidate-comparisons/{{ candidate_standard_ready_group.id }}/matrix">標準候補比較Matrixを開く</a>
       {% elif review_preparation.current and review_preparation.current.primary_action == 'progress' %}
@@ -160,6 +162,9 @@
   </div>
   <section id="candidate-standard-comparison" class="subsection">
     <h3>レビュー方式</h3>
+    {% if candidate_standard_running_group %}
+    <p class="notice warning">標準候補比較 group #{{ candidate_standard_running_group.id }} を実行中です。完了するまで追加の候補レビュー開始は控えてください。</p>
+    {% endif %}
     <div class="panel-grid three-column">
       <div class="notice">
         <h4>クイック候補レビュー</h4>
@@ -169,7 +174,7 @@
         </p>
         <form method="post" action="/jobs/{{ job.id }}/review-preparation/run" data-review-preparation-run-form>
           {% if candidate_standard_ready_group %}<input type="hidden" name="additional_quick_review" value="1">{% endif %}
-          <button type="submit" data-review-preparation-run-button {% if outputs|length == 0 %}disabled{% endif %}>{% if candidate_standard_ready_group %}追加クイック候補レビューを開始{% else %}クイック候補レビューを開始{% endif %}</button>
+          <button type="submit" data-review-preparation-run-button {% if outputs|length == 0 or candidate_standard_running_group %}disabled{% endif %}>{% if candidate_standard_ready_group %}追加クイック候補レビューを開始{% else %}クイック候補レビューを開始{% endif %}</button>
         </form>
       </div>
       <div class="notice">
@@ -178,15 +183,24 @@
         <dl>
           <dt>候補epoch</dt><dd>{{ candidate_standard_estimate.candidate_epochs|join(', ') if candidate_standard_estimate.candidate_epochs else '-' }}</dd>
           <dt>画像数</dt><dd>{{ candidate_standard_estimate.images_per_epoch }} × {{ candidate_standard_estimate.epoch_count }} = {{ candidate_standard_estimate.expected_total_images }}</dd>
-          <dt>推定時間</dt><dd>約 {{ candidate_standard_estimate.estimated_runtime_minutes }} 分</dd>
+          <dt>推定時間</dt>
+          <dd>
+            約 {{ candidate_standard_estimate.estimated_runtime_minutes }} 分
+            {% if candidate_standard_duration_estimate and candidate_standard_duration_estimate.estimated_label %}
+              / 実績ベース {{ candidate_standard_duration_estimate.estimated_label }}
+            {% endif %}
+          </dd>
+          {% if candidate_standard_duration_estimate and candidate_standard_duration_estimate.basis %}
+          <dt>見積根拠</dt><dd>{{ candidate_standard_duration_estimate.basis }}</dd>
+          {% endif %}
           <dt>推定容量</dt><dd>約 {{ candidate_standard_estimate.estimated_storage_gb }} GB</dd>
         </dl>
         <div class="inline-actions">
           <form method="post" action="/jobs/{{ job.id }}/candidate-comparisons/standard/create">
-            <button type="submit" {% if outputs|length == 0 or not candidate_standard_estimate.candidate_epochs %}disabled{% endif %}>比較グループを作成</button>
+            <button type="submit" {% if outputs|length == 0 or not candidate_standard_estimate.candidate_epochs or candidate_standard_running_group %}disabled{% endif %}>比較グループを作成</button>
           </form>
           <form method="post" action="/jobs/{{ job.id }}/candidate-comparisons/standard/run">
-            <button type="submit" {% if outputs|length == 0 or not candidate_standard_estimate.candidate_epochs %}disabled{% endif %}>標準比較を一括実行</button>
+            <button type="submit" {% if outputs|length == 0 or not candidate_standard_estimate.candidate_epochs or candidate_standard_running_group %}disabled{% endif %}>標準比較を一括実行</button>
           </form>
         </div>
       </div>

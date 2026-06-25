@@ -594,18 +594,24 @@ def write_validation_prompt_pack(run_id: int) -> dict[str, str]:
     }
 
 
-def load_validation_run_bundle(run_id: int) -> dict[str, Any]:
+def load_validation_run_bundle(run_id: int, *, include_images: bool = True) -> dict[str, Any]:
     ensure_expected_conditions(run_id)
     update_validation_run_counts(run_id)
     run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (run_id,))
     if run is None:
         raise ValueError(f"Validation run not found: {run_id}")
     preset = validation_preset_for_run(run) if run["validation_preset_id"] else None
-    images = fetch_all("SELECT * FROM validation_images WHERE validation_run_id = ? ORDER BY image_role, prompt_key, seed, lora_weight, id", (run_id,))
     conditions = fetch_all("SELECT * FROM validation_expected_conditions WHERE validation_run_id = ? ORDER BY expected_order", (run_id,))
-    coverage = build_coverage(run_id, conditions, images)
-    weight_matrix = build_weight_review_matrix(images)
-    suggestion = calculate_suggested_weights(run, preset, images)
+    if include_images:
+        images = fetch_all("SELECT * FROM validation_images WHERE validation_run_id = ? ORDER BY image_role, prompt_key, seed, lora_weight, id", (run_id,))
+        coverage = build_coverage(run_id, conditions, images)
+        review_rows = images
+    else:
+        images = []
+        coverage = build_coverage_from_db(run_id, conditions)
+        review_rows = fetch_validation_review_rows(run_id)
+    weight_matrix = build_weight_review_matrix(review_rows)
+    suggestion = calculate_suggested_weights(run, preset, review_rows)
     profile = fetch_one("SELECT * FROM selected_lora_profiles WHERE id = ?", (run["selected_lora_profile_id"],)) if run["selected_lora_profile_id"] else None
     reference_set = None
     reference_images = []
@@ -644,6 +650,90 @@ def load_validation_run_bundle(run_id: int) -> dict[str, Any]:
         "reference_images": reference_images,
         "output_dir": str(validation_run_dir(run_id)),
         "condition_warning": expected_condition_mismatch_warning(run_id),
+    }
+
+
+def fetch_validation_review_rows(run_id: int) -> list[Any]:
+    return fetch_all(
+        """
+        SELECT
+            id, image_role, expected_condition_id, lora_weight, hires_enabled, ignored,
+            rating_face, rating_costume, rating_style, rating_stability, rating_flexibility, rating_overall,
+            strength_label, overfit_level, adoption_label, failure_tags_json
+        FROM validation_images
+        WHERE validation_run_id = ?
+        ORDER BY image_role, lora_weight, id
+        """,
+        (run_id,),
+    )
+
+
+def build_coverage_from_db(run_id: int, conditions: list[Any]) -> dict[str, Any]:
+    rows_by_condition = {
+        int(row["expected_condition_id"]): row
+        for row in fetch_all(
+            """
+            SELECT
+                expected_condition_id,
+                COUNT(*) AS image_count,
+                SUM(CASE WHEN ignored THEN 1 ELSE 0 END) AS ignored_count,
+                SUM(CASE
+                    WHEN COALESCE(rating_face, 0) > 0
+                      OR COALESCE(rating_costume, 0) > 0
+                      OR COALESCE(rating_style, 0) > 0
+                      OR COALESCE(rating_stability, 0) > 0
+                      OR COALESCE(rating_flexibility, 0) > 0
+                      OR COALESCE(rating_overall, 0) > 0
+                      OR COALESCE(strength_label, '') != ''
+                      OR COALESCE(overfit_level, '') != ''
+                      OR COALESCE(adoption_label, '') != ''
+                      OR COALESCE(failure_tags_json, '') NOT IN ('', '[]')
+                    THEN 1 ELSE 0 END) AS reviewed_count
+            FROM validation_images
+            WHERE validation_run_id = ?
+              AND image_role = 'individual'
+              AND expected_condition_id IS NOT NULL
+            GROUP BY expected_condition_id
+            """,
+            (run_id,),
+        )
+    }
+    rows = []
+    registered = 0
+    reviewed = 0
+    ignored = 0
+    for condition in conditions:
+        item = dict(condition)
+        linked = rows_by_condition.get(int(condition["id"]))
+        image_count = int(linked["image_count"] if linked else 0)
+        ignored_count = int(linked["ignored_count"] if linked else 0)
+        reviewed_count = int(linked["reviewed_count"] if linked else 0)
+        if image_count <= 0:
+            status = "missing"
+        elif ignored_count >= image_count:
+            status = "ignored"
+            ignored += 1
+        elif reviewed_count > 0:
+            status = "reviewed"
+            registered += 1
+            reviewed += 1
+        else:
+            status = "image_registered"
+            registered += 1
+        item["status"] = status
+        item["image_count"] = image_count
+        rows.append(item)
+    expected = len(conditions)
+    missing = expected - registered - ignored
+    return {
+        "rows": rows,
+        "expected_image_count": expected,
+        "registered_condition_count": registered,
+        "reviewed_condition_count": reviewed,
+        "missing_condition_count": max(0, missing),
+        "ignored_condition_count": ignored,
+        "coverage_rate": registered / expected if expected else 0,
+        "review_rate": reviewed / expected if expected else 0,
     }
 
 

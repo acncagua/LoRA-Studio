@@ -17,8 +17,11 @@
     <div><span>recipe target</span><strong><span data-step-field="recipe_target_steps_min">{{ step_estimate.recipe_target_steps_min if step_estimate and step_estimate.recipe_target_steps_min is not none else '-' }}</span> / <span data-step-field="recipe_target_steps_recommended">{{ step_estimate.recipe_target_steps_recommended if step_estimate and step_estimate.recipe_target_steps_recommended is not none else '-' }}</span> / <span data-step-field="recipe_target_steps_max">{{ step_estimate.recipe_target_steps_max if step_estimate and step_estimate.recipe_target_steps_max is not none else '-' }}</span></strong></div>
     <div><span>判定</span><strong><span class="label {{ (step_estimate.status if step_estimate else 'unknown')|lower }}" data-step-field="status">{{ step_estimate.status if step_estimate else '-' }}</span></strong></div>
     <div><span>target source</span><strong data-step-field="target_source">{{ step_estimate.target_source if step_estimate else '-' }}</strong></div>
+    <div><span>学習時間概算</span><strong data-step-field="duration_estimated_label">{{ step_estimate.duration_estimate.estimated_label if step_estimate and step_estimate.duration_estimate and step_estimate.duration_estimate.estimated_label else '-' }}</strong></div>
+    <div><span>実績秒/step</span><strong data-step-field="duration_seconds_per_step">{{ step_estimate.duration_estimate.seconds_per_step if step_estimate and step_estimate.duration_estimate and step_estimate.duration_estimate.seconds_per_step else '-' }}</strong></div>
   </div>
   <p data-step-field="message">{{ step_estimate.message if step_estimate else '' }}</p>
+  <p class="muted" data-step-field="duration_basis">{{ step_estimate.duration_estimate.basis if step_estimate and step_estimate.duration_estimate else '' }}</p>
   <p class="muted" data-step-field="target_note">{{ step_estimate.target_note if step_estimate else '' }}</p>
   <p class="muted">
     保存間隔提案:

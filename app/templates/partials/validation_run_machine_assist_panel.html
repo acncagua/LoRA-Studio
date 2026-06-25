@@ -1,0 +1,51 @@
+{% if machine_review_readiness %}
+<section id="machine-assist-readiness" class="notice">
+  <h2>機械補助レビュー準備状況</h2>
+  <p>機械補助レビューは自動判定ではなく、Reference類似度とDataset近傍類似度を並べる補助情報です。最終判断は人間評価を優先してください。</p>
+  <div class="summary-grid">
+    <div><span>provider</span><strong>{{ machine_review_readiness.provider }}</strong></div>
+    <div><span>リファレンス枚数</span><strong>{{ machine_review_readiness.reference_count }}</strong></div>
+    <div><span>リファレンスEmbedding</span><strong>{{ machine_review_readiness.reference_coverage.ready if machine_review_readiness.reference_coverage else 0 }} / {{ machine_review_readiness.reference_coverage.total if machine_review_readiness.reference_coverage else 0 }}</strong></div>
+    <div><span>データセットEmbedding</span><strong>{{ machine_review_readiness.dataset_coverage.ready if machine_review_readiness.dataset_coverage else 0 }} / {{ machine_review_readiness.dataset_coverage.total if machine_review_readiness.dataset_coverage else 0 }}</strong></div>
+    <div><span>{{ machine_review_readiness.target_label }}Embedding</span><strong>{{ machine_review_readiness.target_coverage.ready if machine_review_readiness.target_coverage else 0 }} / {{ machine_review_readiness.target_coverage.total if machine_review_readiness.target_coverage else 0 }}</strong></div>
+    <div><span>機械補助レビュースコア</span><strong>{{ machine_review_readiness.score_coverage.ready }} / {{ machine_review_readiness.score_coverage.total }}</strong></div>
+  </div>
+  {% if machine_review_readiness.warnings %}
+  <ul>
+    {% for warning in machine_review_readiness.warnings %}<li>{{ warning }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% endif %}
+
+<section id="machine-assist" class="notice">
+  <h2>機械補助レビュー</h2>
+  <p>機械補助判定は参考情報です。最終判断は人間評価を優先してください。</p>
+  <div class="actions compact-actions">
+    <form method="post" action="/machine-review/jobs">
+      <input type="hidden" name="target_type" value="validation_run_images">
+      <input type="hidden" name="target_id" value="{{ run.id }}">
+      <input type="hidden" name="return_to" value="/validation-runs/{{ run.id }}#machine-assist">
+      <button type="submit">検証画像の機械補助レビューを実行</button>
+    </form>
+  </div>
+  <table>
+    <thead><tr><th>weight</th><th>prompt</th><th>件数</th><th>Reference類似度</th><th>Dataset近傍</th><th>過学習リスク</th><th>補助判定</th><th>信頼度</th></tr></thead>
+    <tbody>
+      {% for row in machine_weight_summary %}
+      <tr>
+        <td>{{ row.lora_weight if row.lora_weight is not none else '-' }}</td>
+        <td>{{ row.prompt_key or '-' }}</td>
+        <td>{{ row.count }}</td>
+        <td>{{ '%.4f'|format(row.reference_similarity_avg) if row.reference_similarity_avg is not none else '-' }}</td>
+        <td>{{ '%.4f'|format(row.nearest_dataset_similarity) if row.nearest_dataset_similarity is not none else '-' }}</td>
+        <td><span class="label {{ row.overfit_risk_label }}">{{ display_machine_label(row.overfit_risk_label) }}</span></td>
+        <td><span class="label {{ row.assist_label }}">{{ display_machine_label(row.assist_label) }}</span></td>
+        <td><span class="label {{ row.confidence_label }}">{{ display_machine_label(row.confidence_label) }}</span></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="muted">機械補助レビューはまだ実行されていません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>

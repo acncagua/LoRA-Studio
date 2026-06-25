@@ -1,0 +1,47 @@
+<div class="sample-grid compare">
+  {% for image in images %}
+  <figure>
+    <img loading="lazy" src="/validation-images/{{ image.id }}" alt="検証画像 {{ image.id }}" data-lightbox-src="/validation-images/{{ image.id }}" data-lightbox-title="#{{ image.id }} {{ image.prompt_key or '-' }} / seed {{ image.seed or '-' }} / weight {{ image.lora_weight if image.lora_weight is not none else '-' }}">
+    <figcaption>
+      #{{ image.id }} {{ image.image_role }} / {{ image.prompt_key or '-' }} / seed {{ image.seed or '-' }} / weight {{ image.lora_weight if image.lora_weight is not none else '-' }} / Hires {{ 'あり' if image.hires_enabled else 'なし' }}<br>
+      条件: {{ image.expected_condition_id or '未一致 / グリッド' }}
+      {% set m = machine_score_map.get(image.id) %}
+      {% if m %}
+      <br><span class="label {{ m.assist_label }}">{{ display_machine_label(m.assist_label) }}</span>
+      <span class="label {{ m.confidence_label }}">{{ display_machine_label(m.confidence_label) }}</span>
+      <br><span class="muted">Reference {{ '%.3f'|format(m.reference_similarity_max) if m.reference_similarity_max is not none else '-' }} (#{{ m.nearest_reference_image_id or '-' }}) / Dataset {{ '%.3f'|format(m.nearest_dataset_similarity) if m.nearest_dataset_similarity is not none else '-' }} (#{{ m.nearest_dataset_image_id or '-' }}) / 過学習 {{ display_machine_label(m.overfit_risk_label) }}</span>
+      {% endif %}
+    </figcaption>
+    <form method="post" action="/validation-runs/{{ run.id }}/images/{{ image.id }}/review" class="review-form" data-review-form>
+      <div class="rating-grid">
+        {% for field, label in [('rating_face', '顔'), ('rating_costume', '衣装'), ('rating_style', 'スタイル'), ('rating_stability', '安定性'), ('rating_flexibility', '柔軟性'), ('rating_overall', '総合')] %}
+        <label>{{ label }}
+          <select name="{{ field }}">
+            <option value="">N/A</option>
+            {% for n in range(1,6) %}
+            <option value="{{ n }}" {{ 'selected' if image[field] is not none and image[field] == n else '' }}>{{ n }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        {% endfor %}
+      </div>
+      <label>強さ<select name="strength_label">{% for value, label in rubric_options.strength_labels %}<option value="{{ value }}" {{ 'selected' if image.strength_label == value else '' }}>{{ label }}</option>{% endfor %}</select></label>
+      <label>過学習<select name="overfit_level">{% for value, label in rubric_options.overfit_levels %}<option value="{{ value }}" {{ 'selected' if image.overfit_level == value else '' }}>{{ label }}</option>{% endfor %}</select></label>
+      <label>採用判断<select name="adoption_label">{% for value, label in rubric_options.adoption_labels %}<option value="{{ value }}" {{ 'selected' if image.adoption_label == value else '' }}>{{ label }}</option>{% endfor %}</select></label>
+      <div class="checkbox-grid">
+        {% for tag in rubric_options.failure_tags %}
+        <label><input type="checkbox" name="failure_tags" value="{{ tag }}"> {{ tag }}</label>
+        {% endfor %}
+      </div>
+      <label><input type="checkbox" name="ignored" value="1" {{ 'checked' if image.ignored else '' }}> カバレッジ判定では無視する</label>
+      <label>メモ<textarea name="memo">{{ image.memo or '' }}</textarea></label>
+      <div class="review-save-row">
+        <button type="submit">レビューを保存</button>
+        <span class="save-status" aria-live="polite"></span>
+      </div>
+    </form>
+  </figure>
+  {% else %}
+  <p class="muted">登録済み画像はありません。</p>
+  {% endfor %}
+</div>

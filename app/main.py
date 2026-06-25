@@ -84,7 +84,7 @@ from app.services.operation_monitor import (
     validation_generation_monitor,
     validation_pipeline_monitor,
 )
-from app.services.performance_profile import format_seconds, performance_summary
+from app.services.performance_profile import format_seconds, performance_summary, training_duration_estimate, validation_duration_estimate
 from app.services.recommendations import create_draft_job_from_recommendation, list_recommendations, regenerate_recommendations, set_recommendation_status, write_recommendation_report
 from app.services.review_candidates import ensure_epoch_candidates, regenerate_epoch_candidates
 from app.services.retry_signal import retry_signal_for_job, retry_signal_for_profile, retry_signal_for_project, retry_signal_for_review_session
@@ -552,7 +552,7 @@ def candidate_comparison_operation_monitor(group: dict[str, Any]) -> dict[str, A
     pid = generation.get("process_id") if generation else None
     log_path = generation.get("log_path") if generation else ""
     started_at = group.get("started_at") or (generation.get("started_at") if generation else None)
-    return operation_monitor(
+    monitor = operation_monitor(
         operation_type="candidate_standard_comparison",
         type_label="標準候補比較",
         status=status,
@@ -567,6 +567,48 @@ def candidate_comparison_operation_monitor(group: dict[str, Any]) -> dict[str, A
         status_url=f"/jobs/{group['job_id']}/candidate-comparisons/{group['id']}/status",
         message="Standard Candidate Comparisonを実行中です。検証画像生成、Embedding、機械補助レビュー、横断Matrix作成まで順に進めます。",
     )
+    apply_candidate_comparison_fallback_estimate(monitor, status=status, total=total, generated=generated_live, registered=registered, embedding_ready=embedding_ready, scored=scored)
+    return monitor
+
+
+def apply_candidate_comparison_fallback_estimate(
+    monitor: dict[str, Any],
+    *,
+    status: str,
+    total: int,
+    generated: int,
+    registered: int,
+    embedding_ready: int,
+    scored: int,
+) -> None:
+    if total <= 0 or monitor.get("estimated_remaining_seconds") is not None:
+        return
+    generation_seconds = max(0, total - max(generated, registered)) * 30
+    import_seconds = max(60, total * 2) if registered < total else 0
+    embedding_seconds = max(0, total - embedding_ready) * 5
+    machine_review_seconds = max(0, total - scored) * 4
+    matrix_seconds = 60
+    if status == "embedding_images":
+        remaining = embedding_seconds + machine_review_seconds + matrix_seconds
+        basis = "仮見積もり: 未Embedding画像5秒/枚 + 未レビュー画像4秒/枚 + Matrix 60秒"
+    elif status == "machine_reviewing":
+        remaining = machine_review_seconds + matrix_seconds
+        basis = "仮見積もり: 未レビュー画像4秒/枚 + Matrix 60秒"
+    elif status == "building_matrix":
+        remaining = matrix_seconds
+        basis = "仮見積もり: Matrix 60秒"
+    else:
+        remaining = generation_seconds + import_seconds + embedding_seconds + machine_review_seconds + matrix_seconds
+        basis = "仮見積もり: 画像生成30秒/枚 + 取り込み + Embedding5秒/枚 + 機械補助レビュー4秒/枚 + Matrix 60秒"
+    elapsed = monitor.get("elapsed_seconds")
+    estimated_total = (int(elapsed) if elapsed is not None else 0) + int(remaining)
+    monitor["estimated_remaining_seconds"] = int(remaining)
+    monitor["estimated_remaining_label"] = format_seconds(remaining)
+    monitor["stage_remaining_label"] = format_seconds(remaining)
+    monitor["estimated_total_seconds"] = estimated_total
+    monitor["estimated_total_label"] = format_seconds(estimated_total)
+    monitor["completion_eta_label"] = completion_eta_label(int(remaining))
+    monitor["rate_label"] = basis
 
 
 def candidate_comparison_stage_label(status: str, generation: dict[str, Any] | None) -> str:
@@ -3946,11 +3988,13 @@ def step_estimate_for_selection(
 ) -> dict[str, Any]:
     preset = fetch_one("SELECT * FROM presets WHERE id = ?", (preset_id,)) if preset_id else None
     target = step_target_context_for_selection(preset, params, recipe_v2_id=recipe_v2_id)
-    return estimate_steps(
+    estimate = estimate_steps(
         image_count=dataset_image_count_for_estimate(dataset_id, dataset_version_id),
         params=params,
         target=target,
     )
+    estimate["duration_estimate"] = training_duration_estimate(int(estimate.get("total_steps") or 0))
+    return estimate
 
 
 def step_target_context_for_selection(preset: Any | None, params: dict[str, Any], recipe_v2_id: str | None = None) -> dict[str, Any]:
@@ -4014,6 +4058,7 @@ async def api_step_estimate(request: Request) -> JSONResponse:
     recipe_v2_id = str(payload.get("recipe_v2_id") or "")
     params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
     estimate = step_estimate_for_selection(dataset_id, preset_id, params, dataset_version_id, recipe_v2_id=recipe_v2_id)
+    estimate["duration_estimate"] = training_duration_estimate(int(estimate.get("total_steps") or 0))
     target_steps = optional_int(str(payload.get("target_steps") or ""))
     suggestions = []
     if target_steps:
@@ -4177,8 +4222,12 @@ def job_detail(
     recommendations = list_recommendations(job_id)
     review_preparation = review_session_summary(job_id, current_session_id=review_session_id)
     candidate_standard_estimate_data = candidate_standard_estimate(job_id)
+    candidate_standard_duration_estimate = validation_duration_estimate(
+        int(candidate_standard_estimate_data.get("expected_total_images") or 0)
+    )
     candidate_standard_groups = latest_candidate_comparison_groups(job_id)
     candidate_standard_ready_group = ready_candidate_standard_group(candidate_standard_groups)
+    candidate_standard_running_group = active_candidate_comparison_group(job_id)
     review_prepare = normalize_review_prepare_message(review_prepare, review_preparation)
     operation_monitor = job_operation_monitor(job, review_preparation, candidate_standard_estimate_data)
     machine_score_map = score_map_for_samples(job_id)
@@ -4192,7 +4241,9 @@ def job_detail(
     project_selected_job = fetch_one("SELECT id, name FROM training_jobs WHERE id = ?", (project["selected_job_id"],)) if project and project["selected_job_id"] else None
     pilot_guidance = pilot_recommendation(project) if project else None
     next_action = recommended_next_action(job, selected_output)
-    if job["status"] == "completed" and selected_output is None and candidate_standard_ready_group:
+    if job["status"] == "completed" and selected_output is None and candidate_standard_running_group:
+        next_action = "次にやること: 標準候補比較を実行中です。完了後に横断Matrixで候補epochを確認してください。"
+    elif job["status"] == "completed" and selected_output is None and candidate_standard_ready_group:
         next_action = "次にやること: 標準候補比較は完了済みです。横断Matrixを確認し、採用LoRAを選択してください。"
     generation_notice_messages = {
         "bulk_generation_started": "選択した検証Runの画像生成を順番に開始しました。生成完了後に不足Embedding / 不足Machine Reviewを自動で再計算します。",
@@ -4237,8 +4288,10 @@ def job_detail(
         recommendations=recommendations,
         review_preparation=review_preparation,
         candidate_standard_estimate=candidate_standard_estimate_data,
+        candidate_standard_duration_estimate=candidate_standard_duration_estimate,
         candidate_standard_groups=candidate_standard_groups,
         candidate_standard_ready_group=candidate_standard_ready_group,
+        candidate_standard_running_group=candidate_standard_running_group,
         operation_monitor=operation_monitor,
         rubric_options=rubric_options(),
         validation_pack_path=validation_pack_path(job_id),
@@ -5671,12 +5724,17 @@ def validation_run_detail(request: Request, run_id: int, generation_error: str |
     reconcile_stale_embedding_jobs()
     reconcile_stale_machine_review_jobs()
     try:
-        bundle = load_validation_run_bundle(run_id)
+        lightweight_bundle = load_validation_run_bundle(run_id, include_images=False)
+        expected_count = int(lightweight_bundle["coverage"].get("expected_image_count") or 0)
+        full_requested = request is not None and request.query_params.get("full") == "1"
+        defer_heavy_sections = expected_count >= 45 and not full_requested
+        bundle = lightweight_bundle if defer_heavy_sections else load_validation_run_bundle(run_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     requested_job_return = request.query_params.get("return_to", "") if request is not None else ""
     job_return_to = requested_job_return if requested_job_return.startswith("/jobs/") else f"/jobs/{bundle['run']['job_id']}"
     generation_state = generation_view_state(run_id)
+    validation_preflight = weight_calibration_preflight(run_id) if bundle["run"]["validation_run_kind"] == "weight_calibration" else None
     return render(
         request,
         "validation_run_detail.html",
@@ -5689,19 +5747,53 @@ def validation_run_detail(request: Request, run_id: int, generation_error: str |
         apply_result=None,
         report_path=None,
         generation_error=generation_error,
-        validation_preflight=weight_calibration_preflight(run_id),
+        validation_preflight=validation_preflight,
         running_generation=current_running_validation_generation(),
         validation_embedding_coverage=embedding_coverage("validation_run", run_id),
-        machine_review_readiness=machine_review_readiness("validation_run_images", run_id),
-        machine_review_scores=scores_for_validation_run(run_id),
-        machine_score_map=score_map_for_validation(run_id),
-        machine_weight_summary=validation_weight_summary(run_id),
+        machine_review_readiness=None if defer_heavy_sections else machine_review_readiness("validation_run_images", run_id),
+        machine_review_scores=[] if defer_heavy_sections else scores_for_validation_run(run_id),
+        machine_score_map={} if defer_heavy_sections else score_map_for_validation(run_id),
+        machine_weight_summary=[] if defer_heavy_sections else validation_weight_summary(run_id),
+        defer_heavy_sections=defer_heavy_sections,
         performance_summary=performance_summary(
             bundle["run"],
             output_dir=str(generation_state["generation"]["output_dir"] if generation_state["generation"] else ""),
             model_paths=[str(bundle["run"]["base_model"] or ""), str(bundle["profile"]["selected_model_path"] if bundle["profile"] else "")],
         ),
         format_seconds=format_seconds,
+    )
+
+
+@app.get("/validation-runs/{run_id}/images-panel", response_class=HTMLResponse)
+def validation_run_images_panel(request: Request, run_id: int) -> HTMLResponse:
+    try:
+        bundle = load_validation_run_bundle(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return render(
+        request,
+        "partials/validation_run_images_panel.html",
+        **bundle,
+        machine_score_map=score_map_for_validation(run_id),
+        rubric_options=rubric_options(),
+        default_project_path=str(settings.ROOT_DIR),
+    )
+
+
+@app.get("/validation-runs/{run_id}/machine-assist-panel", response_class=HTMLResponse)
+def validation_run_machine_assist_panel(request: Request, run_id: int) -> HTMLResponse:
+    try:
+        bundle = load_validation_run_bundle(run_id, include_images=False)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return render(
+        request,
+        "partials/validation_run_machine_assist_panel.html",
+        **bundle,
+        validation_embedding_coverage=embedding_coverage("validation_run", run_id),
+        machine_review_readiness=machine_review_readiness("validation_run_images", run_id),
+        machine_review_scores=scores_for_validation_run(run_id),
+        machine_weight_summary=validation_weight_summary(run_id),
     )
 
 
