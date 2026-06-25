@@ -127,7 +127,7 @@ python scripts/capture_demo_screenshots.py --base-url http://127.0.0.1:8768 --db
 ## Current Status
 
 Current release: v0.5.4-beta
-Development phase: Phase 12.4.4
+Development phase: Phase 12.4.5
 
 The core workflow is operational and used for local LoRA production, but APIs,
 screen flows, and recipe catalogs may still change during the beta period.

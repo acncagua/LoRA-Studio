@@ -1,8 +1,12 @@
 import json
+import uuid
 from pathlib import Path
 
+import pytest
 from starlette.requests import Request
 
+from app import settings
+from app.db import init_db
 from app.main import job_new
 from app.services.i18n import (
     I18N_DIR,
@@ -14,6 +18,18 @@ from app.services.i18n import (
     reload_i18n,
     translate,
 )
+
+
+@pytest.fixture()
+def initialized_tmp_db(monkeypatch: pytest.MonkeyPatch) -> Path:
+    db_path = settings.DATA_DIR / f"test_i18n_{uuid.uuid4().hex}.sqlite"
+    monkeypatch.setattr(settings, "DB_PATH", db_path)
+    init_db()
+    try:
+        yield db_path
+    finally:
+        for suffix in ("", "-wal", "-shm"):
+            Path(f"{db_path}{suffix}").unlink(missing_ok=True)
 
 
 def make_request(query_string: bytes = b"", cookie: str = "") -> Request:
@@ -93,7 +109,7 @@ def test_action_description_prefers_description_key() -> None:
     assert action_description(action, "en") == "Check the running job progress and logs."
 
 
-def test_jobs_new_english_query_sets_locale_cookie() -> None:
+def test_jobs_new_english_query_sets_locale_cookie(initialized_tmp_db: Path) -> None:
     response = job_new(make_request(b"lang=en"), project_id="", mode="")
     body = response.body.decode("utf-8")
 
@@ -103,7 +119,7 @@ def test_jobs_new_english_query_sets_locale_cookie() -> None:
     assert "locale=en" in response.headers["set-cookie"]
 
 
-def test_jobs_new_uses_locale_cookie() -> None:
+def test_jobs_new_uses_locale_cookie(initialized_tmp_db: Path) -> None:
     response = job_new(make_request(cookie="locale=en"), project_id="", mode="")
     body = response.body.decode("utf-8")
 
@@ -112,7 +128,7 @@ def test_jobs_new_uses_locale_cookie() -> None:
     assert "Creation Method" in body
 
 
-def test_jobs_new_japanese_query_overrides_cookie() -> None:
+def test_jobs_new_japanese_query_overrides_cookie(initialized_tmp_db: Path) -> None:
     response = job_new(make_request(b"lang=ja", cookie="locale=en"), project_id="", mode="")
     body = response.body.decode("utf-8")
 

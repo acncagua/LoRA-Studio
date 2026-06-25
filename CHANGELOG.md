@@ -1,9 +1,12 @@
 # Changelog
 
-## Unreleased
+## phase12.4.5 / v0.5.4-beta - 2026-06-25
 
 ### 主な変更
 
+- Phase 12.4.4でREADME.mdを英語ランディングページとして再整理し、README_ja.mdを同じ見出し構成の日本語ランディングページへ揃えました。
+- README_ja.mdに蓄積していた詳細説明を `docs/ja/` へ分離し、分割前全文を `docs/ja/_archive_readme_ja_before_split.md` に保全しました。
+- 段階的i18n基盤として、locale cookie永続化、JSON辞書分離、Primary Action向け翻訳キー優先表示を整備しました。
 - README / README_ja / docs用スクリーンショット向けのDemo DB生成基盤を追加しました。
 - `scripts/create_demo_db.py` で、実運用DBをコピーせず、架空Project / Dataset / Job / Review Session / Validation Run / LoRA Profileを含むサニタイズ済みSQLite DBを生成できます。
 - `--db` / `--demo` 起動と `LORA_STUDIO_DB` / `LORA_STUDIO_DEMO_MODE` 環境変数に対応し、Demo DBを読み取り専用で起動できるようにしました。

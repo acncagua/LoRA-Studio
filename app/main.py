@@ -123,6 +123,7 @@ from app.services.optimizer_dependencies import (
     install_all_missing_dependencies,
     install_dependency,
 )
+from app.services.recipe_optimizer_catalog import PURPOSE_SHORT_LABELS_EN
 from app.services.step_estimator import calculate_required_repeats, estimate_steps, suggest_target_steps, target_config_from_catalog
 from app.services.review_sessions import (
     create_neighbor_review_session,
@@ -411,6 +412,11 @@ def localize_catalog_row(row: Any, locale: str) -> dict[str, Any]:
             item["expected_behavior"] = desc
         elif "description" in item:
             item["description"] = desc
+    if locale == "en" and item.get("training_purpose_id"):
+        item["purpose_display_name"] = PURPOSE_SHORT_LABELS_EN.get(
+            str(item.get("training_purpose_id")),
+            str(item.get("training_purpose_id") or "").replace("_", " ").title(),
+        )
     if risk:
         item["localized_risk_note"] = risk
         item["risk_note"] = risk
