@@ -2967,6 +2967,25 @@ function initLazySections() {
   });
 }
 
+function initLoraComparisonSelection() {
+  document.querySelectorAll("[data-lora-comparison-selection]").forEach((form) => {
+    const checkboxes = Array.from(form.querySelectorAll("[data-lora-comparison-checkbox]"));
+    const countEl = form.querySelector("[data-lora-comparison-count]");
+    const submit = form.querySelector("[data-lora-comparison-submit]");
+    const update = () => {
+      const count = checkboxes.filter((checkbox) => checkbox.checked).length;
+      if (countEl) {
+        countEl.textContent = String(count);
+      }
+      if (submit) {
+        submit.disabled = count < 2;
+      }
+    };
+    checkboxes.forEach((checkbox) => checkbox.addEventListener("change", update));
+    update();
+  });
+}
+
 document.addEventListener("DOMContentLoaded", initValidationGenerationPolling);
 document.addEventListener("DOMContentLoaded", initValidationGenerationDetailPolling);
 document.addEventListener("DOMContentLoaded", initBulkValidationGenerationSubmit);
@@ -2985,3 +3004,4 @@ document.addEventListener("DOMContentLoaded", initReviewPreparationPolling);
 document.addEventListener("DOMContentLoaded", initTrainLogPolling);
 document.addEventListener("DOMContentLoaded", initActiveOperationMonitorPolling);
 document.addEventListener("DOMContentLoaded", initLazySections);
+document.addEventListener("DOMContentLoaded", initLoraComparisonSelection);

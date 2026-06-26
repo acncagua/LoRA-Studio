@@ -11,6 +11,7 @@ from app import settings
 from app.services.storage_paths import exports_root
 from app.db import connect, fetch_all, fetch_one, utc_now
 from app.services.image_store import unique_copy
+from app.services.lora_artifacts import resolve_lora_artifact
 
 
 BASELINE_MODE = "no_lora_tag"
@@ -289,6 +290,15 @@ def create_validation_run(
         reference_set_version_id = ref["current_version_id"] if ref else None
     expected = preset_expected_count(preset)
     preset_snapshot = json.dumps(dict(preset), ensure_ascii=False, sort_keys=True)
+    resolved_artifact = None
+    try:
+        resolved_artifact = resolve_lora_artifact(
+            profile_id=profile["id"] if profile else profile_id,
+            output_id=selected_output["id"] if selected_output is not None else None,
+            job_id=job_id,
+        )
+    except ValueError:
+        resolved_artifact = None
     now = utc_now()
     epoch_suffix = f" epoch {selected_output['epoch']}" if selected_output is not None and selected_output["epoch"] is not None else ""
     name = f"Job #{job_id} {preset['name']}{epoch_suffix}"
@@ -302,9 +312,11 @@ def create_validation_run(
                 trigger_word, lora_filename, recommended_weight_min,
                 recommended_weight_max, expected_image_count, actual_image_count,
                 status, preset_snapshot_json, reference_set_id, reference_set_version_id,
+                artifact_path_snapshot, artifact_source_kind, artifact_sha256_snapshot,
+                artifact_file_size_snapshot,
                 created_at, updated_at, memo
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'planned', ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'planned', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job["project_id"] if "project_id" in job.keys() else None,
@@ -327,6 +339,10 @@ def create_validation_run(
                 preset_snapshot,
                 reference_set_id,
                 reference_set_version_id,
+                str(resolved_artifact.path) if resolved_artifact else None,
+                resolved_artifact.source_kind if resolved_artifact else None,
+                resolved_artifact.actual_sha256 if resolved_artifact else None,
+                resolved_artifact.file_size if resolved_artifact else None,
                 now,
                 now,
                 memo.strip(),

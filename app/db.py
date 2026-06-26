@@ -443,6 +443,10 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "reference_set_id": "INTEGER",
             "reference_set_version_id": "INTEGER",
             "stage_timing_json": "TEXT",
+            "artifact_path_snapshot": "TEXT",
+            "artifact_source_kind": "TEXT",
+            "artifact_sha256_snapshot": "TEXT",
+            "artifact_file_size_snapshot": "INTEGER",
         },
     )
     conn.execute("UPDATE validation_runs SET validation_run_kind = 'legacy' WHERE validation_run_kind IS NULL OR validation_run_kind = '' OR validation_preset_id IS NULL")
@@ -646,6 +650,61 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL,
             UNIQUE(comparison_group_id, shared_condition_key)
         );
+        CREATE TABLE IF NOT EXISTS lora_comparison_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            comparison_mode TEXT NOT NULL DEFAULT 'controlled',
+            comparison_axis TEXT NOT NULL DEFAULT 'selected_artifact',
+            validation_preset_id TEXT NOT NULL,
+            preset_snapshot_json TEXT,
+            reference_set_id INTEGER,
+            reference_set_version_id INTEGER,
+            embedding_model_id TEXT,
+            embedding_provider_snapshot_json TEXT,
+            status TEXT NOT NULL DEFAULT 'planned',
+            parity_status TEXT NOT NULL DEFAULT 'unchecked',
+            parity_report_json TEXT,
+            candidate_count INTEGER NOT NULL DEFAULT 0,
+            logical_image_count INTEGER NOT NULL DEFAULT 0,
+            physical_image_count INTEGER NOT NULL DEFAULT 0,
+            reused_image_count INTEGER NOT NULL DEFAULT 0,
+            remaining_generation_count INTEGER NOT NULL DEFAULT 0,
+            registered_image_count INTEGER NOT NULL DEFAULT 0,
+            machine_review_score_count INTEGER NOT NULL DEFAULT 0,
+            matrix_path TEXT,
+            report_md_path TEXT,
+            report_json_path TEXT,
+            decision_status TEXT NOT NULL DEFAULT 'human_review_pending',
+            preferred_candidate_id INTEGER,
+            decision_reason TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            memo TEXT
+        );
+        CREATE TABLE IF NOT EXISTS lora_comparison_candidates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            comparison_session_id INTEGER NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            selected_lora_profile_id INTEGER NOT NULL,
+            job_id INTEGER NOT NULL,
+            selected_output_id INTEGER,
+            validation_run_id INTEGER,
+            validation_run_source TEXT,
+            display_label_snapshot TEXT NOT NULL,
+            display_detail_snapshot TEXT,
+            artifact_path_snapshot TEXT,
+            artifact_source_kind TEXT,
+            artifact_sha256 TEXT,
+            artifact_file_size INTEGER,
+            artifact_verified_at TEXT,
+            candidate_snapshot_json TEXT,
+            allowed_diff_json TEXT,
+            unexpected_diff_json TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(comparison_session_id, selected_lora_profile_id)
+        );
         CREATE TABLE IF NOT EXISTS storage_locations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             key TEXT NOT NULL UNIQUE,
@@ -699,6 +758,18 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             ON candidate_comparison_groups(status);
         CREATE INDEX IF NOT EXISTS idx_candidate_comparison_shared_images_group
             ON candidate_comparison_shared_images(comparison_group_id);
+        CREATE INDEX IF NOT EXISTS idx_lora_comparison_sessions_project
+            ON lora_comparison_sessions(project_id);
+        CREATE INDEX IF NOT EXISTS idx_lora_comparison_sessions_status
+            ON lora_comparison_sessions(status);
+        CREATE INDEX IF NOT EXISTS idx_lora_comparison_candidates_session
+            ON lora_comparison_candidates(comparison_session_id);
+        CREATE INDEX IF NOT EXISTS idx_lora_comparison_candidates_profile
+            ON lora_comparison_candidates(selected_lora_profile_id);
+        CREATE INDEX IF NOT EXISTS idx_lora_comparison_candidates_output
+            ON lora_comparison_candidates(selected_output_id);
+        CREATE INDEX IF NOT EXISTS idx_lora_comparison_candidates_validation_run
+            ON lora_comparison_candidates(validation_run_id);
         CREATE INDEX IF NOT EXISTS idx_validation_images_shared_key
             ON validation_images(shared_condition_key);
         CREATE INDEX IF NOT EXISTS idx_storage_locations_key
@@ -2714,6 +2785,8 @@ CREATE TABLE IF NOT EXISTS validation_runs (
     suggested_light_weight REAL, suggested_strong_weight REAL,
     suggested_weight_reason TEXT, profile_applied_at TEXT,
     preset_snapshot_json TEXT, stage_timing_json TEXT,
+    artifact_path_snapshot TEXT, artifact_source_kind TEXT,
+    artifact_sha256_snapshot TEXT, artifact_file_size_snapshot INTEGER,
     expected_image_count INTEGER, actual_image_count INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'planned', created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL, memo TEXT

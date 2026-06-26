@@ -72,6 +72,19 @@ from app.services.machine_review import (
     update_machine_review_settings,
     validation_weight_summary,
 )
+from app.services.lora_comparisons import (
+    archive_lora_comparison_session,
+    build_lora_comparison_matrix_html,
+    create_lora_comparison_session,
+    lora_comparison_sessions,
+    load_lora_comparison_session,
+    refresh_lora_comparison_session,
+    save_lora_comparison_decision,
+    start_lora_comparison_missing_review,
+    write_lora_comparison_matrix,
+    write_lora_comparison_report,
+    add_lora_comparison_weights,
+)
 from app.services.output_collector import collect_job_results
 from app.services.operation_monitor import (
     completion_eta_label,
@@ -6838,6 +6851,150 @@ def register_validation_run_image(
 @app.get("/lora-library", response_class=HTMLResponse)
 def lora_library(request: Request) -> HTMLResponse:
     return render(request, "lora_library.html", profiles=lora_library_profiles())
+
+
+@app.get("/lora-comparisons", response_class=HTMLResponse)
+def lora_comparisons_index(request: Request) -> HTMLResponse:
+    return render(request, "lora_comparisons.html", sessions=lora_comparison_sessions())
+
+
+@app.get("/lora-comparisons/new", response_class=HTMLResponse)
+def lora_comparison_new(request: Request, profile_ids: list[int] = Query(default=[])) -> HTMLResponse:
+    profiles = [profile for profile in lora_library_profiles() if int(profile["id"]) in {int(pid) for pid in profile_ids}]
+    presets = fetch_all("SELECT * FROM validation_presets WHERE is_active = 1 ORDER BY id")
+    return render(
+        request,
+        "lora_comparison_new.html",
+        profiles=profiles,
+        profile_ids=profile_ids,
+        presets=presets,
+    )
+
+
+@app.post("/lora-comparisons")
+def lora_comparison_create(
+    profile_ids: list[int] = Form(default=[]),
+    name: str = Form(default=""),
+    comparison_mode: str = Form(default="controlled"),
+    comparison_axis: str = Form(default="network_type"),
+    validation_preset_id: str = Form(default="standard_validation_v1"),
+    allow_warnings: str | None = Form(default=None),
+    memo: str = Form(default=""),
+) -> RedirectResponse:
+    try:
+        session_id = create_lora_comparison_session(
+            profile_ids=profile_ids,
+            name=name,
+            comparison_mode=comparison_mode,
+            comparison_axis=comparison_axis,
+            validation_preset_id=validation_preset_id,
+            allow_warnings=bool(allow_warnings),
+            memo=memo,
+        )
+    except Exception as exc:
+        query = urlencode({"error": str(exc)}, doseq=True)
+        profile_query = urlencode([("profile_ids", pid) for pid in profile_ids])
+        separator = "&" if profile_query else ""
+        return RedirectResponse(f"/lora-comparisons/new?{profile_query}{separator}{query}", status_code=303)
+    return RedirectResponse(f"/lora-comparisons/{session_id}", status_code=303)
+
+
+@app.get("/lora-comparisons/{session_id}", response_class=HTMLResponse)
+def lora_comparison_detail(request: Request, session_id: int) -> HTMLResponse:
+    try:
+        summary = refresh_lora_comparison_session(session_id)
+        session, candidates = load_lora_comparison_session(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    parity_report = json.loads(session["parity_report_json"] or "{}")
+    return render(
+        request,
+        "lora_comparison_detail.html",
+        session=session,
+        candidates=candidates,
+        summary=summary,
+        parity_report=parity_report,
+    )
+
+
+@app.post("/lora-comparisons/{session_id}/refresh")
+def lora_comparison_refresh(session_id: int) -> RedirectResponse:
+    refresh_lora_comparison_session(session_id)
+    return RedirectResponse(f"/lora-comparisons/{session_id}", status_code=303)
+
+
+@app.post("/lora-comparisons/{session_id}/matrix/build")
+def lora_comparison_matrix_build(session_id: int) -> RedirectResponse:
+    try:
+        write_lora_comparison_matrix(session_id)
+    except Exception as exc:
+        return RedirectResponse(f"/lora-comparisons/{session_id}?error={quote(str(exc))}", status_code=303)
+    return RedirectResponse(f"/lora-comparisons/{session_id}", status_code=303)
+
+
+@app.get("/lora-comparisons/{session_id}/matrix", response_class=HTMLResponse)
+def lora_comparison_matrix(session_id: int, weights: list[str] = Query(default=[])) -> HTMLResponse:
+    try:
+        return HTMLResponse(build_lora_comparison_matrix_html(session_id, display_weights=weights))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/lora-comparisons/{session_id}/matrix/weights")
+def lora_comparison_matrix_add_weights(session_id: int, weights: list[str] = Form(default=[])) -> RedirectResponse:
+    try:
+        add_lora_comparison_weights(session_id, weights)
+    except Exception as exc:
+        return RedirectResponse(f"/lora-comparisons/{session_id}?error={quote(str(exc))}", status_code=303)
+    return RedirectResponse(f"/lora-comparisons/{session_id}", status_code=303)
+
+
+@app.post("/lora-comparisons/{session_id}/matrix/missing-review")
+def lora_comparison_matrix_missing_review(session_id: int) -> RedirectResponse:
+    try:
+        start_lora_comparison_missing_review(session_id)
+    except Exception as exc:
+        return RedirectResponse(f"/lora-comparisons/{session_id}?error={quote(str(exc))}", status_code=303)
+    return RedirectResponse(f"/lora-comparisons/{session_id}", status_code=303)
+
+
+@app.post("/lora-comparisons/{session_id}/decision")
+def lora_comparison_decision(
+    session_id: int,
+    decision_status: str = Form(default="human_review_pending"),
+    preferred_candidate_id: int | None = Form(default=None),
+    decision_reason: str = Form(default=""),
+) -> RedirectResponse:
+    try:
+        save_lora_comparison_decision(
+            session_id,
+            decision_status=decision_status,
+            preferred_candidate_id=preferred_candidate_id,
+            decision_reason=decision_reason,
+        )
+    except Exception as exc:
+        return RedirectResponse(f"/lora-comparisons/{session_id}?error={quote(str(exc))}", status_code=303)
+    return RedirectResponse(f"/lora-comparisons/{session_id}", status_code=303)
+
+
+@app.post("/lora-comparisons/{session_id}/report")
+def lora_comparison_report(session_id: int) -> RedirectResponse:
+    try:
+        write_lora_comparison_report(session_id)
+    except Exception as exc:
+        return RedirectResponse(f"/lora-comparisons/{session_id}?error={quote(str(exc))}", status_code=303)
+    return RedirectResponse(f"/lora-comparisons/{session_id}", status_code=303)
+
+
+@app.post("/lora-comparisons/{session_id}/archive")
+def lora_comparison_archive(session_id: int) -> RedirectResponse:
+    archive_lora_comparison_session(session_id)
+    return RedirectResponse("/lora-comparisons", status_code=303)
+
+
+@app.get("/lora-comparisons/{session_id}/status")
+def lora_comparison_status(session_id: int) -> JSONResponse:
+    return JSONResponse(refresh_lora_comparison_session(session_id))
 
 
 def lora_library_profiles(limit: int | None = None) -> list[dict[str, Any]]:

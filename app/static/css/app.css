@@ -966,6 +966,65 @@ tr.epoch-selected td:first-child { font-weight: 700; color: var(--accent); }
 .lightbox-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; color: white; }
 .lightbox-title { margin-right: auto; font-weight: 700; overflow-wrap: anywhere; }
 .lightbox img { max-width: 100%; max-height: calc(96vh - 58px); object-fit: contain; background: white; border-radius: 8px; }
+.comparison-selection-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+  margin: 12px 0;
+}
+.comparison-candidate-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+.comparison-candidate-card {
+  border: 1px solid var(--line);
+  background: var(--card);
+  border-radius: 8px;
+  padding: 12px;
+  min-width: 0;
+}
+.comparison-candidate-card h3 {
+  margin-top: 0;
+  overflow-wrap: anywhere;
+}
+.comparison-candidate-card dl,
+.comparison-status-grid {
+  display: grid;
+  gap: 8px;
+}
+.comparison-candidate-card dt,
+.comparison-status-grid span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.comparison-candidate-card dd {
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+}
+.comparison-status-grid {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+.comparison-status-grid > div {
+  border: 1px solid var(--line);
+  background: var(--card);
+  border-radius: 8px;
+  padding: 10px;
+}
+.comparison-status-grid strong {
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+.comparison-parity-pass { background: #bfe9d7; color: #135c43; }
+.comparison-parity-warning { background: #ffe4a8; color: #745009; }
+.comparison-parity-fail { background: #f4c0c8; color: #7b2531; }
+.comparison-parity-unchecked { background: #d9e1e5; color: #2d3c44; }
+.comparison-decision-panel form {
+  display: grid;
+  gap: 12px;
+}
 @media (max-width: 900px) {
   body { overflow-x: hidden; }
   .sidebar { position: static; width: auto; min-width: 0; max-height: none; gap: 14px; }

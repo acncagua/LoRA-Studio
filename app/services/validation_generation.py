@@ -1863,6 +1863,159 @@ def build_epoch_cross_matrix_html(job_id: int, run_ids: list[int], display_weigh
     return "\n".join(lines) + "\n"
 
 
+def build_run_cross_matrix_html(
+    run_ids: list[int],
+    *,
+    title: str,
+    run_labels: dict[int, str],
+    run_details: dict[int, str] | None = None,
+    display_weights: list[Any] | None = None,
+    navigation_html: str = "",
+    controls_html: str = "",
+) -> str:
+    unique_run_ids = list(dict.fromkeys(int(run_id) for run_id in run_ids if int(run_id) > 0))
+    if len(unique_run_ids) < 2:
+        raise ValueError("Run横断Matrixには検証Runを2件以上選択してください。")
+    selected_display_weights = normalize_matrix_weights(display_weights or [])
+    placeholders = ",".join("?" for _ in unique_run_ids)
+    runs = [
+        dict(row)
+        for row in fetch_all(
+            f"""
+            SELECT vr.*, j.name AS job_name, o.epoch AS selected_epoch, o.file_path AS selected_output_path
+            FROM validation_runs vr
+            LEFT JOIN training_jobs j ON j.id = vr.job_id
+            LEFT JOIN training_outputs o ON o.id = vr.selected_output_id
+            WHERE vr.id IN ({placeholders})
+            ORDER BY vr.id
+            """,
+            tuple(unique_run_ids),
+        )
+    ]
+    run_by_id = {int(run["id"]): run for run in runs}
+    runs = [run_by_id[run_id] for run_id in unique_run_ids if run_id in run_by_id]
+    if len(runs) != len(unique_run_ids):
+        raise ValueError("指定された検証Runの一部が見つかりません。")
+    ordered_run_ids = [int(run["id"]) for run in runs]
+    placeholders = ",".join("?" for _ in ordered_run_ids)
+    conditions = [
+        dict(row)
+        for row in fetch_all(
+            f"""
+            SELECT *
+            FROM validation_expected_conditions
+            WHERE validation_run_id IN ({placeholders})
+            ORDER BY prompt_key, hires_enabled, seed, lora_weight, validation_run_id
+            """,
+            tuple(ordered_run_ids),
+        )
+    ]
+    images = [
+        dict(row)
+        for row in fetch_all(
+            f"""
+            SELECT *
+            FROM validation_images
+            WHERE validation_run_id IN ({placeholders}) AND image_role = 'individual'
+            ORDER BY validation_run_id, prompt_key, hires_enabled, seed, lora_weight, id
+            """,
+            tuple(ordered_run_ids),
+        )
+    ]
+    score_by_image_id = validation_machine_score_map(ordered_run_ids)
+    condition_by_key: dict[tuple[int, str, int, int, str], dict[str, Any]] = {}
+    sections: dict[tuple[str, int], dict[str, set[Any]]] = {}
+    for condition in conditions:
+        prompt_key = str(condition["prompt_key"] or "prompt")
+        hires = int(condition["hires_enabled"] or 0)
+        seed = int(condition["seed"])
+        weight_key = f"{float(condition['lora_weight'] or 0):g}"
+        condition_by_key[(int(condition["validation_run_id"]), prompt_key, hires, seed, weight_key)] = condition
+        section = sections.setdefault((prompt_key, hires), {"seeds": set(), "weights": set()})
+        section["seeds"].add(seed)
+        section["weights"].add(float(condition["lora_weight"] or 0))
+
+    images_by_condition: dict[int, dict[str, Any]] = {}
+    for image in images:
+        if image["expected_condition_id"]:
+            images_by_condition[int(image["expected_condition_id"])] = image
+
+    has_hires_sections = any(key[1] for key in sections)
+    lines = [
+        "<!doctype html>",
+        "<meta charset=\"utf-8\">",
+        f"<title>{html.escape(title)}</title>",
+        cross_matrix_style(),
+        f"<h1>{html.escape(title)}</h1>",
+        navigation_html,
+        matrix_display_controls(),
+        matrix_hires_controls(has_hires_sections),
+        controls_html,
+        "<p class=\"muted\">prompt単位でまとめ、同じprompt / seed / weight / Hires条件をRun横断で横並び比較します。候補名は実名表示です。</p>",
+        "<section class=\"run-summary\"><h2>比較対象</h2><div class=\"summary-grid\">",
+    ]
+    detail_map = run_details or {}
+    for run in runs:
+        run_id = int(run["id"])
+        label = run_labels.get(run_id) or f"Validation Run #{run_id}"
+        detail = detail_map.get(run_id) or f"Job #{int(run['job_id'])} / {run.get('job_name') or '-'}"
+        lines.append(
+            "<div class=\"summary-card\">"
+            f"<strong>{html.escape(label)}</strong>"
+            f"<div>検証Run: #{run_id}</div>"
+            f"<div>{html.escape(detail)}</div>"
+            f"<div class=\"muted\">LoRA: {html.escape(str(run['lora_filename'] or '-'))}</div>"
+            "</div>"
+        )
+    lines.append("</div></section>")
+
+    for (prompt_key, hires), section in sorted(sections.items(), key=lambda item: (item[0][0], item[0][1])):
+        seeds = sorted(int(seed) for seed in section["seeds"])
+        weights = sorted(float(weight) for weight in section["weights"])
+        if selected_display_weights:
+            weights = [weight for weight in weights if round(float(weight), 1) in selected_display_weights]
+            if not weights:
+                continue
+        lines.append(f"<section class=\"matrix-hires-section\" data-matrix-hires=\"{'hires' if hires else 'nohires'}\">")
+        lines.append(f"<h2>{html.escape(prompt_key)} / {'Hiresあり' if hires else 'Hiresなし'}</h2>")
+        for seed in seeds:
+            for weight in weights:
+                weight_key = f"{weight:g}"
+                lines.append(f"<h3>seed {seed} / weight {weight_key}</h3>")
+                lines.append("<table><thead><tr>")
+                for run in runs:
+                    run_id = int(run["id"])
+                    label = run_labels.get(run_id) or f"Run #{run_id}"
+                    lines.append(f"<th>{html.escape(label)}</th>")
+                lines.append("</tr></thead><tbody><tr>")
+                for run in runs:
+                    run_id = int(run["id"])
+                    condition = condition_by_key.get((run_id, prompt_key, hires, seed, weight_key))
+                    lines.append("<td class=\"epoch-cell\">")
+                    if condition is None:
+                        lines.append("<div class=\"missing\">条件なし</div>")
+                    else:
+                        image = images_by_condition.get(int(condition["id"]))
+                        if image:
+                            lines.append(f"<img class=\"matrix-image\" src=\"/validation-images/{int(image['id'])}\" alt=\"validation image\">")
+                            lines.append(matrix_machine_score(score_by_image_id.get(int(image['id']))))
+                            lines.append(matrix_review_form(run_id, image))
+                        else:
+                            lines.append("<div class=\"missing\">画像未登録</div>")
+                        lines.append(f"<div class=\"muted\">検証Run: #{run_id}</div>")
+                        lines.append(f"<div class=\"muted\">expected_condition_id: {int(condition['id'])}</div>")
+                        lines.append(f"<div class=\"muted\">hash: {html.escape(str(condition['condition_hash'])[:12])}</div>")
+                    lines.append("</td>")
+                lines.append("</tr></tbody></table>")
+        lines.append("</section>")
+    if not sections:
+        lines.append("<p class=\"notice\">比較できる検証条件がありません。検証Runの生成ファイル作成または条件再生成を確認してください。</p>")
+    lines.append(navigation_html)
+    lines.append(matrix_display_script())
+    lines.append(matrix_review_script())
+    return "\n".join(line for line in lines if line) + "\n"
+
+
 def normalize_matrix_weights(values: list[Any]) -> list[float]:
     weights: list[float] = []
     for value in values:

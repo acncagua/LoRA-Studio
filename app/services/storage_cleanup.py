@@ -220,8 +220,12 @@ def exported_selected_preview(job_id: int) -> dict[str, Any]:
     row = fetch_one("SELECT * FROM training_outputs WHERE job_id = ? AND selected = 1 AND deleted_at IS NULL", (job_id,))
     files = [output_file(row)] if row else []
     payload = preview_payload(job_id, "exported_selected", files, "Export済み採用LoRA runs側削除Preview", 1 if row else 0)
+    comparison_ref = comparison_output_reference(int(row["id"])) if row else None
+    payload["comparison_reference"] = comparison_ref
     payload["can_execute"] = bool(row and selected_export_verified(row))
     payload["blocked_reason"] = "" if payload["can_execute"] else "export先の存在とsha256一致が確認済みの場合のみ削除できます。"
+    if comparison_ref and not payload["can_execute"]:
+        payload["blocked_reason"] = f"LoRA比較Session #{comparison_ref['session_id']} が参照中で、verified fallbackがありません。"
     return payload
 
 
@@ -275,6 +279,28 @@ def selected_export_verified(row: Any) -> bool:
     return export_sha == source_sha
 
 
+def comparison_output_reference(output_id: int) -> dict[str, Any] | None:
+    row = fetch_one(
+        """
+        SELECT c.*, s.name AS session_name, s.status AS session_status
+        FROM lora_comparison_candidates c
+        JOIN lora_comparison_sessions s ON s.id = c.comparison_session_id
+        WHERE c.selected_output_id = ?
+          AND s.status != 'archived'
+        ORDER BY s.updated_at DESC, s.id DESC
+        LIMIT 1
+        """,
+        (output_id,),
+    )
+    if row is None:
+        return None
+    return {
+        "session_id": int(row["comparison_session_id"]),
+        "session_name": row["session_name"],
+        "session_status": row["session_status"],
+    }
+
+
 def cleanup_outputs(job_id: int, mode: str) -> dict[str, Any]:
     if mode == "unselected_models":
         preview = unselected_model_preview(job_id)
@@ -289,6 +315,9 @@ def cleanup_outputs(job_id: int, mode: str) -> dict[str, Any]:
     moved = []
     now = utc_now()
     for item in preview["files"]:
+        comparison_ref = comparison_output_reference(item.id)
+        if comparison_ref and mode != "exported_selected":
+            raise ValueError(f"LoRA比較Session #{comparison_ref['session_id']} が参照中のため削除できません。")
         if not item.exists:
             mark_output_missing(item.id, "missing during cleanup")
             continue

@@ -1,0 +1,62 @@
+{% extends "base.html" %}{% block content %}
+<header class="page-head">
+  <h1>{{ t('page.lora_comparison_new.title') }}</h1>
+  <a class="button secondary" href="/lora-library">{{ t('nav.lora_library') }}</a>
+</header>
+{% if request.query_params.get('error') %}
+<p class="notice warning">{{ request.query_params.get('error') }}</p>
+{% endif %}
+<form method="post" action="/lora-comparisons">
+  <section>
+    <h2>{{ t('comparison.candidates') }}</h2>
+    <div class="comparison-candidate-grid">
+      {% for profile in profiles %}
+      <article class="comparison-candidate-card">
+        <input type="hidden" name="profile_ids" value="{{ profile.id }}">
+        <h3>{{ profile.profile_name }}</h3>
+        <dl>
+          <dt>Profile</dt><dd>#{{ profile.id }}</dd>
+          <dt>Project</dt><dd>#{{ profile.project_id }} {{ profile.project_name or '' }}</dd>
+          <dt>Job</dt><dd>#{{ profile.job_id }} {{ profile.job_name or '' }}</dd>
+          <dt>epoch</dt><dd>{{ profile.selected_epoch or '-' }}</dd>
+          <dt>Artifact</dt><dd>{{ profile.selected_model_path or '-' }}</dd>
+        </dl>
+      </article>
+      {% else %}
+      <p class="notice warning">{{ t('comparison.no_profiles_selected') }}</p>
+      {% endfor %}
+    </div>
+  </section>
+  <section class="grid-2">
+    <label>{{ t('label.name') }}
+      <input type="text" name="name" value="Selected LoRA Comparison">
+    </label>
+    <label>{{ t('comparison.mode.label') }}
+      <select name="comparison_mode">
+        <option value="controlled">{{ t('comparison.mode.controlled') }}</option>
+        <option value="practical">{{ t('comparison.mode.practical') }}</option>
+      </select>
+    </label>
+    <label>{{ t('comparison.axis.label') }}
+      <select name="comparison_axis">
+        <option value="network_type">{{ t('comparison.axis.network_type') }}</option>
+        <option value="optimizer_profile">{{ t('comparison.axis.optimizer_profile') }}</option>
+        <option value="recipe">{{ t('comparison.axis.recipe') }}</option>
+        <option value="selected_artifact">{{ t('comparison.axis.selected_artifact') }}</option>
+      </select>
+    </label>
+    <label>{{ t('label.validation_preset') }}
+      <select name="validation_preset_id">
+        {% for preset in presets %}
+        <option value="{{ preset.id }}">{{ preset.name }} / {{ preset.id }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </section>
+  <section>
+    <label class="checkbox-row"><input type="checkbox" name="allow_warnings" value="1"> {{ t('comparison.allow_warnings') }}</label>
+    <label>{{ t('label.memo') }}<textarea name="memo" rows="3"></textarea></label>
+    <button class="button" type="submit" {% if profiles|length < 2 %}disabled{% endif %}>{{ t('comparison.create') }}</button>
+  </section>
+</form>
+{% endblock %}

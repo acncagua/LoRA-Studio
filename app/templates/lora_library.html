@@ -2,11 +2,17 @@
 <header class="page-head"><h1>{{ t('page.lora_library.title') }}</h1></header>
 <section>
   <p class="muted">採用済みLoRAをジョブ横断で管理します。推奨weight、トリガー、検証状態、リファレンスセットをここで確認できます。</p>
+  <form method="get" action="/lora-comparisons/new" data-lora-comparison-selection>
+  <div class="comparison-selection-toolbar">
+    <span><strong data-lora-comparison-count>0</strong> {{ t('comparison.selected_count_suffix') }}</span>
+    <button class="button" type="submit" data-lora-comparison-submit disabled>{{ t('comparison.compare_selected') }}</button>
+    <a class="button secondary" href="/lora-comparisons">{{ t('nav.lora_comparisons') }}</a>
+  </div>
   <div class="table-scroll">
   <table class="wide-table lora-library-table">
     <thead>
       <tr>
-        <th>ID</th><th>{{ t('label.profile') }}</th><th>Project</th><th>{{ t('label.job') }}</th><th>{{ t('label.trigger') }}</th><th>epoch</th>
+        <th>{{ t('common.select') }}</th><th>ID</th><th>{{ t('label.profile') }}</th><th>Project</th><th>{{ t('label.job') }}</th><th>{{ t('label.trigger') }}</th><th>epoch</th>
         <th>{{ t('label.recommended_weight') }}</th><th>{{ t('label.validation_preset') }}</th><th>{{ t('label.latest_validation_run') }}</th>
         <th>{{ t('label.expected_registered_reviewed') }}</th><th>{{ t('label.coverage') }}</th><th>{{ t('common.warning') }}</th><th>{{ t('label.base_model') }}</th><th>{{ t('common.actions') }}</th>
       </tr>
@@ -14,6 +20,7 @@
     <tbody>
       {% for profile in profiles %}
       <tr>
+        <td><input type="checkbox" name="profile_ids" value="{{ profile.id }}" data-lora-comparison-checkbox></td>
         <td class="nowrap">#{{ profile.id }}</td>
         <td class="wrap-text">{{ profile.profile_name }}</td>
         <td class="wrap-text">{% if profile.project_id %}<a href="/projects/{{ profile.project_id }}">#{{ profile.project_id }} {{ profile.project_name or '' }}</a>{% else %}-{% endif %}</td>
@@ -33,10 +40,11 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="14" class="muted">{{ t('empty.lora_profiles') }}</td></tr>
+      <tr><td colspan="15" class="muted">{{ t('empty.lora_profiles') }}</td></tr>
       {% endfor %}
     </tbody>
   </table>
   </div>
+  </form>
 </section>
 {% endblock %}

@@ -1,6 +1,25 @@
 # Changelog
 
-## Unreleased - Phase 12.5.2 comparison notes
+## Unreleased - Phase 12.5.3 selected LoRA comparison matrix
+
+### 主な変更
+
+- LoRA Libraryに登録された選定済みLoRAをJob横断で比較する `lora_comparison_sessions` / `lora_comparison_candidates` を追加しました。
+- Controlled / Practical比較モードと、Network Type / Optimizer Profile / Training Recipe / Selected Artifact比較軸を追加しました。
+- 比較候補のArtifact解決を `app/services/lora_artifacts.py` に統一し、`training_outputs.external_copy_path` や `selected_lora_profiles.exported_model_path` へSHA-256検証付きでfallbackできるようにしました。
+- `validation_runs` にArtifact snapshot列を追加し、既存Validation Runを安全に比較セッションへ再利用できるようにしました。
+- 異なるJobのValidation Runを横断表示する汎用Matrix基盤を追加し、既存の同一Job epoch横断Matrixは維持しました。
+- LoRA Libraryから複数Profileを選択し、LoRA比較セッションを作成・詳細確認・Matrix表示・判定保存・Markdown/JSONレポート出力できる導線を追加しました。
+- 比較中のArtifactがverified copyなしで全消失しないよう、Storage Cleanupに保護判定を追加しました。
+
+### 注意点
+
+- Phase 12.5.3は比較基盤の追加であり、`APP_VERSION` は `v0.5.5-beta` のままです。
+- Blind ReviewやCandidate A/B/C表示は実装していません。候補名はMatrixに常時実名表示します。
+- 比較結果はProject採用LoRA、Recipe、Optimizer Profile、推奨weightへ自動反映しません。
+- LoRA-C3Lierは日本語説明では「セリア」と読みますが、正式表記 `LoRA-C3Lier` と内部ID `lora_c3lier` は変更しません。
+
+## Phase 12.5.2 comparison notes
 
 ### 検証結果
 

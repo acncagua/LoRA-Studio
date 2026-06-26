@@ -1,0 +1,80 @@
+{% extends "base.html" %}{% block content %}
+<header class="page-head">
+  <h1>{{ t('page.lora_comparison_detail.title') }} #{{ session.id }}</h1>
+  <div class="button-row">
+    <a class="button secondary" href="/lora-comparisons">{{ t('nav.lora_comparisons') }}</a>
+    <a class="button" href="/lora-comparisons/{{ session.id }}/matrix" target="_blank" rel="noopener">Matrix</a>
+  </div>
+</header>
+{% if request.query_params.get('error') %}
+<p class="notice warning">{{ request.query_params.get('error') }}</p>
+{% endif %}
+<section>
+  <h2>{{ session.name }}</h2>
+  <div class="comparison-status-grid">
+    <div><span>Mode</span><strong>{{ t('comparison.mode.' ~ session.comparison_mode) }}</strong></div>
+    <div><span>Axis</span><strong>{{ t('comparison.axis.' ~ session.comparison_axis) }}</strong></div>
+    <div><span>Parity</span><strong class="badge comparison-parity-{{ session.parity_status }}">{{ t('comparison.parity.' ~ session.parity_status) }}</strong></div>
+    <div><span>Status</span><strong>{{ summary.status }}</strong></div>
+    <div><span>Images</span><strong>{{ summary.registered_image_count }} / {{ summary.logical_image_count }}</strong></div>
+    <div><span>Machine Review</span><strong>{{ summary.machine_review_score_count }}</strong></div>
+  </div>
+</section>
+<section>
+  <h2>{{ t('comparison.candidates') }}</h2>
+  <div class="comparison-candidate-grid">
+    {% for candidate in candidates %}
+    <article class="comparison-candidate-card">
+      <h3>{{ candidate.display_label_snapshot }}</h3>
+      <p class="muted">{{ candidate.display_detail_snapshot }}</p>
+      <dl>
+        <dt>Profile</dt><dd>#{{ candidate.selected_lora_profile_id }}</dd>
+        <dt>Job</dt><dd><a href="/jobs/{{ candidate.job_id }}">#{{ candidate.job_id }}</a></dd>
+        <dt>Validation Run</dt><dd><a href="/validation-runs/{{ candidate.validation_run_id }}">#{{ candidate.validation_run_id }}</a> / {{ candidate.validation_run_source }}</dd>
+        <dt>Images</dt><dd>{{ candidate.actual_image_count or 0 }} / {{ candidate.expected_image_count or 0 }}</dd>
+        <dt>Artifact</dt><dd class="wrap-text">{{ candidate.artifact_source_kind }} / {{ candidate.artifact_file_size or '-' }} bytes</dd>
+      </dl>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+<section>
+  <h2>Parity Gate</h2>
+  <details open>
+    <summary>{{ t('comparison.parity.' ~ session.parity_status) }}</summary>
+    <pre>{{ parity_report|tojson(indent=2) }}</pre>
+  </details>
+</section>
+<section>
+  <h2>{{ t('common.actions') }}</h2>
+  <div class="button-row">
+    <form method="post" action="/lora-comparisons/{{ session.id }}/refresh"><button class="button" type="submit">{{ t('common.refresh') }}</button></form>
+    <form method="post" action="/lora-comparisons/{{ session.id }}/matrix/build"><button class="button" type="submit">Matrix保存</button></form>
+    <form method="post" action="/lora-comparisons/{{ session.id }}/matrix/missing-review"><button class="button" type="submit">{{ t('comparison.recalculate_missing_review') }}</button></form>
+    <form method="post" action="/lora-comparisons/{{ session.id }}/report"><button class="button" type="submit">{{ t('comparison.write_report') }}</button></form>
+  </div>
+</section>
+<section class="comparison-decision-panel">
+  <h2>{{ t('comparison.decision.title') }}</h2>
+  <form method="post" action="/lora-comparisons/{{ session.id }}/decision">
+    <label>{{ t('comparison.decision.label') }}
+      <select name="decision_status">
+        <option value="human_review_pending" {% if session.decision_status == 'human_review_pending' %}selected{% endif %}>{{ t('comparison.decision.human_review_pending') }}</option>
+        <option value="candidate_preferred" {% if session.decision_status == 'candidate_preferred' %}selected{% endif %}>{{ t('comparison.decision.candidate_preferred') }}</option>
+        <option value="no_clear_winner" {% if session.decision_status == 'no_clear_winner' %}selected{% endif %}>{{ t('comparison.decision.no_clear_winner') }}</option>
+        <option value="retest_required" {% if session.decision_status == 'retest_required' %}selected{% endif %}>{{ t('comparison.decision.retest_required') }}</option>
+      </select>
+    </label>
+    <label>{{ t('comparison.preferred_candidate') }}
+      <select name="preferred_candidate_id">
+        <option value="">-</option>
+        {% for candidate in candidates %}
+        <option value="{{ candidate.id }}" {% if session.preferred_candidate_id == candidate.id %}selected{% endif %}>{{ candidate.display_label_snapshot }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>{{ t('label.reason') }}<textarea name="decision_reason" rows="3">{{ session.decision_reason or '' }}</textarea></label>
+    <button class="button" type="submit">{{ t('common.save') }}</button>
+  </form>
+</section>
+{% endblock %}
