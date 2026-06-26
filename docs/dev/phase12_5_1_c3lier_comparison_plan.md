@@ -78,5 +78,38 @@ Use the existing Review / Validation pipeline instead of judging training sample
 ## Acceptance Notes
 
 - LoRA-C3Lier can be considered practically available when at least one real Mini Pilot and one validation run complete without command, artifact, or image-smoke failure.
+
+## Phase 12.5.2 Execution Note
+
+The Standard LoRA vs LoRA-C3Lier lightweight comparison was executed as Phase 12.5.2.
+
+Result report:
+
+- `docs/dev/phase12_5_2_standard_vs_c3lier_report.md`
+
+Jobs:
+
+- Standard LoRA comparison job: `#104`
+- LoRA-C3Lier comparison job: `#105`
+
+Validation:
+
+- Standard LoRA validation run: `#52`
+- LoRA-C3Lier validation run: `#53`
+- Review Session: `#53`
+
+Job `#103` from Phase 12.5.1 was not reused for the formal comparison because its runtime artifacts had been archived/deleted during cleanup. Both candidates were re-run in the current environment.
+
+Decision status:
+
+- Technical comparison: `PASS`
+- Human review: `pending`
+- Final winner: not assigned
+
+Next recommended step:
+
+- Review the blind contact sheets in `exports/phase12_5_2_standard_vs_c3lier`.
+- If LoRA-C3Lier shows a consistent human-visible advantage, run a deeper 3000-5000 step comparison.
+- If the blind result is mixed, keep Standard LoRA as the default Character Face recipe and keep LoRA-C3Lier as an optional network type.
 - A small visual difference at very short steps is not a failure.
 - Quality preference between Standard LoRA and LoRA-C3Lier must remain a human review decision.

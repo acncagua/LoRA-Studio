@@ -1,6 +1,25 @@
 # Changelog
 
-## Unreleased - Phase 12.5.1 validation notes
+## Unreleased - Phase 12.5.2 comparison notes
+
+### 検証結果
+
+- Phase 12.5.2として、Standard LoRAとLoRA-C3LierのCharacter Face向け1000step軽量比較を実施しました。
+- Phase 12.5.1のJob #103はcleanup後にartifactが残っていなかったため正式比較には再利用せず、現在環境でStandard LoRA Job #104とLoRA-C3Lier Job #105を同条件で再実行しました。
+- Standard LoRA / LoRA-C3Lierともに1000step学習がreturn_code 0で完走し、NaN / Infなし、safetensors読込OK、sample出力OKを確認しました。
+- command parityとして、Standard LoRA側には `conv_dim` / `conv_alpha` が出力されず、LoRA-C3Lier側のみ `--network_args conv_dim=8 conv_alpha=4` が出力されることを確認しました。
+- 軽量Validationとして、2 prompt group × 3 seed × 4 weight × 2 candidate = 48条件を生成・import・OpenCLIP embedding・Machine Reviewまで完了しました。
+- Blind比較用contact sheetとruntime Review Sessionを作成し、Human Review待ちの状態で整理しました。
+- 結果レポートを `docs/dev/phase12_5_2_standard_vs_c3lier_report.md` に保存し、既存比較計画へ実績リンクを追記しました。
+
+### 注意点
+
+- Phase 12.5.2は比較レポートであり、`APP_VERSION` は `v0.5.5-beta` のままです。
+- Human Reviewは未入力のため、最終winnerは決めていません。
+- Machine Review差分は小さく、現時点ではStandard LoRAを既定候補として維持します。
+- 実行時に生成されたLoRA、sample画像、Validation画像、contact sheet、logはGit管理外です。
+
+## Phase 12.5.1 validation notes
 
 ### 検証結果
 
