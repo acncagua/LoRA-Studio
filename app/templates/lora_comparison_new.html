@@ -6,6 +6,24 @@
 {% if request.query_params.get('error') %}
 <p class="notice warning">{{ request.query_params.get('error') }}</p>
 {% endif %}
+{% if parity_preview and parity_preview.status == 'warning' %}
+<section class="notice warning">
+  <h2>Parity Gate warning</h2>
+  <p>Matrixは表示できます。条件差または記録不足は比較情報として保存されます。</p>
+  <ul>
+    {% for warning in parity_preview.warnings %}<li>{{ warning }}</li>{% endfor %}
+    {% for diff in parity_preview.allowed_differences %}<li>{{ diff['field'] }} differs: {{ diff['values']|join(' / ') }}</li>{% endfor %}
+  </ul>
+</section>
+{% elif parity_preview and parity_preview.status == 'fail' %}
+<section class="notice warning">
+  <h2>Parity Gate failed</h2>
+  <ul>
+    {% for error in parity_preview.errors %}<li>{{ error }}</li>{% endfor %}
+    {% for diff in parity_preview.unexpected_differences %}<li>{{ diff['field'] }} differs: {{ diff['values']|join(' / ') }}</li>{% endfor %}
+  </ul>
+</section>
+{% endif %}
 <form method="post" action="/lora-comparisons">
   <section>
     <h2>{{ t('comparison.candidates') }}</h2>
@@ -31,30 +49,39 @@
     <label>{{ t('label.name') }}
       <input type="text" name="name" value="Selected LoRA Comparison">
     </label>
-    <label>{{ t('comparison.mode.label') }}
-      <select name="comparison_mode">
-        <option value="controlled">{{ t('comparison.mode.controlled') }}</option>
-        <option value="practical">{{ t('comparison.mode.practical') }}</option>
-      </select>
-    </label>
-    <label>{{ t('comparison.axis.label') }}
-      <select name="comparison_axis">
-        <option value="network_type">{{ t('comparison.axis.network_type') }}</option>
-        <option value="optimizer_profile">{{ t('comparison.axis.optimizer_profile') }}</option>
-        <option value="recipe">{{ t('comparison.axis.recipe') }}</option>
-        <option value="selected_artifact">{{ t('comparison.axis.selected_artifact') }}</option>
-      </select>
-    </label>
-    <label>{{ t('label.validation_preset') }}
-      <select name="validation_preset_id">
-        {% for preset in presets %}
-        <option value="{{ preset.id }}">{{ preset.name }} / {{ preset.id }}</option>
-        {% endfor %}
-      </select>
-    </label>
   </section>
   <section>
-    <label class="checkbox-row"><input type="checkbox" name="allow_warnings" value="1"> {{ t('comparison.allow_warnings') }}</label>
+    <input type="hidden" name="allow_warnings" value="1">
+    <details class="compact-details">
+      <summary>{{ t('comparison.advanced_options') }}</summary>
+      <div class="grid-2">
+        <label>{{ t('comparison.mode.label') }}
+          <select name="comparison_mode">
+            <option value="controlled" {{ 'selected' if comparison_mode == 'controlled' else '' }}>{{ t('comparison.mode.controlled') }}</option>
+            <option value="practical" {{ 'selected' if comparison_mode == 'practical' else '' }}>{{ t('comparison.mode.practical') }}</option>
+          </select>
+        </label>
+        <label>{{ t('comparison.axis.label') }}
+          <select name="comparison_axis">
+            <option value="network_type" {{ 'selected' if comparison_axis == 'network_type' else '' }}>{{ t('comparison.axis.network_type') }}</option>
+            <option value="optimizer_profile" {{ 'selected' if comparison_axis == 'optimizer_profile' else '' }}>{{ t('comparison.axis.optimizer_profile') }}</option>
+            <option value="recipe" {{ 'selected' if comparison_axis == 'recipe' else '' }}>{{ t('comparison.axis.recipe') }}</option>
+            <option value="selected_artifact" {{ 'selected' if comparison_axis == 'selected_artifact' else '' }}>{{ t('comparison.axis.selected_artifact') }}</option>
+          </select>
+        </label>
+        <label>{{ t('label.validation_preset') }}
+          <select name="validation_preset_id">
+            {% for preset in presets %}
+            <option value="{{ preset.id }}" {{ 'selected' if preset.id == selected_validation_preset_id else '' }}>{{ preset.name }} / {{ preset.id }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+      <label class="checkbox-line">
+        <input type="checkbox" name="force_new" value="1">
+        <span>{{ t('comparison.force_new') }}</span>
+      </label>
+    </details>
     <label>{{ t('label.memo') }}<textarea name="memo" rows="3"></textarea></label>
     <button class="button" type="submit" {% if profiles|length < 2 %}disabled{% endif %}>{{ t('comparison.create') }}</button>
   </section>

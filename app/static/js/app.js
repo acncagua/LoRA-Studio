@@ -57,6 +57,7 @@ const LORA_STUDIO_TEXT = {
     countSuffix: "件",
     select: "選択",
     selecting: "選択中...",
+    processing: "処理中...",
     pathSelectFailed: "パス選択に失敗しました: {message}",
     projectCurrentSelection: "現在の選択: {name} / trigger {trigger}",
     projectSelectExisting: "既存Projectを選択してください。",
@@ -114,6 +115,7 @@ const LORA_STUDIO_TEXT = {
     countSuffix: "",
     select: "Select",
     selecting: "Selecting...",
+    processing: "Working...",
     pathSelectFailed: "Path selection failed: {message}",
     projectCurrentSelection: "Current selection: {name} / trigger {trigger}",
     projectSelectExisting: "Select an existing Project.",
@@ -132,6 +134,54 @@ function uiText(key, fallback = "") {
 
 function uiFormat(key, values = {}, fallback = "") {
   return uiText(key, fallback).replace(/\{(\w+)\}/g, (_, name) => values[name] ?? "");
+}
+
+function cssEscape(value) {
+  if (window.CSS && typeof window.CSS.escape === "function") {
+    return window.CSS.escape(value);
+  }
+  return String(value).replace(/["\\]/g, "\\$&");
+}
+
+function submitButtonsForForm(form) {
+  const buttons = Array.from(form.querySelectorAll('button:not([type]), button[type="submit"], input[type="submit"]'));
+  if (form.id) {
+    buttons.push(...document.querySelectorAll(`button[form="${cssEscape(form.id)}"]:not([type]), button[form="${cssEscape(form.id)}"][type="submit"], input[form="${cssEscape(form.id)}"][type="submit"]`));
+  }
+  return Array.from(new Set(buttons));
+}
+
+function markFormSubmitting(form, submitter = null) {
+  if (!form || form.dataset.submitLock === "1" || form.hasAttribute("data-no-submit-lock")) {
+    return;
+  }
+  const target = (form.getAttribute("target") || "").toLowerCase();
+  if (target && target !== "_self") {
+    return;
+  }
+  if ((form.getAttribute("method") || "").toLowerCase() === "dialog") {
+    return;
+  }
+  form.dataset.submitLock = "1";
+  form.setAttribute("aria-busy", "true");
+  form.classList.add("is-submitting");
+  const buttons = submitButtonsForForm(form);
+  const activeButton = submitter && buttons.includes(submitter) ? submitter : buttons.find((button) => !button.disabled);
+  buttons.forEach((button) => {
+    if (!button.dataset.originalText) {
+      button.dataset.originalText = button.tagName === "INPUT" ? button.value : button.textContent;
+    }
+    button.disabled = true;
+    button.classList.add("is-submitting");
+  });
+  if (activeButton) {
+    const text = activeButton.dataset.submitBusyText || form.dataset.submitBusyText || uiText("processing");
+    if (activeButton.tagName === "INPUT") {
+      activeButton.value = text;
+    } else {
+      activeButton.textContent = text;
+    }
+  }
 }
 
 document.addEventListener("click", async (event) => {
@@ -2798,6 +2848,7 @@ function initActiveOperationMonitorPolling() {
   }
   const url = panel.getAttribute("data-operation-status-url");
   const refreshButton = panel.querySelector("[data-operation-refresh]");
+  const startedAtText = panel.querySelector('[data-operation-field="started_at"]');
   const statusText = panel.querySelector('[data-operation-field="status"]');
   const pidText = panel.querySelector('[data-operation-field="pid"]');
   const returnCodeText = panel.querySelector('[data-operation-field="return_code"]');
@@ -2826,6 +2877,7 @@ function initActiveOperationMonitorPolling() {
 
   const applyPayload = (payload) => {
     if (statusText && payload.status !== undefined) statusText.textContent = payload.status || "-";
+    if (startedAtText && payload.started_at !== undefined) startedAtText.textContent = payload.started_at || "-";
     const processId = payload.process_id ?? payload.generation_process_id;
     if (pidText && processId !== undefined) pidText.textContent = processId || "-";
     if (returnCodeText && payload.return_code !== undefined) returnCodeText.textContent = payload.return_code ?? "-";
@@ -2853,7 +2905,7 @@ function initActiveOperationMonitorPolling() {
     if (shortLog && logTail) shortLog.textContent = logTail;
     if (fullLog && logTail) fullLog.textContent = logTail;
     const size = payload.log_size ?? "";
-    const updated = payload.log_updated_at || "";
+    const updated = payload.last_log_update_label || payload.log_updated_at || "";
     if (logUpdateText && (size !== "" || updated)) {
       logUpdateText.textContent = `${updated || "-"}${size !== "" ? ` / ${size} bytes` : ""}`;
     }
@@ -2985,6 +3037,13 @@ function initLoraComparisonSelection() {
     update();
   });
 }
+
+document.addEventListener("submit", (event) => {
+  if (event.defaultPrevented) {
+    return;
+  }
+  markFormSubmitting(event.target, event.submitter || null);
+});
 
 document.addEventListener("DOMContentLoaded", initValidationGenerationPolling);
 document.addEventListener("DOMContentLoaded", initValidationGenerationDetailPolling);

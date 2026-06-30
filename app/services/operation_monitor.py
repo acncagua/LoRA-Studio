@@ -10,6 +10,17 @@ from app.services.training_runner import decode_log_bytes, process_exists
 
 LOG_STALE_WARNING_SECONDS = 10 * 60
 
+ACTIVE_OPERATION_STATUSES = {
+    "starting",
+    "queued",
+    "running",
+    "generating_images",
+    "importing_images",
+    "embedding_images",
+    "machine_reviewing",
+    "building_matrix",
+}
+
 
 def tail_file(path_text: str | None, max_lines: int = 12) -> str:
     if not path_text:
@@ -48,6 +59,32 @@ def parse_iso_datetime(value: str | None) -> datetime | None:
     return parsed
 
 
+def utc_offset_label(moment: datetime) -> str:
+    offset = moment.utcoffset()
+    if offset is None:
+        return "UTC"
+    total_minutes = int(offset.total_seconds() // 60)
+    sign = "+" if total_minutes >= 0 else "-"
+    total_minutes = abs(total_minutes)
+    hours, minutes = divmod(total_minutes, 60)
+    return f"UTC{sign}{hours:02d}:{minutes:02d}"
+
+
+def format_display_datetime(value: str | datetime | None) -> str:
+    if value is None:
+        return "-"
+    if isinstance(value, datetime):
+        parsed = value
+        if parsed.tzinfo is None:
+            parsed = parsed.astimezone()
+    else:
+        parsed = parse_iso_datetime(value)
+    if parsed is None:
+        return "-"
+    local = parsed.astimezone()
+    return f"{local.strftime('%Y-%m-%d %H:%M:%S')} {utc_offset_label(local)}"
+
+
 def age_label(moment: datetime | None, now: datetime | None = None) -> str:
     if moment is None:
         return "-"
@@ -60,6 +97,12 @@ def age_label(moment: datetime | None, now: datetime | None = None) -> str:
         return f"{minutes} min ago"
     hours = minutes // 60
     return f"{hours} h ago"
+
+
+def datetime_age_label(moment: datetime | None, now: datetime | None = None) -> str:
+    if moment is None:
+        return "-"
+    return f"{format_display_datetime(moment)} / {age_label(moment, now)}"
 
 
 def elapsed_label(started_at: str | None, now: datetime | None = None) -> str:
@@ -113,8 +156,8 @@ def completion_eta_label(remaining_seconds: int | None, now: datetime | None = N
     if remaining_seconds is None:
         return "-"
     now = now or datetime.now(timezone.utc)
-    eta = now.astimezone() + timedelta(seconds=max(0, int(remaining_seconds)))
-    return eta.strftime("%Y-%m-%d %H:%M:%S")
+    eta = now + timedelta(seconds=max(0, int(remaining_seconds)))
+    return format_display_datetime(eta)
 
 
 def completion_eta_from_seconds_label(total_remaining_seconds: int | None, now: datetime | None = None) -> str:
@@ -271,7 +314,7 @@ def operation_monitor(
         "type_label": type_label,
         "status": status or "-",
         "stage": stage or "-",
-        "started_at": started_at or "-",
+        "started_at": format_display_datetime(started_at),
         "elapsed_label": timing["elapsed_label"],
         "elapsed_seconds": timing["elapsed_seconds"],
         "stage_elapsed_label": timing["stage_elapsed_label"],
@@ -286,7 +329,7 @@ def operation_monitor(
         "pid": pid,
         "return_code": return_code,
         "progress_label": progress_label,
-        "last_log_update_label": age_label(log_updated_at, now),
+        "last_log_update_label": datetime_age_label(log_updated_at, now),
         "log_warning": log_warning(log_updated_at, now),
         "log_path": log_path or "",
         "log_tail_short": short_tail,
@@ -295,7 +338,7 @@ def operation_monitor(
         "full_log_anchor": full_log_anchor or "",
         "status_url": status_url or "",
         "message": message or "",
-        "is_running": status == "running",
+        "is_running": (status or "") in ACTIVE_OPERATION_STATUSES,
         "followup_estimate": followup_estimate or {},
     }
 

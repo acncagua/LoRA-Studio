@@ -2639,10 +2639,10 @@ def matrix_display_script() -> str:
   });
 
   document.addEventListener("submit", (event) => {
-    const form = event.target.closest("#matrix-weight-form, #matrix-missing-review-form, #cross-matrix-weight-form, #cross-matrix-display-form, #cross-matrix-missing-review-form, .matrix-review-panel form");
+    const form = event.target.closest("#matrix-weight-form, #matrix-missing-review-form, #cross-matrix-weight-form, #cross-matrix-display-form, #cross-matrix-missing-review-form, #lora-comparison-weight-form, #lora-comparison-display-form, #lora-comparison-generate-form, #lora-comparison-missing-review-form, .matrix-review-panel form");
     if (!form) return;
     syncMatrixRunInputsForSubmit(form);
-    if (form.id === "matrix-weight-form" || form.id === "matrix-missing-review-form" || form.id === "cross-matrix-weight-form" || form.id === "cross-matrix-missing-review-form" || form.closest(".matrix-review-panel")) {
+    if (form.id === "matrix-weight-form" || form.id === "matrix-missing-review-form" || form.id === "cross-matrix-weight-form" || form.id === "cross-matrix-missing-review-form" || form.id === "lora-comparison-weight-form" || form.id === "lora-comparison-generate-form" || form.id === "lora-comparison-missing-review-form" || form.closest(".matrix-review-panel")) {
       setMatrixBusy(true);
     }
   });

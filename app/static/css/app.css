@@ -155,6 +155,13 @@ dl.wide-dl { grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); }
 pre { background: #18211e; color: #e9f2ed; padding: 14px; border-radius: 8px; overflow: auto; white-space: pre-wrap; }
 button, .button { border: 0; border-radius: 6px; background: var(--accent); color: white; padding: 9px 14px; font-weight: 600; cursor: pointer; }
 button.active, .button.active { background: var(--ink); color: white; }
+form.is-submitting button[type="submit"],
+form.is-submitting button:not([type]),
+button.is-submitting,
+input[type="submit"].is-submitting {
+  opacity: 0.72;
+  cursor: wait;
+}
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(240px, 1fr)); gap: 14px; }
 .form-grid.wide { max-width: 980px; }
 .form-grid.recipe-wizard { max-width: 1320px; }
@@ -1003,6 +1010,22 @@ tr.epoch-selected td:first-child { font-weight: 700; color: var(--accent); }
   margin: 0 0 8px;
   overflow-wrap: anywhere;
 }
+.checkbox-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 12px;
+}
+.checkbox-line input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+}
+.comparison-warning-approval {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--soft);
+}
 .comparison-status-grid {
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
 }
@@ -1021,6 +1044,42 @@ tr.epoch-selected td:first-child { font-weight: 700; color: var(--accent); }
 .comparison-parity-warning { background: #ffe4a8; color: #745009; }
 .comparison-parity-fail { background: #f4c0c8; color: #7b2531; }
 .comparison-parity-unchecked { background: #d9e1e5; color: #2d3c44; }
+.parity-summary {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  padding: 12px;
+}
+.parity-summary span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.parity-summary ul {
+  margin: 4px 0 0 20px;
+}
+.compact-details {
+  margin-top: 10px;
+}
+.compact-details summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 700;
+}
+.compact-details code {
+  display: block;
+  margin-top: 8px;
+}
+.comparison-action-row {
+  justify-content: flex-start;
+}
+.comparison-action-row form {
+  display: inline-flex;
+  margin: 0;
+}
 .comparison-decision-panel form {
   display: grid;
   gap: 12px;

@@ -3551,7 +3551,9 @@ class Phase107StabilizationTests(IsolatedDbTest):
 
         added_weight = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ? AND lora_weight = 0.9", (run_id,))
         self.assertEqual(response.status_code, 303)
-        self.assertIn(f"/validation-runs/{run_id}/matrix?weight_notice=weights_started", response.headers["location"])
+        self.assertIn(f"/validation-runs/{run_id}/matrix?", response.headers["location"])
+        self.assertIn("display_weights=0.9", response.headers["location"])
+        self.assertIn("weight_notice=weights_started", response.headers["location"])
         self.assertEqual(added_weight["count"], 9)
         start_mock.assert_called_once_with(run_id, run_missing_review_after=True)
 
@@ -3603,6 +3605,7 @@ class Phase107StabilizationTests(IsolatedDbTest):
         self.assertIn(f"/jobs/{run['job_id']}/validation-runs/epoch-matrix?", location)
         self.assertIn(f"run_ids={run_id}", location)
         self.assertIn(f"run_ids={second_run_id}", location)
+        self.assertIn("display_weights=0.9", location)
         self.assertIn("matrix_notice=weights_started", location)
         added_first = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ? AND lora_weight = 0.9", (run_id,))
         added_second = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ? AND lora_weight = 0.9", (second_run_id,))
@@ -3618,6 +3621,32 @@ class Phase107StabilizationTests(IsolatedDbTest):
             run_missing_review_after=True,
             missing_review_run_ids=[run_id, second_run_id],
         )
+
+    def test_epoch_cross_matrix_weight_post_preserves_display_selection(self) -> None:
+        from app.main import validation_epoch_cross_matrix_add_weights
+        from app.services.validation_runs import create_validation_run
+
+        run_id, selected_output_id = self.create_validation_generation_fixture()
+        run = fetch_one("SELECT * FROM validation_runs WHERE id = ?", (run_id,))
+        second_run_id = create_validation_run(run["job_id"], "standard_validation_v1", run["base_model"], run["trigger_word"], "second")
+        with connect() as conn:
+            conn.execute(
+                "UPDATE validation_runs SET selected_output_id = ? WHERE id = ?",
+                (selected_output_id, second_run_id),
+            )
+
+        selected = ["0", "0.7", "0.8", "0.9", "1"]
+        with mock.patch("app.main.start_validation_generation_sequence", return_value=2):
+            response = validation_epoch_cross_matrix_add_weights(run["job_id"], [run_id, second_run_id], selected)
+
+        location = response.headers["location"]
+        self.assertIn("display_weights=0", location)
+        self.assertIn("display_weights=0.7", location)
+        self.assertIn("display_weights=0.8", location)
+        self.assertIn("display_weights=0.9", location)
+        self.assertIn("display_weights=1", location)
+        self.assertNotIn("display_weights=0.4", location)
+        self.assertNotIn("display_weights=0.6", location)
 
     def test_missing_machine_review_job_targets_only_unscored_validation_images(self) -> None:
         from app.main import register_validation_run_image

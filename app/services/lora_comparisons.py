@@ -7,13 +7,26 @@ from typing import Any
 from app import settings
 from app.db import connect, fetch_all, fetch_one, utc_now
 from app.services.lora_artifacts import ResolvedLoraArtifact, resolve_lora_artifact
-from app.services.validation_generation import build_run_cross_matrix_html, start_missing_validation_review_sequences
+from app.services.validation_generation import (
+    build_run_cross_matrix_html,
+    missing_validation_generation_count,
+    start_missing_validation_review_sequences,
+    start_validation_generation_sequence,
+)
 from app.services.validation_runs import add_validation_run_weights, create_validation_run
 
 
 COMPARISON_MODES = {"controlled", "practical"}
 COMPARISON_AXES = {"network_type", "optimizer_profile", "recipe", "selected_artifact"}
 DECISION_STATUSES = {"human_review_pending", "candidate_preferred", "no_clear_winner", "retest_required"}
+
+ARTIFACT_SOURCE_LABELS = {
+    "training_outputs.file_path": "Training output",
+    "training_outputs.external_copy_path": "Export copy",
+    "selected_lora_profiles.exported_model_path": "Exported selected LoRA",
+    "selected_lora_profiles.selected_model_path": "Selected LoRA path",
+    "training_jobs.adopted_model_path": "Adopted model path",
+}
 
 
 def _json_dump(value: Any) -> str:
@@ -27,6 +40,28 @@ def _json_load(value: str | None, default: Any) -> Any:
         return json.loads(value)
     except json.JSONDecodeError:
         return default
+
+
+def _format_file_size(size: Any) -> str:
+    if size is None:
+        return "-"
+    try:
+        value = float(size)
+    except (TypeError, ValueError):
+        return "-"
+    units = ["bytes", "KB", "MB", "GB"]
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            if unit == "bytes":
+                return f"{int(value)} bytes"
+            return f"{value:.1f} {unit}"
+        value /= 1024
+
+
+def _artifact_source_label(source_kind: str | None) -> str:
+    if not source_kind:
+        return "-"
+    return ARTIFACT_SOURCE_LABELS.get(source_kind, source_kind)
 
 
 def _profile_row(profile_id: int) -> dict[str, Any]:
@@ -210,6 +245,19 @@ def run_parity_gate(candidates: list[dict[str, Any]], mode: str, axis: str) -> d
     return report
 
 
+def preview_lora_comparison_parity(profile_ids: list[int], mode: str, axis: str) -> dict[str, Any] | None:
+    profile_ids = list(dict.fromkeys(int(profile_id) for profile_id in profile_ids if int(profile_id) > 0))
+    if len(profile_ids) < 2 or mode not in COMPARISON_MODES or axis not in COMPARISON_AXES:
+        return None
+    candidates: list[dict[str, Any]] = []
+    for profile_id in profile_ids[:6]:
+        profile = _profile_row(profile_id)
+        artifact = resolve_lora_artifact(profile_id=profile_id)
+        snapshot = build_candidate_snapshot(profile, artifact)
+        candidates.append({"profile": profile, "artifact": artifact, "snapshot": snapshot})
+    return run_parity_gate(candidates, mode, axis)
+
+
 def _fingerprint_row(row: dict[str, Any]) -> tuple[Any, ...]:
     return (
         row.get("prompt_key") or "prompt",
@@ -317,6 +365,44 @@ def _preset_snapshot(validation_preset_id: str) -> str:
     return _json_dump(dict(preset))
 
 
+def find_existing_lora_comparison_session(
+    *,
+    profile_ids: list[int],
+    comparison_mode: str,
+    comparison_axis: str,
+    validation_preset_id: str,
+) -> int | None:
+    normalized_profile_ids = sorted(dict.fromkeys(int(profile_id) for profile_id in profile_ids if int(profile_id) > 0))
+    if len(normalized_profile_ids) < 2:
+        return None
+    sessions = fetch_all(
+        """
+        SELECT id
+        FROM lora_comparison_sessions
+        WHERE comparison_mode = ?
+          AND comparison_axis = ?
+          AND validation_preset_id = ?
+          AND status != 'archived'
+        ORDER BY id ASC
+        """,
+        (comparison_mode, comparison_axis, validation_preset_id),
+    )
+    for session in sessions:
+        rows = fetch_all(
+            """
+            SELECT selected_lora_profile_id
+            FROM lora_comparison_candidates
+            WHERE comparison_session_id = ?
+            ORDER BY selected_lora_profile_id
+            """,
+            (int(session["id"]),),
+        )
+        candidate_profile_ids = [int(row["selected_lora_profile_id"]) for row in rows]
+        if candidate_profile_ids == normalized_profile_ids:
+            return int(session["id"])
+    return None
+
+
 def create_lora_comparison_session(
     *,
     profile_ids: list[int],
@@ -325,6 +411,7 @@ def create_lora_comparison_session(
     comparison_axis: str,
     validation_preset_id: str,
     allow_warnings: bool = False,
+    force_new: bool = False,
     memo: str = "",
 ) -> int:
     profile_ids = list(dict.fromkeys(int(profile_id) for profile_id in profile_ids if int(profile_id) > 0))
@@ -346,8 +433,15 @@ def create_lora_comparison_session(
     parity = run_parity_gate(candidates, comparison_mode, comparison_axis)
     if parity["status"] == "fail":
         raise ValueError("Parity Gate failed: " + "; ".join(parity["errors"] + [d["field"] for d in parity["unexpected_differences"]]))
-    if parity["status"] == "warning" and not allow_warnings:
-        raise ValueError("Parity Gate warning. 警告を確認してから作成してください。")
+    if not force_new:
+        existing_session_id = find_existing_lora_comparison_session(
+            profile_ids=profile_ids,
+            comparison_mode=comparison_mode,
+            comparison_axis=comparison_axis,
+            validation_preset_id=validation_preset_id,
+        )
+        if existing_session_id is not None:
+            return existing_session_id
 
     preset_snapshot = _preset_snapshot(validation_preset_id)
     project_id = int(candidates[0]["profile"]["project_id"])
@@ -487,6 +581,10 @@ def load_lora_comparison_session(session_id: int) -> tuple[dict[str, Any], list[
             (session_id,),
         )
     ]
+    for candidate in candidates:
+        candidate["artifact_source_label"] = _artifact_source_label(candidate.get("artifact_source_kind"))
+        candidate["artifact_size_label"] = _format_file_size(candidate.get("artifact_file_size"))
+        candidate["candidate_snapshot"] = _json_load(candidate.get("candidate_snapshot_json"), {})
     return dict(session), candidates
 
 
@@ -554,19 +652,40 @@ def _run_label_details(candidates: list[dict[str, Any]]) -> tuple[dict[int, str]
 
 def _matrix_controls(session_id: int, display_weights: list[Any] | None = None) -> str:
     selected = {round(float(weight), 1) for weight in display_weights or [] if str(weight).strip()}
-    options = []
-    for value in [round(i / 10, 1) for i in range(0, 21)]:
+    def option(value: float) -> str:
         checked = " checked" if (not selected and value in {0.0, 0.6, 0.8, 1.0}) or value in selected else ""
-        options.append(
-            f"<label class=\"weight-chip\"><input type=\"checkbox\" name=\"weights\" value=\"{value:g}\"{checked}> {value:g}</label>"
+        return (
+            "<label class=\"matrix-weight-option\">"
+            f"<input type=\"checkbox\" name=\"selected_weights\" value=\"{value:g}\"{checked} form=\"lora-comparison-weight-form\">"
+            f"<input type=\"checkbox\" name=\"display_weights\" value=\"{value:g}\"{checked} form=\"lora-comparison-display-form\" hidden>"
+            f"<span>{value:g}</span>"
+            "</label>"
         )
+
+    default_options = "".join(option(index / 10) for index in range(0, 11))
+    extra_options = "".join(option(index / 10) for index in range(11, 21))
     return (
-        "<section class=\"weight-controls\"><h2>weight選択</h2>"
-        f"<form method=\"post\" action=\"/lora-comparisons/{session_id}/matrix/weights\">"
-        + "".join(options)
-        + "<button class=\"button\" type=\"submit\">選択weightを全候補へ追加</button></form>"
-        f"<form method=\"post\" action=\"/lora-comparisons/{session_id}/matrix/missing-review\">"
-        "<button class=\"button\" type=\"submit\">全候補の不足レビューを再計算</button></form></section>"
+        f"<form id=\"lora-comparison-weight-form\" method=\"post\" action=\"/lora-comparisons/{session_id}/matrix/weights\"></form>"
+        f"<form id=\"lora-comparison-display-form\" method=\"get\" action=\"/lora-comparisons/{session_id}/matrix\"></form>"
+        f"<form id=\"lora-comparison-generate-form\" method=\"post\" action=\"/lora-comparisons/{session_id}/matrix/generate-missing\"></form>"
+        f"<form id=\"lora-comparison-missing-review-form\" method=\"post\" action=\"/lora-comparisons/{session_id}/matrix/missing-review\"></form>"
+        "<div class=\"matrix-weight-panel\">"
+        "<div class=\"matrix-weight-head\">"
+        "<strong>weight選択</strong>"
+        "<span class=\"matrix-scale-note\">表示中の比較候補すべてで、チェックしたweightをMatrix操作の対象にします。追加生成は不足画像だけを作成し、既存画像はスキップします。生成後は不足Embedding / Machine Reviewまで自動で再計算します。</span>"
+        "</div>"
+        f"<div class=\"matrix-weight-options\">{default_options}</div>"
+        "<div class=\"matrix-weight-extra hidden\" data-matrix-extra-weights>"
+        f"<div class=\"matrix-weight-options\">{extra_options}</div>"
+        "</div>"
+        "<div class=\"matrix-weight-head\">"
+        "<button class=\"matrix-weight-toggle\" type=\"button\" data-matrix-toggle-extra-weights>1.1〜2.0を表示</button>"
+        "<button class=\"matrix-weight-toggle\" type=\"submit\" form=\"lora-comparison-display-form\">選択weightでMatrix表示を更新</button>"
+        "<button class=\"matrix-weight-submit\" type=\"submit\" form=\"lora-comparison-weight-form\">選択weightを追加生成して不足レビューも再計算</button>"
+        "<button class=\"matrix-weight-submit\" type=\"submit\" form=\"lora-comparison-generate-form\">全候補の不足画像を生成してレビュー再計算</button>"
+        "<button class=\"matrix-review-submit\" type=\"submit\" form=\"lora-comparison-missing-review-form\">全候補の不足レビューだけ再計算</button>"
+        "</div>"
+        "</div>"
     )
 
 
@@ -623,6 +742,23 @@ def start_lora_comparison_missing_review(session_id: int) -> dict[str, Any]:
     result = start_missing_validation_review_sequences(run_ids)
     refresh_lora_comparison_session(session_id)
     return result
+
+
+def start_lora_comparison_missing_generation(session_id: int) -> dict[str, Any]:
+    _, candidates = load_lora_comparison_session(session_id)
+    all_run_ids = [int(candidate["validation_run_id"]) for candidate in candidates if candidate.get("validation_run_id")]
+    generation_run_ids = [run_id for run_id in all_run_ids if missing_validation_generation_count(run_id) > 0]
+    if not generation_run_ids:
+        result = start_missing_validation_review_sequences(all_run_ids)
+        refresh_lora_comparison_session(session_id)
+        return {"session_id": session_id, "generation_run_ids": [], "review": result}
+    count = start_validation_generation_sequence(
+        generation_run_ids,
+        run_missing_review_after=True,
+        missing_review_run_ids=all_run_ids,
+    )
+    refresh_lora_comparison_session(session_id)
+    return {"session_id": session_id, "generation_run_ids": generation_run_ids, "started_count": count}
 
 
 def save_lora_comparison_decision(

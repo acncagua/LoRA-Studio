@@ -31,7 +31,17 @@
 <section class="status-strip">
   <div class="status-card">
     <span>現在の採用LoRA</span>
-    <strong>{% if project.selected_output_id %}epoch {{ project.selected_epoch or '-' }}{% elif project.selected_lora_profile_id %}LoRAプロファイル選択済み{% else %}未選択{% endif %}</strong>
+    <strong>
+      {% if project.selected_output_id %}
+        epoch {{ project.selected_epoch or '-' }}
+      {% elif project.selected_lora_profile_id %}
+        LoRAプロファイル選択済み
+      {% elif selected_profiles %}
+        最終採用未選択 / 比較候補 {{ selected_profiles|length }}件
+      {% else %}
+        未選択
+      {% endif %}
+    </strong>
   </div>
   <div class="status-card">
     <span>最新の学習ジョブ</span>
@@ -80,6 +90,47 @@
     </table>
   </div>
 </section>
+
+{% if selected_profiles %}
+<section>
+  <div class="section-head">
+    <div>
+      <h2>選定済みLoRA候補</h2>
+      <p class="muted">Job側で選択されたLoRA Profileです。Projectの最終採用LoRAは、比較後に1件を採用反映するまで未選択のままです。</p>
+    </div>
+    {% if selected_profiles|length >= 2 %}
+    <form method="get" action="/lora-comparisons/new">
+      {% for profile in selected_profiles[:6] %}
+      <input type="hidden" name="profile_ids" value="{{ profile.id }}">
+      {% endfor %}
+      <button type="submit">{{ t('comparison.compare_selected') }}</button>
+    </form>
+    {% endif %}
+  </div>
+  <table>
+    <thead><tr><th>ID</th><th>Profile</th><th>Job</th><th>Network</th><th>Optimizer</th><th>Recipe</th><th>epoch</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for profile in selected_profiles %}
+      <tr>
+        <td>#{{ profile.id }}</td>
+        <td><a href="/lora-library/{{ profile.id }}/edit">{{ profile.profile_name }}</a></td>
+        <td><a href="/jobs/{{ profile.job_id }}">#{{ profile.job_id }} {{ profile.job_name or '' }}</a></td>
+        <td>{{ profile.network_type_id or '-' }}</td>
+        <td>{{ profile.optimizer_profile_id or '-' }}</td>
+        <td>{{ profile.recipe_v2_id or '-' }}</td>
+        <td>{{ profile.selected_epoch if profile.selected_epoch is not none else profile.output_epoch if profile.output_epoch is not none else '-' }}</td>
+        <td>
+          <div class="actions compact-actions">
+            <a class="button small-button" href="/lora-library/{{ profile.id }}/edit">{{ t('common.open') }}</a>
+            <form method="post" action="/projects/{{ project.id }}/select-job/{{ profile.job_id }}"><button class="small-button" type="submit">Project採用に反映</button></form>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
 
 <section class="notice">
   <h2>学習後レビュー自動化</h2>

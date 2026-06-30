@@ -191,7 +191,6 @@ class Phase1253ComparisonTest(unittest.TestCase):
             comparison_mode="controlled",
             comparison_axis="network_type",
             validation_preset_id="standard_validation_v1",
-            allow_warnings=True,
         )
         session, candidates = load_lora_comparison_session(session_id)
         self.assertEqual(session["parity_status"], "warning")
@@ -203,6 +202,36 @@ class Phase1253ComparisonTest(unittest.TestCase):
         self.assertIn("Standard LoRA", html)
         self.assertIn("LoRA-C3Lier（セリア）", html)
         self.assertNotIn("Candidate A", html)
+
+    def test_create_session_reuses_existing_session_for_same_conditions(self) -> None:
+        profile_ids, _, _ = self.create_fixture_pair()
+        first_id = create_lora_comparison_session(
+            profile_ids=profile_ids,
+            name="First",
+            comparison_mode="controlled",
+            comparison_axis="network_type",
+            validation_preset_id="standard_validation_v1",
+            allow_warnings=True,
+        )
+        second_id = create_lora_comparison_session(
+            profile_ids=list(reversed(profile_ids)),
+            name="Second",
+            comparison_mode="controlled",
+            comparison_axis="network_type",
+            validation_preset_id="standard_validation_v1",
+            allow_warnings=True,
+        )
+        third_id = create_lora_comparison_session(
+            profile_ids=profile_ids,
+            name="Forced",
+            comparison_mode="controlled",
+            comparison_axis="network_type",
+            validation_preset_id="standard_validation_v1",
+            allow_warnings=True,
+            force_new=True,
+        )
+        self.assertEqual(second_id, first_id)
+        self.assertNotEqual(third_id, first_id)
 
     def test_create_session_creates_missing_validation_runs(self) -> None:
         profile_ids, _, _ = self.create_fixture_pair(with_images=False)

@@ -3,7 +3,7 @@
   <h1>{{ t('page.lora_comparison_detail.title') }} #{{ session.id }}</h1>
   <div class="button-row">
     <a class="button secondary" href="/lora-comparisons">{{ t('nav.lora_comparisons') }}</a>
-    <a class="button" href="/lora-comparisons/{{ session.id }}/matrix" target="_blank" rel="noopener">Matrix</a>
+    <a class="button secondary" href="/lora-comparisons/{{ session.id }}/matrix" target="_blank" rel="noopener">{{ t('primary.open_matrix') }}</a>
   </div>
 </header>
 {% if request.query_params.get('error') %}
@@ -28,28 +28,87 @@
       <h3>{{ candidate.display_label_snapshot }}</h3>
       <p class="muted">{{ candidate.display_detail_snapshot }}</p>
       <dl>
-        <dt>Profile</dt><dd>#{{ candidate.selected_lora_profile_id }}</dd>
-        <dt>Job</dt><dd><a href="/jobs/{{ candidate.job_id }}">#{{ candidate.job_id }}</a></dd>
-        <dt>Validation Run</dt><dd><a href="/validation-runs/{{ candidate.validation_run_id }}">#{{ candidate.validation_run_id }}</a> / {{ candidate.validation_run_source }}</dd>
-        <dt>Images</dt><dd>{{ candidate.actual_image_count or 0 }} / {{ candidate.expected_image_count or 0 }}</dd>
-        <dt>Artifact</dt><dd class="wrap-text">{{ candidate.artifact_source_kind }} / {{ candidate.artifact_file_size or '-' }} bytes</dd>
+        <dt>{{ t('label.profile') }}</dt><dd>#{{ candidate.selected_lora_profile_id }}</dd>
+        <dt>{{ t('label.job') }}</dt><dd><a href="/jobs/{{ candidate.job_id }}">#{{ candidate.job_id }}</a></dd>
+        <dt>{{ t('label.validation_run') }}</dt><dd><a href="/validation-runs/{{ candidate.validation_run_id }}">#{{ candidate.validation_run_id }}</a> / {{ candidate.validation_run_source }}</dd>
+        <dt>{{ t('label.images') }}</dt><dd>{{ candidate.actual_image_count or 0 }} / {{ candidate.expected_image_count or 0 }}</dd>
+        <dt>{{ t('comparison.artifact') }}</dt><dd>{{ candidate.artifact_source_label }} / {{ candidate.artifact_size_label }}</dd>
       </dl>
+      {% if candidate.artifact_path_snapshot %}
+      <details class="compact-details">
+        <summary>{{ t('comparison.artifact_path') }}</summary>
+        <code class="wrap-text">{{ candidate.artifact_path_snapshot }}</code>
+      </details>
+      {% endif %}
     </article>
     {% endfor %}
   </div>
 </section>
 <section>
-  <h2>Parity Gate</h2>
-  <details open>
-    <summary>{{ t('comparison.parity.' ~ session.parity_status) }}</summary>
+  <h2>{{ t('comparison.parity_gate') }}</h2>
+  <div class="parity-summary parity-{{ session.parity_status }}">
+    <div>
+      <span>{{ t('comparison.parity_status') }}</span>
+      <strong class="badge comparison-parity-{{ session.parity_status }}">{{ t('comparison.parity.' ~ session.parity_status) }}</strong>
+    </div>
+    {% if parity_report.warnings %}
+    <div>
+      <span>{{ t('comparison.parity_warnings') }}</span>
+      <ul>
+        {% for warning in parity_report.warnings %}
+        <li>{{ warning }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+    {% if parity_report.errors %}
+    <div>
+      <span>{{ t('comparison.parity_errors') }}</span>
+      <ul>
+        {% for error in parity_report.errors %}
+        <li>{{ error }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+  </div>
+  {% if parity_report.allowed_differences %}
+  <h3>{{ t('comparison.allowed_differences') }}</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>{{ t('label.field') }}</th><th>{{ t('label.values') }}</th></tr></thead>
+      <tbody>
+        {% for diff in parity_report.allowed_differences %}
+        <tr><td>{{ diff['field'] }}</td><td>{{ diff['values']|join(' / ') }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  {% if parity_report.unexpected_differences %}
+  <h3>{{ t('comparison.unexpected_differences') }}</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>{{ t('label.field') }}</th><th>{{ t('label.values') }}</th></tr></thead>
+      <tbody>
+        {% for diff in parity_report.unexpected_differences %}
+        <tr><td>{{ diff['field'] }}</td><td>{{ diff['values']|join(' / ') }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  <details class="compact-details">
+    <summary>{{ t('comparison.raw_parity_json') }}</summary>
     <pre>{{ parity_report|tojson(indent=2) }}</pre>
   </details>
 </section>
 <section>
   <h2>{{ t('common.actions') }}</h2>
-  <div class="button-row">
+  <div class="button-row comparison-action-row">
+    <a class="button" href="/lora-comparisons/{{ session.id }}/matrix" target="_blank" rel="noopener">{{ t('primary.open_matrix') }}</a>
     <form method="post" action="/lora-comparisons/{{ session.id }}/refresh"><button class="button" type="submit">{{ t('common.refresh') }}</button></form>
-    <form method="post" action="/lora-comparisons/{{ session.id }}/matrix/build"><button class="button" type="submit">Matrix保存</button></form>
+    <form method="post" action="/lora-comparisons/{{ session.id }}/matrix/build"><button class="button" type="submit">{{ t('comparison.save_matrix') }}</button></form>
     <form method="post" action="/lora-comparisons/{{ session.id }}/matrix/missing-review"><button class="button" type="submit">{{ t('comparison.recalculate_missing_review') }}</button></form>
     <form method="post" action="/lora-comparisons/{{ session.id }}/report"><button class="button" type="submit">{{ t('comparison.write_report') }}</button></form>
   </div>

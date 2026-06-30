@@ -78,8 +78,10 @@ from app.services.lora_comparisons import (
     create_lora_comparison_session,
     lora_comparison_sessions,
     load_lora_comparison_session,
+    preview_lora_comparison_parity,
     refresh_lora_comparison_session,
     save_lora_comparison_decision,
+    start_lora_comparison_missing_generation,
     start_lora_comparison_missing_review,
     write_lora_comparison_matrix,
     write_lora_comparison_report,
@@ -88,7 +90,9 @@ from app.services.lora_comparisons import (
 from app.services.output_collector import collect_job_results
 from app.services.operation_monitor import (
     completion_eta_label,
+    datetime_age_label,
     embedding_monitor,
+    format_display_datetime,
     machine_review_monitor,
     operation_monitor,
     operation_timing_summary,
@@ -1286,8 +1290,16 @@ def project_workflow_status(project: Any, jobs: list[dict[str, Any]], validation
     ]
 
 
-def project_next_action(project: Any, jobs: list[Any], review_sessions: list[Any], validation_runs: list[Any], recommendations: list[Any]) -> dict[str, str]:
+def project_next_action(
+    project: Any,
+    jobs: list[Any],
+    review_sessions: list[Any],
+    validation_runs: list[Any],
+    recommendations: list[Any],
+    selected_profiles: list[Any] | None = None,
+) -> dict[str, str]:
     """Return the highest-priority next action for the project workspace."""
+    selected_profiles = selected_profiles or []
     running_job = next((job for job in jobs if job["status"] == "running"), None)
     if running_job:
         return {
@@ -1341,6 +1353,17 @@ def project_next_action(project: Any, jobs: list[Any], review_sessions: list[Any
             "href": f"/lora-library/{project['selected_lora_profile_id']}/edit",
             "button_key": "primary.create_weight_validation",
             "button": "Weight検証へ進む",
+        }
+    if not project["selected_lora_profile_id"] and len(selected_profiles) >= 2:
+        profile_query = urlencode([("profile_ids", int(profile["id"])) for profile in selected_profiles[:6]])
+        return {
+            "label_key": "project.next.compare_loras.label",
+            "label": "選定済みLoRAを比較してください",
+            "description_key": "project.next.compare_loras.description",
+            "description": f"{len(selected_profiles)}件のLoRA候補があります。LoRA比較Matrixで最終採用候補を確認してください。",
+            "href": f"/lora-comparisons/new?{profile_query}",
+            "button_key": "comparison.compare_selected",
+            "button": "選択したLoRAを比較",
         }
     unapplied_validation = next((run for run in validation_runs if run["suggested_weight_min"] is not None and not run["profile_applied_at"]), None)
     if unapplied_validation:
@@ -2250,6 +2273,18 @@ def project_detail(request: Request, project_id: int) -> HTMLResponse:
         """,
         (project_id,),
     )
+    selected_profiles = fetch_all(
+        """
+        SELECT sp.*, tj.name AS job_name, tj.network_type_id, tj.optimizer_profile_id,
+               tj.recipe_v2_id, tj.status AS job_status, tr.epoch AS output_epoch
+        FROM selected_lora_profiles sp
+        LEFT JOIN training_jobs tj ON tj.id = sp.job_id
+        LEFT JOIN training_outputs tr ON tr.id = sp.selected_output_id
+        WHERE sp.project_id = ?
+        ORDER BY sp.job_id ASC, sp.id ASC
+        """,
+        (project_id,),
+    )
     recommendations = fetch_all(
         """
         SELECT * FROM experiment_recommendations
@@ -2265,10 +2300,11 @@ def project_detail(request: Request, project_id: int) -> HTMLResponse:
         jobs=jobs,
         validation_runs=validation_runs,
         review_sessions=review_sessions,
+        selected_profiles=selected_profiles,
         reference_sets=reference_sets_rows,
         recommendations=recommendations,
         workflow_status=project_workflow_status(project, jobs, validation_runs, recommendations),
-        project_next_action=project_next_action(project, jobs, review_sessions, validation_runs, recommendations),
+        project_next_action=project_next_action(project, jobs, review_sessions, validation_runs, recommendations, selected_profiles),
         pilot_guidance=pilot_recommendation(project),
         draft_delete=draft_project_delete_state(delete_preview),
         delete_preview=delete_preview,
@@ -4570,14 +4606,18 @@ def job_log_tail_status(job_id: int) -> JSONResponse:
     log_path = Path(job["run_dir"]) / "logs" / "train.log"
     log_size = 0
     log_updated_at = ""
+    last_log_update_label = "-"
     if log_path.exists():
         try:
             stat = log_path.stat()
             log_size = stat.st_size
-            log_updated_at = datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds")
+            log_dt = datetime.fromtimestamp(stat.st_mtime).astimezone()
+            log_updated_at = format_display_datetime(log_dt)
+            last_log_update_label = datetime_age_label(log_dt)
         except OSError:
             log_size = 0
             log_updated_at = ""
+            last_log_update_label = "-"
     log_tail = read_log_tail(dict(job))
     parse_tail = read_log_tail(dict(job), max_lines=500)
     progress_current, progress_total, progress_label = training_progress_from_log(parse_tail)
@@ -4608,6 +4648,7 @@ def job_log_tail_status(job_id: int) -> JSONResponse:
             "status": job["status"],
             "process_id": job["process_id"],
             "return_code": job["return_code"],
+            "started_at": format_display_datetime(job["start_time"]),
             "log_tail": log_tail,
             "current": progress_current,
             "total": progress_total,
@@ -4625,6 +4666,7 @@ def job_log_tail_status(job_id: int) -> JSONResponse:
             "followup_estimate": downstream_estimate or {},
             "log_size": log_size,
             "log_updated_at": log_updated_at,
+            "last_log_update_label": last_log_update_label,
         }
     )
 
@@ -6430,18 +6472,21 @@ def validation_generation_matrix(run_id: int, weight_message: str = Query(""), w
 
 @app.post("/validation-runs/{run_id}/matrix/weights")
 def validation_matrix_add_weights(run_id: int, selected_weights: list[str] = Form(default=[])) -> RedirectResponse:
+    display_params = [("display_weights", f"{weight:g}") for weight in normalize_matrix_weights(selected_weights)]
     try:
         summary = add_validation_run_weights(run_id, selected_weights)
         missing_count = missing_validation_generation_count(run_id)
         if missing_count <= 0:
             write_validation_matrix(run_id)
             message = f"選択weightはすべて生成済みです。既存画像をスキップしました。追加条件: {summary['added_conditions']}件。"
-            return RedirectResponse(f"/validation-runs/{run_id}/matrix?weight_notice=weights_skipped_review_started", status_code=303)
+            query = urlencode([*display_params, ("weight_notice", "weights_skipped_review_started")])
+            return RedirectResponse(f"/validation-runs/{run_id}/matrix?{query}", status_code=303)
         start_validation_generation(run_id, run_missing_review_after=True)
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     message = f"選択weightの不足画像 {missing_count} 件を生成開始しました。生成完了後に不足Embedding / 不足Machine Reviewを自動で再計算します。既存画像はスキップします。"
-    return RedirectResponse(f"/validation-runs/{run_id}/matrix?weight_notice=weights_started", status_code=303)
+    query = urlencode([*display_params, ("weight_notice", "weights_started")])
+    return RedirectResponse(f"/validation-runs/{run_id}/matrix?{query}", status_code=303)
 
 
 @app.post("/validation-runs/{run_id}/matrix/missing-review")
@@ -6543,6 +6588,7 @@ def validation_epoch_cross_matrix_add_weights(
 ) -> RedirectResponse:
     unique_run_ids = _canonical_matrix_run_ids(request, run_ids)
     base_params = [("run_ids", run_id) for run_id in unique_run_ids]
+    display_params = [("display_weights", f"{weight:g}") for weight in normalize_matrix_weights(selected_weights)]
     destination = f"/jobs/{job_id}/validation-runs/epoch-matrix"
     generation_run_ids: list[int] = []
     added_conditions = 0
@@ -6578,9 +6624,9 @@ def validation_epoch_cross_matrix_add_weights(
             )
             notice_key = "weights_skipped_review_started"
     except (ValueError, RuntimeError) as exc:
-        query = urlencode([*base_params, ("matrix_notice", "busy" if isinstance(exc, RuntimeError) else "error")])
+        query = urlencode([*base_params, *display_params, ("matrix_notice", "busy" if isinstance(exc, RuntimeError) else "error")])
         return RedirectResponse(f"{destination}?{query}" if query else f"/jobs/{job_id}", status_code=303)
-    query = urlencode([*base_params, ("matrix_notice", notice_key)])
+    query = urlencode([*base_params, *display_params, ("matrix_notice", notice_key)])
     return RedirectResponse(f"{destination}?{query}", status_code=303)
 
 
@@ -6859,15 +6905,38 @@ def lora_comparisons_index(request: Request) -> HTMLResponse:
 
 
 @app.get("/lora-comparisons/new", response_class=HTMLResponse)
-def lora_comparison_new(request: Request, profile_ids: list[int] = Query(default=[])) -> HTMLResponse:
-    profiles = [profile for profile in lora_library_profiles() if int(profile["id"]) in {int(pid) for pid in profile_ids}]
+def lora_comparison_new(
+    request: Request,
+    profile_ids: list[int] = Query(default=[]),
+    comparison_mode: str = Query(default="controlled"),
+    comparison_axis: str = Query(default="network_type"),
+    validation_preset_id: str = Query(default="standard_validation_v1"),
+) -> HTMLResponse:
+    requested_ids = [int(pid) for pid in profile_ids]
+    profile_order = {profile_id: index for index, profile_id in enumerate(requested_ids)}
+    profiles = sorted(
+        [profile for profile in lora_library_profiles() if int(profile["id"]) in set(requested_ids)],
+        key=lambda profile: profile_order.get(int(profile["id"]), 999),
+    )
     presets = fetch_all("SELECT * FROM validation_presets WHERE is_active = 1 ORDER BY id")
+    preset_ids = {preset["id"] for preset in presets}
+    selected_validation_preset_id = validation_preset_id if validation_preset_id in preset_ids else (
+        "standard_validation_v1" if "standard_validation_v1" in preset_ids else (presets[0]["id"] if presets else "")
+    )
+    try:
+        parity_preview = preview_lora_comparison_parity(requested_ids, comparison_mode, comparison_axis)
+    except Exception as exc:
+        parity_preview = {"status": "fail", "warnings": [], "errors": [str(exc)], "allowed_differences": [], "unexpected_differences": []}
     return render(
         request,
         "lora_comparison_new.html",
         profiles=profiles,
         profile_ids=profile_ids,
         presets=presets,
+        comparison_mode=comparison_mode,
+        comparison_axis=comparison_axis,
+        selected_validation_preset_id=selected_validation_preset_id,
+        parity_preview=parity_preview,
     )
 
 
@@ -6879,6 +6948,7 @@ def lora_comparison_create(
     comparison_axis: str = Form(default="network_type"),
     validation_preset_id: str = Form(default="standard_validation_v1"),
     allow_warnings: str | None = Form(default=None),
+    force_new: str | None = Form(default=None),
     memo: str = Form(default=""),
 ) -> RedirectResponse:
     try:
@@ -6889,14 +6959,24 @@ def lora_comparison_create(
             comparison_axis=comparison_axis,
             validation_preset_id=validation_preset_id,
             allow_warnings=bool(allow_warnings),
+            force_new=bool(force_new),
             memo=memo,
         )
     except Exception as exc:
-        query = urlencode({"error": str(exc)}, doseq=True)
         profile_query = urlencode([("profile_ids", pid) for pid in profile_ids])
-        separator = "&" if profile_query else ""
-        return RedirectResponse(f"/lora-comparisons/new?{profile_query}{separator}{query}", status_code=303)
-    return RedirectResponse(f"/lora-comparisons/{session_id}", status_code=303)
+        extra_query = urlencode(
+            {
+                "comparison_mode": comparison_mode,
+                "comparison_axis": comparison_axis,
+                "validation_preset_id": validation_preset_id,
+            }
+        )
+        parts = [profile_query, extra_query]
+        if not str(exc).startswith("Parity Gate warning"):
+            parts.append(urlencode({"error": str(exc)}, doseq=True))
+        query = "&".join(part for part in parts if part)
+        return RedirectResponse(f"/lora-comparisons/new?{query}", status_code=303)
+    return RedirectResponse(f"/lora-comparisons/{session_id}/matrix", status_code=303)
 
 
 @app.get("/lora-comparisons/{session_id}", response_class=HTMLResponse)
@@ -6933,20 +7013,42 @@ def lora_comparison_matrix_build(session_id: int) -> RedirectResponse:
 
 
 @app.get("/lora-comparisons/{session_id}/matrix", response_class=HTMLResponse)
-def lora_comparison_matrix(session_id: int, weights: list[str] = Query(default=[])) -> HTMLResponse:
+def lora_comparison_matrix(
+    session_id: int,
+    weights: list[str] = Query(default=[]),
+    display_weights: list[str] = Query(default=[]),
+) -> HTMLResponse:
     try:
-        return HTMLResponse(build_lora_comparison_matrix_html(session_id, display_weights=weights))
+        selected_weights = display_weights or weights
+        return HTMLResponse(build_lora_comparison_matrix_html(session_id, display_weights=selected_weights))
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/lora-comparisons/{session_id}/matrix/weights")
-def lora_comparison_matrix_add_weights(session_id: int, weights: list[str] = Form(default=[])) -> RedirectResponse:
+def lora_comparison_matrix_add_weights(
+    session_id: int,
+    weights: list[str] = Form(default=[]),
+    selected_weights: list[str] = Form(default=[]),
+) -> RedirectResponse:
+    effective_weights = selected_weights or weights
+    display_params = [("display_weights", f"{weight:g}") for weight in normalize_matrix_weights(effective_weights)]
     try:
-        add_lora_comparison_weights(session_id, weights)
+        add_lora_comparison_weights(session_id, effective_weights)
+        start_lora_comparison_missing_generation(session_id)
     except Exception as exc:
         return RedirectResponse(f"/lora-comparisons/{session_id}?error={quote(str(exc))}", status_code=303)
-    return RedirectResponse(f"/lora-comparisons/{session_id}", status_code=303)
+    query = urlencode(display_params)
+    return RedirectResponse(f"/lora-comparisons/{session_id}/matrix?{query}" if query else f"/lora-comparisons/{session_id}/matrix", status_code=303)
+
+
+@app.post("/lora-comparisons/{session_id}/matrix/generate-missing")
+def lora_comparison_matrix_generate_missing(session_id: int) -> RedirectResponse:
+    try:
+        start_lora_comparison_missing_generation(session_id)
+    except Exception as exc:
+        return RedirectResponse(f"/lora-comparisons/{session_id}?error={quote(str(exc))}", status_code=303)
+    return RedirectResponse(f"/lora-comparisons/{session_id}/matrix", status_code=303)
 
 
 @app.post("/lora-comparisons/{session_id}/matrix/missing-review")
@@ -6955,7 +7057,7 @@ def lora_comparison_matrix_missing_review(session_id: int) -> RedirectResponse:
         start_lora_comparison_missing_review(session_id)
     except Exception as exc:
         return RedirectResponse(f"/lora-comparisons/{session_id}?error={quote(str(exc))}", status_code=303)
-    return RedirectResponse(f"/lora-comparisons/{session_id}", status_code=303)
+    return RedirectResponse(f"/lora-comparisons/{session_id}/matrix", status_code=303)
 
 
 @app.post("/lora-comparisons/{session_id}/decision")
