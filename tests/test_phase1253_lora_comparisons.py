@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,6 +10,7 @@ from pathlib import Path
 from app import settings
 from app.db import connect, fetch_all, fetch_one, init_db, utc_now
 from app.services.lora_artifacts import resolve_lora_artifact
+from app.services.validation_generation import prepare_validation_generation, weight_calibration_preflight
 from app.services.lora_comparisons import (
     build_lora_comparison_matrix_html,
     create_lora_comparison_session,
@@ -41,18 +44,23 @@ class Phase1253ComparisonTest(unittest.TestCase):
         path.write_bytes(payload)
         return path, hashlib.sha256(payload).hexdigest()
 
+    def preset_snapshot(self, preset_id: str = "standard_validation_v1") -> str:
+        return json.dumps(dict(fetch_one("SELECT * FROM validation_presets WHERE id = ?", (preset_id,))), ensure_ascii=False, sort_keys=True, default=str)
+
     def create_fixture_pair(self, with_images: bool = True) -> tuple[list[int], list[int], list[int]]:
         now = utc_now()
+        base_path, _ = self.write_model("base.safetensors", b"base")
         standard_path, standard_sha = self.write_model("standard.safetensors", b"standard")
         c3_path, c3_sha = self.write_model("c3lier.safetensors", b"c3lier")
+        preset_snapshot = self.preset_snapshot()
         with connect() as conn:
             project_id = int(
                 conn.execute(
                     """
                     INSERT INTO lora_projects(name, status, base_model_path, trigger_word, created_at, updated_at)
-                    VALUES('Demo Project', 'draft', 'base.safetensors', 'demo', ?, ?)
+                    VALUES('Demo Project', 'draft', ?, 'demo', ?, ?)
                     """,
-                    (now, now),
+                    (str(base_path), now, now),
                 ).lastrowid
             )
             job_ids = []
@@ -72,10 +80,10 @@ class Phase1253ComparisonTest(unittest.TestCase):
                             network_type_id, created_at, updated_at
                         )
                         VALUES(?, ?, 1, 'completed', 'SDXL', 'sdxl_train_network.py',
-                               'base.safetensors', ?, ?, ?, '{}', 1, 'AdamW8bit',
+                               ?, ?, ?, ?, '{}', 1, 'AdamW8bit',
                                'adamw8bit_sdxl_balanced', ?, ?, ?)
                         """,
-                        (project_id, name, name, str(self.root), str(self.root), network_type, now, now),
+                        (project_id, name, str(base_path), name, str(self.root), str(self.root), network_type, now, now),
                     ).lastrowid
                 )
                 output_id = int(
@@ -95,10 +103,10 @@ class Phase1253ComparisonTest(unittest.TestCase):
                             selected_epoch, selected_model_path, base_model,
                             default_validation_preset_id, created_at, updated_at
                         )
-                        VALUES(?, ?, ?, ?, 'demo', 10, ?, 'base.safetensors',
+                        VALUES(?, ?, ?, ?, 'demo', 10, ?, ?,
                                'standard_validation_v1', ?, ?)
                         """,
-                        (project_id, job_id, output_id, name, str(model_path), now, now),
+                        (project_id, job_id, output_id, name, str(model_path), str(base_path), now, now),
                     ).lastrowid
                 )
                 run_id = int(
@@ -112,10 +120,10 @@ class Phase1253ComparisonTest(unittest.TestCase):
                             actual_image_count, status, preset_snapshot_json, created_at, updated_at, memo
                         )
                         VALUES(?, ?, ?, ?, 'weight_calibration', ?, 10, 'completed',
-                               'standard_validation_v1', ?, 'standard', 'base.safetensors',
-                               'demo', ?, 1, ?, 'images_registered', '{}', ?, ?, '')
+                               'standard_validation_v1', ?, 'standard', ?,
+                               'demo', ?, 1, ?, 'images_registered', ?, ?, ?, '')
                         """,
-                        (project_id, job_id, output_id, profile_id, job_id, f"{name} Validation", model_path.name, 1 if with_images else 0, now, now),
+                        (project_id, job_id, output_id, profile_id, job_id, f"{name} Validation", str(base_path), model_path.name, 1 if with_images else 0, preset_snapshot, now, now),
                     ).lastrowid
                 )
                 condition_id = int(
@@ -130,9 +138,9 @@ class Phase1253ComparisonTest(unittest.TestCase):
                         )
                         VALUES(?, 'standard_validation_v1', 'basic_face', 111111, 0.8, 0,
                                1024, 1024, 'Euler a', 28, 7.0, ?, 1, 'v1',
-                               'demo portrait', 'demo portrait', '', 'demo', ?, 'base.safetensors', ?)
+                               'demo portrait', 'demo portrait', '', 'demo', ?, ?, ?)
                         """,
-                        (run_id, f"hash-{run_id}", model_path.name, now),
+                        (run_id, f"hash-{run_id}", model_path.name, str(base_path), now),
                     ).lastrowid
                 )
                 if with_images:
@@ -146,10 +154,10 @@ class Phase1253ComparisonTest(unittest.TestCase):
                             condition_hash, created_at, updated_at
                         )
                         VALUES(?, ?, ?, ?, 'standard_validation_v1', 'basic_face', 111111,
-                               0.8, ?, 'standard', 'demo portrait', 'base.safetensors',
+                               0.8, ?, 'standard', 'demo portrait', ?,
                                'Euler a', 28, 7.0, 1024, 1024, ?, ?, ?)
                         """,
-                        (job_id, output_id, condition_id, run_id, str(self.root / f"{run_id}.png"), f"hash-{run_id}", now, now),
+                        (job_id, output_id, condition_id, run_id, str(self.root / f"{run_id}.png"), str(base_path), f"hash-{run_id}", now, now),
                     )
                 job_ids.append(job_id)
                 output_ids.append(output_id)
@@ -191,6 +199,7 @@ class Phase1253ComparisonTest(unittest.TestCase):
             comparison_mode="controlled",
             comparison_axis="network_type",
             validation_preset_id="standard_validation_v1",
+            allow_warnings=True,
         )
         session, candidates = load_lora_comparison_session(session_id)
         self.assertEqual(session["parity_status"], "warning")
@@ -202,6 +211,99 @@ class Phase1253ComparisonTest(unittest.TestCase):
         self.assertIn("Standard LoRA", html)
         self.assertIn("LoRA-C3Lier（セリア）", html)
         self.assertNotIn("Candidate A", html)
+
+
+    def test_warning_parity_requires_explicit_approval(self) -> None:
+        profile_ids, _, _ = self.create_fixture_pair()
+        with self.assertRaises(ValueError):
+            create_lora_comparison_session(
+                profile_ids=profile_ids,
+                name="Needs approval",
+                comparison_mode="controlled",
+                comparison_axis="network_type",
+                validation_preset_id="standard_validation_v1",
+                allow_warnings=False,
+                force_new=True,
+            )
+        session_id = create_lora_comparison_session(
+            profile_ids=profile_ids,
+            name="Approved warning",
+            comparison_mode="controlled",
+            comparison_axis="network_type",
+            validation_preset_id="standard_validation_v1",
+            allow_warnings=True,
+            force_new=True,
+        )
+        self.assertGreater(session_id, 0)
+
+    def test_validation_generation_uses_external_copy_fallback(self) -> None:
+        profile_ids, output_ids, _ = self.create_fixture_pair(with_images=False)
+        external, sha_value = self.write_model("external-copy.safetensors", b"external")
+        with connect() as conn:
+            conn.execute(
+                "UPDATE training_outputs SET file_path = ?, external_copy_path = ?, export_verified_at = ?, sha256 = ? WHERE id = ?",
+                (str(self.root / "missing.safetensors"), str(external), utc_now(), sha_value, output_ids[0]),
+            )
+            sd_scripts = self.root / "sd-scripts"
+            sd_scripts.mkdir()
+            (sd_scripts / "gen_img.py").write_text("# test", encoding="utf-8")
+            conn.execute(
+                """
+                INSERT INTO environments(name, sd_scripts_path, venv_python_path, mixed_precision, status, created_at, updated_at)
+                VALUES('default', ?, ?, 'bf16', 'ready', ?, ?)
+                """,
+                (str(sd_scripts), sys.executable, utc_now(), utc_now()),
+            )
+        run = fetch_one("SELECT * FROM validation_runs WHERE selected_lora_profile_id = ?", (profile_ids[0],))
+        result = prepare_validation_generation(int(run["id"]))
+        payload = json.loads(Path(result["command_argv"]).read_text(encoding="utf-8"))
+        lora_commands = [cmd for cmd in payload["commands"] if "--network_weights" in cmd["argv"]]
+        self.assertTrue(lora_commands)
+        argv = lora_commands[0]["argv"]
+        self.assertEqual(argv[argv.index("--network_weights") + 1], str(external))
+        preflight = weight_calibration_preflight(int(run["id"]))
+        self.assertFalse(any(check["key"] == "selected_lora_path" and check["level"] == "ERROR" for check in preflight["checks"]))
+
+    def test_preset_snapshot_mismatch_validation_run_is_not_reused(self) -> None:
+        profile_ids, _, _ = self.create_fixture_pair()
+        with connect() as conn:
+            conn.execute("UPDATE validation_runs SET preset_snapshot_json = 'stale' WHERE selected_lora_profile_id = ?", (profile_ids[0],))
+        session_id = create_lora_comparison_session(
+            profile_ids=profile_ids,
+            name="Snapshot mismatch",
+            comparison_mode="controlled",
+            comparison_axis="network_type",
+            validation_preset_id="standard_validation_v1",
+            allow_warnings=True,
+            force_new=True,
+        )
+        _, candidates = load_lora_comparison_session(session_id)
+        sources = {int(candidate["selected_lora_profile_id"]): candidate["validation_run_source"] for candidate in candidates}
+        self.assertEqual(sources[profile_ids[0]], "created")
+
+    def test_condition_mismatch_rejects_matrix_and_preferred_decision(self) -> None:
+        profile_ids, _, _ = self.create_fixture_pair()
+        session_id = create_lora_comparison_session(
+            profile_ids=profile_ids,
+            name="Condition mismatch",
+            comparison_mode="controlled",
+            comparison_axis="network_type",
+            validation_preset_id="standard_validation_v1",
+            allow_warnings=True,
+            force_new=True,
+        )
+        _, candidates = load_lora_comparison_session(session_id)
+        with connect() as conn:
+            conn.execute("UPDATE validation_expected_conditions SET seed = 222222 WHERE validation_run_id = ?", (int(candidates[1]["validation_run_id"]),))
+        with self.assertRaises(ValueError):
+            build_lora_comparison_matrix_html(session_id)
+        with self.assertRaises(ValueError):
+            save_lora_comparison_decision(
+                session_id,
+                decision_status="candidate_preferred",
+                preferred_candidate_id=int(candidates[0]["id"]),
+                decision_reason="not allowed",
+            )
 
     def test_create_session_reuses_existing_session_for_same_conditions(self) -> None:
         profile_ids, _, _ = self.create_fixture_pair()

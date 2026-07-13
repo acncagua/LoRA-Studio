@@ -267,12 +267,18 @@ def _fingerprint_row(row: dict[str, Any]) -> tuple[Any, ...]:
         int(row.get("seed") or 0),
         f"{float(row.get('lora_weight') or 0):g}",
         int(row.get("hires_enabled") or 0),
+        row.get("hires_scale"),
+        row.get("hires_denoising_strength"),
+        row.get("hires_upscaler") or "",
         int(row.get("width") or 0),
         int(row.get("height") or 0),
         row.get("sampler") or "",
+        row.get("scheduler") or "",
+        row.get("clip_skip"),
         int(row.get("steps") or 0),
         float(row.get("cfg_scale") or 0),
         row.get("base_model") or "",
+        row.get("vae_path") or "",
     )
 
 
@@ -316,6 +322,9 @@ def _backfill_validation_run_artifact(run_id: int, artifact: ResolvedLoraArtifac
 
 
 def compatible_validation_run(profile: dict[str, Any], validation_preset_id: str, artifact: ResolvedLoraArtifact) -> dict[str, Any] | None:
+    current_preset_snapshot = _preset_snapshot(validation_preset_id)
+    expected_base_model = str(profile.get("base_model") or profile.get("base_model_path") or "")
+    expected_trigger = str(profile.get("trigger_word") or "")
     rows = fetch_all(
         """
         SELECT *
@@ -338,6 +347,14 @@ def compatible_validation_run(profile: dict[str, Any], validation_preset_id: str
     )
     for row in rows:
         run = dict(row)
+        if (run.get("preset_snapshot_json") or "") != current_preset_snapshot:
+            continue
+        if expected_base_model and str(run.get("base_model") or "") != expected_base_model:
+            continue
+        if expected_trigger and str(run.get("trigger_word") or "") != expected_trigger:
+            continue
+        if not condition_fingerprint_set(int(run["id"])):
+            continue
         snapshot_sha = run.get("artifact_sha256_snapshot")
         if snapshot_sha and snapshot_sha != artifact.actual_sha256:
             continue
@@ -433,6 +450,9 @@ def create_lora_comparison_session(
     parity = run_parity_gate(candidates, comparison_mode, comparison_axis)
     if parity["status"] == "fail":
         raise ValueError("Parity Gate failed: " + "; ".join(parity["errors"] + [d["field"] for d in parity["unexpected_differences"]]))
+    if parity["status"] == "warning" and not allow_warnings:
+        warning_parts = list(parity.get("warnings") or []) + [d["field"] for d in parity.get("allowed_differences", [])]
+        raise ValueError("Parity Gate warning: " + "; ".join(warning_parts or ["warning approval required"]))
     if not force_new:
         existing_session_id = find_existing_lora_comparison_session(
             profile_ids=profile_ids,
@@ -593,12 +613,19 @@ def refresh_lora_comparison_session(session_id: int) -> dict[str, Any]:
     run_ids = [int(candidate["validation_run_id"]) for candidate in candidates if candidate.get("validation_run_id")]
     logical = 0
     registered = 0
+    reused = 0
     reviewed = 0
-    for run_id in run_ids:
+    for candidate in candidates:
+        if not candidate.get("validation_run_id"):
+            continue
+        run_id = int(candidate["validation_run_id"])
         row = fetch_one("SELECT COUNT(*) AS count FROM validation_expected_conditions WHERE validation_run_id = ?", (run_id,))
         logical += int(row["count"] or 0) if row else 0
         row = fetch_one("SELECT COUNT(*) AS count FROM validation_images WHERE validation_run_id = ? AND image_role = 'individual'", (run_id,))
-        registered += int(row["count"] or 0) if row else 0
+        registered_for_run = int(row["count"] or 0) if row else 0
+        registered += registered_for_run
+        if candidate.get("validation_run_source") == "reused":
+            reused += registered_for_run
     if run_ids:
         placeholders = ",".join("?" for _ in run_ids)
         row = fetch_one(
@@ -626,7 +653,7 @@ def refresh_lora_comparison_session(session_id: int) -> dict[str, Any]:
                 status = ?, updated_at = ?
             WHERE id = ?
             """,
-            (len(candidates), logical, logical, registered, remaining, registered, reviewed, status, now, session_id),
+            (len(candidates), logical, logical, reused, remaining, registered, reviewed, status, now, session_id),
         )
     return {
         "status": status,
@@ -778,6 +805,16 @@ def save_lora_comparison_decision(
         summary = refresh_lora_comparison_session(session_id)
         if summary["remaining_generation_count"] > 0:
             raise ValueError("画像が不足しているため、候補採用判定は保存できません。")
+        run_ids = [int(candidate["validation_run_id"]) for candidate in candidates if candidate.get("validation_run_id")]
+        conditions_ok, counts = condition_sets_match(run_ids)
+        if not conditions_ok:
+            raise ValueError(f"比較条件が候補間で一致していないため、候補採用判定は保存できません: {counts}")
+        for candidate in candidates:
+            resolve_lora_artifact(
+                profile_id=int(candidate["selected_lora_profile_id"]),
+                output_id=int(candidate["selected_output_id"]) if candidate.get("selected_output_id") else None,
+                job_id=int(candidate["job_id"]),
+            )
     else:
         preferred_candidate_id = None
     with connect() as conn:

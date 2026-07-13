@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased - Phase 12.5.3 selected LoRA comparison matrix
+## phase12.5.3.1 / v0.5.6-beta - 2026-07-13
 
 ### 主な変更
 
@@ -11,10 +11,15 @@
 - 異なるJobのValidation Runを横断表示する汎用Matrix基盤を追加し、既存の同一Job epoch横断Matrixは維持しました。
 - LoRA Libraryから複数Profileを選択し、LoRA比較セッションを作成・詳細確認・Matrix表示・判定保存・Markdown/JSONレポート出力できる導線を追加しました。
 - 比較中のArtifactがverified copyなしで全消失しないよう、Storage Cleanupに保護判定を追加しました。
+- Validation画像生成とWeight Calibration事前確認で共通Artifact resolverを使用し、元のrun Artifactが整理済みでも、SHA-256検証済みのexternal/export copyへ安全にfallbackできるようにしました。
+- 比較SessionのParity GateがWARNINGの場合は明示的な承認を必須とし、FAILは承認の有無にかかわらず拒否するようにしました。
+- 既存Validation Run再利用時にPreset snapshot、Base Model、Trigger、Artifact SHA-256、生成条件fingerprintを照合するようにしました。
+- 候補採用判定の保存前に、条件集合、未生成画像、全候補Artifactを再検証するようにしました。
+- `reused_image_count` を再利用Run由来の登録済み画像数として集計し、比較Sessionの進捗表示を修正しました。
 
 ### 注意点
 
-- Phase 12.5.3は比較基盤の追加であり、`APP_VERSION` は `v0.5.5-beta` のままです。
+- Phase 12.5.3.1は選定済みLoRA比較基盤と、そのValidation再利用・Artifact解決の安定化リリースです。
 - Blind ReviewやCandidate A/B/C表示は実装していません。候補名はMatrixに常時実名表示します。
 - 比較結果はProject採用LoRA、Recipe、Optimizer Profile、推奨weightへ自動反映しません。
 - LoRA-C3Lierは日本語説明では「セリア」と読みますが、正式表記 `LoRA-C3Lier` と内部ID `lora_c3lier` は変更しません。

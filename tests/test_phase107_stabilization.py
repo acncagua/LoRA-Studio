@@ -1731,13 +1731,14 @@ class Phase107StabilizationTests(IsolatedDbTest):
             project_id=project_id,
         )
         now = utc_now()
+        lora_sha = hashlib.sha256(lora_model.read_bytes()).hexdigest()
         with connect() as conn:
             output = conn.execute(
                 """
                 INSERT INTO training_outputs(job_id, epoch, file_path, file_type, selected, file_size, sha256, created_at)
-                VALUES (?, 4, ?, 'model', 1, ?, 'abc123', ?)
+                VALUES (?, 4, ?, 'model', 1, ?, ?, ?)
                 """,
-                (job_id, str(lora_model), lora_model.stat().st_size, now),
+                (job_id, str(lora_model), lora_model.stat().st_size, lora_sha, now),
             )
             selected_output_id = int(output.lastrowid)
             conn.execute(

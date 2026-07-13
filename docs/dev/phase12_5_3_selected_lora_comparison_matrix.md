@@ -1,8 +1,8 @@
-# Phase 12.5.3 Selected LoRA Comparison Matrix
+# Phase 12.5.3.1 Selected LoRA Comparison Matrix
 
 ## Purpose
 
-Phase 12.5.3 adds a comparison layer for selected LoRA profiles registered in the LoRA Library.
+Phase 12.5.3.1 adds and stabilizes a comparison layer for selected LoRA profiles registered in the LoRA Library.
 The existing Candidate Standard Comparison remains focused on multiple epochs from the same Training Job.
 The new comparison session can group final selected LoRA artifacts across different Jobs while preserving the exact candidates, artifacts, Validation Runs, parity result, Matrix, and final decision.
 
@@ -122,3 +122,16 @@ The expected result is:
 - Job-crossing weight 0 baseline sharing is not implemented.
 - External unregistered LoRA files are not supported.
 - Blind review is intentionally out of scope.
+
+## Source Archive Runtime Exclusion Policy
+
+Source archives and release ZIPs must not include runtime-generated artifacts. Keep the following out of distributed source packages even when they exist in a local working tree:
+
+- `__pycache__/`, `*.pyc`, `.pytest_cache/`
+- `logs/`, `reports/`, `runs/`, `exports/`, `trash/`, `backups/`
+- runtime SQLite databases and local cache files
+- generated validation images, contact sheets, matrices, and review exports
+- LoRA `.safetensors` outputs and sample images
+- `external/sd-scripts/`, sd-scripts virtual environments, and `node_modules/`
+
+The selected LoRA comparison feature stores reproducible metadata and resolver snapshots in the DB, but generated artifacts remain runtime data. A source archive should contain code, tests, docs, fixtures intended for source control, and migration/seed logic only.

@@ -51,7 +51,12 @@
     </label>
   </section>
   <section>
-    <input type="hidden" name="allow_warnings" value="1">
+    {% if parity_preview and parity_preview.status == 'warning' %}
+    <label class="checkbox-line comparison-warning-approval">
+      <input type="checkbox" name="allow_warnings" value="1">
+      <span>Parity Gateの警告を理解してMatrixを表示する</span>
+    </label>
+    {% endif %}
     <details class="compact-details">
       <summary>{{ t('comparison.advanced_options') }}</summary>
       <div class="grid-2">

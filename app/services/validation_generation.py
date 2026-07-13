@@ -14,6 +14,7 @@ from typing import Any
 from app import settings
 from app.db import connect, fetch_all, fetch_one, latest_environment, utc_now
 from app.services.image_store import verify_image_file
+from app.services.lora_artifacts import resolve_lora_artifact_for_validation_run
 from app.services.performance_profile import (
     mark_command_end,
     mark_command_start,
@@ -104,11 +105,29 @@ def prepare_validation_generation(run_id: int) -> dict[str, Any]:
     if not venv_python.exists():
         raise RuntimeError(f"venv python が存在しません: {venv_python}")
 
-    selected_output = fetch_one("SELECT * FROM training_outputs WHERE id = ?", (run["selected_output_id"],)) if run["selected_output_id"] else None
     profile = fetch_one("SELECT * FROM selected_lora_profiles WHERE id = ?", (run["selected_lora_profile_id"],)) if run["selected_lora_profile_id"] else None
-    selected_lora_path = selected_output["file_path"] if selected_output else (profile["selected_model_path"] if profile else "")
-    if not selected_lora_path or not Path(selected_lora_path).exists():
-        raise RuntimeError("採用LoRAのファイルパスが見つかりません。")
+    try:
+        resolved_artifact = resolve_lora_artifact_for_validation_run(run)
+    except ValueError as exc:
+        raise RuntimeError(f"採用LoRAのファイルパスが見つかりません: {exc}") from exc
+    selected_lora_path = resolved_artifact.path
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE validation_runs
+            SET artifact_path_snapshot = ?, artifact_source_kind = ?,
+                artifact_sha256_snapshot = ?, artifact_file_size_snapshot = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                str(resolved_artifact.path),
+                resolved_artifact.source_kind,
+                resolved_artifact.actual_sha256,
+                resolved_artifact.file_size,
+                utc_now(),
+                run_id,
+            ),
+        )
 
     base_model_path = resolve_base_model_path(run, job, profile)
     if not base_model_path.exists():
@@ -782,7 +801,6 @@ def weight_calibration_preflight(run_id: int) -> dict[str, Any]:
         raise ValueError(f"Validation Run not found: {run_id}")
     job = fetch_one("SELECT * FROM training_jobs WHERE id = ?", (run["job_id"],))
     profile = fetch_one("SELECT * FROM selected_lora_profiles WHERE id = ?", (run["selected_lora_profile_id"],)) if run["selected_lora_profile_id"] else None
-    output = fetch_one("SELECT * FROM training_outputs WHERE id = ?", (run["selected_output_id"],)) if run["selected_output_id"] else None
     preset = validation_preset_for_run(run) if run["validation_preset_id"] else None
     conditions = ensure_expected_conditions(run_id)
     checks: list[dict[str, str]] = []
@@ -790,18 +808,15 @@ def weight_calibration_preflight(run_id: int) -> dict[str, Any]:
     def add(level: str, key: str, message: str) -> None:
         checks.append({"level": level, "key": key, "message": message})
 
-    def exists_file(value: Any) -> bool:
-        return bool(value) and Path(str(value)).exists()
-
-    if output is None and profile is None:
-        add("ERROR", "selected_output", "採用LoRA / selected outputが見つかりません。")
-    elif output is not None and not exists_file(output["file_path"]):
-        exported = profile["exported_model_path"] if profile and "exported_model_path" in profile.keys() else ""
-        if not exists_file(exported):
-            add("ERROR", "selected_output_file", f"selected outputのfile_pathが存在しません: {output['file_path']}")
-    lora_path = (output["file_path"] if output else "") or (profile["selected_model_path"] if profile else "")
-    if not exists_file(lora_path):
-        add("ERROR", "selected_lora_path", f"採用LoRAファイルが存在しません: {lora_path or '-'}")
+    try:
+        resolved_artifact = resolve_lora_artifact_for_validation_run(run)
+        add(
+            "INFO",
+            "selected_lora_artifact",
+            f"採用LoRA artifact: {resolved_artifact.source_kind} / sha256 verified / {resolved_artifact.path}",
+        )
+    except ValueError as exc:
+        add("ERROR", "selected_lora_path", f"採用LoRAファイルが存在しません: {exc}")
     try:
         base_model_path = resolve_base_model_path(run, job, profile)
         if not base_model_path.exists():
